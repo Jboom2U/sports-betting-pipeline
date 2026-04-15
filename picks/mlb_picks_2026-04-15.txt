@@ -1,0 +1,274 @@
+====================================================================
+  MLB BETTING PICKS  |  2026-04-15
+====================================================================
+
+  GAME BREAKDOWN
+--------------------------------------------------------------------
+
+  Arizona Diamondbacks  @  Baltimore Orioles
+  Time (UTC): 16:35
+  Park: Oriole Park at Camden Yards (run factor 104.0)
+  SP: Eduardo Rodriguez            ERA 5.00  FIP 4.44  (away)
+      Kyle Bradish                 ERA 2.34  FIP 2.36  (home)
+  Off: Arizona Diamondbacks 4.88 RPG (7.0 recent, OPS 0.758)  |  Baltimore Orioles 4.18 RPG (9.0 recent, OPS 0.699)
+  Proj: Arizona Diamondbacks 3.3  |  Baltimore Orioles 7.4  |  Total 10.7
+  ML:   Arizona Diamondbacks 16%  |  Baltimore Orioles 84%
+  Tot:  OVER 8.5  (model 10.7 runs, conf 74%)
+  RL:   Baltimore Orioles -1.5 (conf 69%)
+
+  Cleveland Guardians  @  St. Louis Cardinals
+  Time (UTC): 17:15
+  Park: Busch Stadium (run factor 98.0)
+  SP: Slade Cecconi                ERA 4.13  FIP 4.30  (away)
+      Dustin May                   ERA 4.59  FIP 4.38  (home)
+  Off: Cleveland Guardians 3.97 RPG (9.0 recent, OPS 0.669)  |  St. Louis Cardinals 4.25 RPG (3.0 recent, OPS 0.693)
+  Proj: Cleveland Guardians 6.1  |  St. Louis Cardinals 3.8  |  Total 9.9
+  ML:   Cleveland Guardians 69%  |  St. Louis Cardinals 31%
+  Tot:  OVER 8.5  (model 9.9 runs, conf 70%)
+  RL:   Cleveland Guardians -1.5 (conf 57%)
+
+  Boston Red Sox  @  Minnesota Twins
+  Time (UTC): 17:40
+  Park: Target Field (run factor 98.0)
+  SP: Connelly Early               ERA 2.23  FIP 0.71  (away)
+      Simeon Woods Richardson      ERA 3.76  FIP 4.21  (home)
+  Off: Boston Red Sox 4.85 RPG (6.0 recent, OPS 0.745)  |  Minnesota Twins 4.18 RPG (13.0 recent, OPS 0.707)
+  Proj: Boston Red Sox 4.6  |  Minnesota Twins 3.9  |  Total 8.5
+  ML:   Boston Red Sox 56%  |  Minnesota Twins 44%
+  Tot:  UNDER 8.5  (model 8.5 runs, conf 50%)
+
+  Kansas City Royals  @  Detroit Tigers
+  Time (UTC): 22:40
+  Park: Comerica Park (run factor 97.0)
+  SP: Seth Lugo                    ERA 4.33  FIP 4.89  (away)
+      Jack Flaherty                ERA 4.50  FIP 3.80  (home)
+  Off: Kansas City Royals 4.02 RPG (4.5 recent, OPS 0.706)  |  Detroit Tigers 4.68 RPG (4.5 recent, OPS 0.729)
+  Proj: Kansas City Royals 4.4  |  Detroit Tigers 4.7  |  Total 9.1
+  ML:   Kansas City Royals 44%  |  Detroit Tigers 56%
+  Tot:  OVER 8.5  (model 9.1 runs, conf 58%)
+
+  Washington Nationals  @  Pittsburgh Pirates
+  Time (UTC): 22:40
+  Park: PNC Park (run factor 98.0)
+  SP: Jake Irvin                   ERA 5.79  FIP 5.52  (away)
+      TBD                          ERA 4.20  FIP 4.20  (home)
+  Off: Washington Nationals 4.24 RPG (5.0 recent, OPS 0.693)  |  Pittsburgh Pirates 3.60 RPG (16.0 recent, OPS 0.655)
+  Proj: Washington Nationals 4.4  |  Pittsburgh Pirates 10.9  |  Total 15.3
+  ML:   Washington Nationals 15%  |  Pittsburgh Pirates 85%
+  Tot:  OVER 8.5  (model 15.3 runs, conf 74%)
+  RL:   Pittsburgh Pirates -1.5 (conf 70%)
+
+  San Francisco Giants  @  Cincinnati Reds
+  Time (UTC): 22:40
+  Park: Great American Ball Park (run factor 108.0)  ← hitter-friendly
+  SP: Tyler Mahle                  ERA 2.83  FIP 3.69  (away)
+      Rhett Lowder                 ERA 1.00  FIP 3.13  (home)
+  Off: San Francisco Giants 4.35 RPG (4.5 recent, OPS 0.697)  |  Cincinnati Reds 4.42 RPG (4.5 recent, OPS 0.706)
+  Proj: San Francisco Giants 1.1  |  Cincinnati Reds 3.3  |  Total 4.4
+  ML:   San Francisco Giants 15%  |  Cincinnati Reds 85%
+  Tot:  UNDER 8.5  (model 4.4 runs, conf 74%)
+  RL:   Cincinnati Reds -1.5 (conf 70%)
+
+  Chicago Cubs  @  Philadelphia Phillies
+  Time (UTC): 22:40
+  Park: Citizens Bank Park (run factor 103.0)
+  SP: Shota Imanaga                ERA 3.64  FIP 4.70  (away)
+      Jesús Luzardo                ERA 3.99  FIP 2.70  (home)
+  Off: Chicago Cubs 4.89 RPG (7.0 recent, OPS 0.75)  |  Philadelphia Phillies 4.80 RPG (13.0 recent, OPS 0.759)
+  Proj: Chicago Cubs 5.5  |  Philadelphia Phillies 7.0  |  Total 12.5
+  ML:   Chicago Cubs 37%  |  Philadelphia Phillies 63%
+  Tot:  OVER 8.5  (model 12.5 runs, conf 74%)
+  RL:   Philadelphia Phillies -1.5 (conf 53%)
+
+  Los Angeles Angels  @  New York Yankees
+  Time (UTC): 23:05
+  Park: Yankee Stadium (run factor 105.0)
+  SP: TBD                          ERA 4.20  FIP 4.20  (away)
+      Luis Gil                     ERA 3.08  FIP 4.71  (home)
+  Off: Los Angeles Angels 4.15 RPG (10.0 recent, OPS 0.695)  |  New York Yankees 5.24 RPG (11.0 recent, OPS 0.787)
+  Proj: Los Angeles Angels 4.8  |  New York Yankees 7.8  |  Total 12.5
+  ML:   Los Angeles Angels 27%  |  New York Yankees 73%
+  Tot:  OVER 8.5  (model 12.5 runs, conf 74%)
+  RL:   New York Yankees -1.5 (conf 61%)
+
+  Miami Marlins  @  Atlanta Braves
+  Time (UTC): 23:15
+  Park: Truist Park (run factor 99.0)
+  SP: Chris Paddack                ERA 5.48  FIP 5.11  (away)
+      Bryce Elder                  ERA 5.67  FIP 4.56  (home)
+  Off: Miami Marlins 4.38 RPG (10.0 recent, OPS 0.707)  |  Atlanta Braves 4.47 RPG (4.0 recent, OPS 0.719)
+  Proj: Miami Marlins 8.5  |  Atlanta Braves 5.7  |  Total 14.2
+  ML:   Miami Marlins 65%  |  Atlanta Braves 35%
+  Tot:  OVER 8.5  (model 14.2 runs, conf 74%)
+  RL:   Miami Marlins -1.5 (conf 54%)
+
+  Tampa Bay Rays  @  Chicago White Sox
+  Time (UTC): 23:40
+  Park: Rate Field (run factor 103.0)
+  SP: Jesse Scholtens              ERA 5.22  FIP 4.98  (away)
+      Sean Burke                   ERA 4.14  FIP 4.71  (home)
+  Off: Tampa Bay Rays 4.41 RPG (4.5 recent, OPS 0.714)  |  Chicago White Sox 3.99 RPG (4.5 recent, OPS 0.675)
+  Proj: Tampa Bay Rays 4.5  |  Chicago White Sox 5.4  |  Total 10.0
+  ML:   Tampa Bay Rays 39%  |  Chicago White Sox 61%
+  Tot:  OVER 8.5  (model 10.0 runs, conf 71%)
+  RL:   Chicago White Sox -1.5 (conf 51%)
+
+  Toronto Blue Jays  @  Milwaukee Brewers
+  Time (UTC): 23:40
+  Park: American Family Field (run factor 101.0)
+  SP: Dylan Cease                  ERA 4.86  FIP 3.49  (away)
+      Chad Patrick                 ERA 3.35  FIP 3.30  (home)
+  Off: Toronto Blue Jays 4.93 RPG (4.5 recent, OPS 0.76)  |  Milwaukee Brewers 4.97 RPG (4.5 recent, OPS 0.735)
+  Proj: Toronto Blue Jays 3.9  |  Milwaukee Brewers 5.7  |  Total 9.6
+  ML:   Toronto Blue Jays 30%  |  Milwaukee Brewers 70%
+  Tot:  OVER 8.5  (model 9.6 runs, conf 65%)
+  RL:   Milwaukee Brewers -1.5 (conf 58%)
+
+  Colorado Rockies  @  Houston Astros
+  Time (UTC): 00:10
+  Park: Daikin Park (run factor 100.0)
+  SP: TBD                          ERA 4.20  FIP 4.20  (away)
+      TBD                          ERA 4.20  FIP 4.20  (home)
+  Off: Colorado Rockies 3.69 RPG (4.5 recent, OPS 0.679)  |  Houston Astros 4.24 RPG (2.0 recent, OPS 0.714)
+  Proj: Colorado Rockies 4.0  |  Houston Astros 3.5  |  Total 7.5
+  ML:   Colorado Rockies 53%  |  Houston Astros 47%
+  Tot:  UNDER 8.5  (model 7.5 runs, conf 64%)
+
+  Seattle Mariners  @  San Diego Padres
+  Time (UTC): 01:40
+  Park: Petco Park (run factor 96.0)  ← pitcher-friendly
+  SP: Emerson Hancock              ERA 4.88  FIP 4.99  (away)
+      Randy Vásquez                ERA 3.67  FIP 4.59  (home)
+  Off: Seattle Mariners 4.73 RPG (6.0 recent, OPS 0.74)  |  San Diego Padres 4.33 RPG (4.5 recent, OPS 0.711)
+  Proj: Seattle Mariners 4.3  |  San Diego Padres 5.0  |  Total 9.3
+  ML:   Seattle Mariners 41%  |  San Diego Padres 59%
+  Tot:  OVER 8.5  (model 9.3 runs, conf 62%)
+
+  Texas Rangers  @  Athletics
+  Time (UTC): 01:40
+  Park: Sutter Health Park (run factor 97.0)
+  SP: Kumar Rocker                 ERA 6.80  FIP 5.40  (away)
+      J.T. Ginn                    ERA 5.61  FIP 4.75  (home)
+  Off: Texas Rangers 4.22 RPG (8.0 recent, OPS 0.683)  |  Athletics 4.53 RPG (1.0 recent, OPS 0.749)
+  Proj: Texas Rangers 7.2  |  Athletics 5.3  |  Total 12.5
+  ML:   Texas Rangers 61%  |  Athletics 39%
+  Tot:  OVER 8.5  (model 12.5 runs, conf 74%)
+  RL:   Texas Rangers -1.5 (conf 51%)
+
+  New York Mets  @  Los Angeles Dodgers
+  Time (UTC): 02:10
+  Park: UNIQLO Field at Dodger Stadium (run factor 100.0)
+  SP: Clay Holmes                  ERA 3.48  FIP 3.67  (away)
+      Shohei Ohtani                ERA 2.52  FIP 1.92  (home)
+  Off: New York Mets 4.73 RPG (0.0 recent, OPS 0.753)  |  Los Angeles Dodgers 5.09 RPG (4.0 recent, OPS 0.768)
+  Proj: New York Mets 1.8  |  Los Angeles Dodgers 4.0  |  Total 5.8
+  ML:   New York Mets 17%  |  Los Angeles Dodgers 83%
+  Tot:  UNDER 8.5  (model 5.8 runs, conf 74%)
+  RL:   Los Angeles Dodgers -1.5 (conf 68%)
+
+====================================================================
+  TOP INDIVIDUAL PICKS  (ranked by confidence)
+====================================================================
+
+   1. ★★★ [ML   ] Pittsburgh Pirates ML                  85.0%  🔒
+       Washington Nationals @ Pittsburgh Pirates
+       Jake Irvin ERA 5.79 (home SP TBD) | Recent: Washington Nationals 5.0 RPG (0% W) | Pittsburgh Pirates 16.0 RPG (100% W)
+
+   2. ★★★ [ML   ] Cincinnati Reds ML                     85.0%  🔒
+       San Francisco Giants @ Cincinnati Reds
+       Tyler Mahle ERA 2.83 vs Rhett Lowder ERA 1.00 | Recent: San Francisco Giants 4.5 RPG (50% W) | Cincinnati Reds 4.5 RPG (50% W) | Hitter park (factor 108.0)
+
+   3. ★★★ [ML   ] Baltimore Orioles ML                   84.3%  🔒
+       Arizona Diamondbacks @ Baltimore Orioles
+       Eduardo Rodriguez ERA 5.00 vs Kyle Bradish ERA 2.34 | Recent: Arizona Diamondbacks 7.0 RPG (0% W) | Baltimore Orioles 9.0 RPG (100% W)
+
+   4. ★★★ [ML   ] Los Angeles Dodgers ML                 82.9%  🔒
+       New York Mets @ Los Angeles Dodgers
+       Clay Holmes ERA 3.48 vs Shohei Ohtani ERA 2.52 | Recent: New York Mets 0.0 RPG (0% W) | Los Angeles Dodgers 4.0 RPG (100% W)
+
+   5. ★★★ [TOTAL] OVER 8.5                               74.0%  🔒
+       Arizona Diamondbacks @ Baltimore Orioles
+       Model projects 10.7 runs vs 8.5 line (2.2 run edge)
+
+   6. ★★★ [TOTAL] OVER 8.5                               74.0%  🔒
+       Washington Nationals @ Pittsburgh Pirates
+       Model projects 15.3 runs vs 8.5 line (6.8 run edge) | Weak pitching matchup (avg ERA 4.99)
+
+   7. ★★★ [TOTAL] UNDER 8.5                              74.0%  🔒
+       San Francisco Giants @ Cincinnati Reds
+       Model projects 4.4 runs vs 8.5 line (4.1 run edge) | Hitter-friendly park (factor 108.0) | Elite pitching matchup (avg ERA 1.92)
+
+   8. ★★★ [TOTAL] OVER 8.5                               74.0%  🔒
+       Chicago Cubs @ Philadelphia Phillies
+       Model projects 12.5 runs vs 8.5 line (4.0 run edge)
+
+   9. ★★★ [TOTAL] OVER 8.5                               74.0%  🔒
+       Los Angeles Angels @ New York Yankees
+       Model projects 12.5 runs vs 8.5 line (4.0 run edge)
+
+  10. ★★★ [TOTAL] OVER 8.5                               74.0%  🔒
+       Miami Marlins @ Atlanta Braves
+       Model projects 14.2 runs vs 8.5 line (5.7 run edge) | Weak pitching matchup (avg ERA 5.58)
+
+  11. ★★★ [TOTAL] OVER 8.5                               74.0%  🔒
+       Texas Rangers @ Athletics
+       Model projects 12.5 runs vs 8.5 line (4.0 run edge) | Weak pitching matchup (avg ERA 6.21)
+
+  12. ★★★ [TOTAL] UNDER 8.5                              74.0%  🔒
+       New York Mets @ Los Angeles Dodgers
+       Model projects 5.8 runs vs 8.5 line (2.7 run edge) | Elite pitching matchup (avg ERA 3.00)
+
+====================================================================
+  BEST 2-LEG PARLAYS  (est. +260 payout)
+====================================================================
+
+  Parlay 1 | Combined confidence: 72.2% | Est. payout: +260
+    ★★★  Pittsburgh Pirates ML                    85.0%
+          Washington Nationals @ Pittsburgh Pirates
+    ★★★  Cincinnati Reds ML                       85.0%
+          San Francisco Giants @ Cincinnati Reds
+
+  Parlay 2 | Combined confidence: 71.7% | Est. payout: +260
+    ★★★  Pittsburgh Pirates ML                    85.0%
+          Washington Nationals @ Pittsburgh Pirates
+    ★★★  Baltimore Orioles ML                     84.3%
+          Arizona Diamondbacks @ Baltimore Orioles
+
+  Parlay 3 | Combined confidence: 71.7% | Est. payout: +260
+    ★★★  Cincinnati Reds ML                       85.0%
+          San Francisco Giants @ Cincinnati Reds
+    ★★★  Baltimore Orioles ML                     84.3%
+          Arizona Diamondbacks @ Baltimore Orioles
+
+====================================================================
+  BEST 3-LEG PARLAYS  (est. +595 payout)
+====================================================================
+
+  Parlay 1 | Combined confidence: 60.9% | Est. payout: +595
+    ★★★  Pittsburgh Pirates ML                    85.0%
+          Washington Nationals @ Pittsburgh Pirates
+    ★★★  Cincinnati Reds ML                       85.0%
+          San Francisco Giants @ Cincinnati Reds
+    ★★★  Baltimore Orioles ML                     84.3%
+          Arizona Diamondbacks @ Baltimore Orioles
+
+  Parlay 2 | Combined confidence: 59.9% | Est. payout: +595
+    ★★★  Pittsburgh Pirates ML                    85.0%
+          Washington Nationals @ Pittsburgh Pirates
+    ★★★  Cincinnati Reds ML                       85.0%
+          San Francisco Giants @ Cincinnati Reds
+    ★★★  Los Angeles Dodgers ML                   82.9%
+          New York Mets @ Los Angeles Dodgers
+
+  Parlay 3 | Combined confidence: 59.4% | Est. payout: +595
+    ★★★  Pittsburgh Pirates ML                    85.0%
+          Washington Nationals @ Pittsburgh Pirates
+    ★★★  Baltimore Orioles ML                     84.3%
+          Arizona Diamondbacks @ Baltimore Orioles
+    ★★★  Los Angeles Dodgers ML                   82.9%
+          New York Mets @ Los Angeles Dodgers
+
+====================================================================
+  🔒 LOCK 68%+  |  ⭐⭐ STRONG 62-68%  |  ⭐ LEAN 55-62%
+  Model: Pitcher ERA/FIP + Home/Away Splits + Team RPG + Park Factors + Form
+====================================================================

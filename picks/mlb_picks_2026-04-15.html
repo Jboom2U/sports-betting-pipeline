@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sports Betting Parlay Genius</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --bg:        #07090f;
+  --bg2:       #0d1117;
+  --card:      #111827;
+  --card2:     #161f2e;
+  --border:    #1e2d44;
+  --green:     #00e676;
+  --gold:      #ffc107;
+  --blue:      #42a5f5;
+  --purple:    #ab47bc;
+  --red:       #ef5350;
+  --text:      #e2e8f0;
+  --sub:       #7a8899;
+  --lock-c:    #ffc107;
+  --strong-c:  #42a5f5;
+  --lean-c:    #00e676;
+  --radius:    12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh;padding-bottom:60px}
+
+/* ── HEADER ── */
+.header{
+  background:linear-gradient(135deg,#0d1b2e 0%,#0a1628 50%,#0d1b2e 100%);
+  border-bottom:1px solid var(--border);
+  padding:28px 24px 20px;
+  text-align:center;
+  position:relative;
+  overflow:hidden;
+}
+.header::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse at 50% 0%,rgba(0,230,118,.08) 0%,transparent 70%);
+  pointer-events:none;
+}
+.header h1{
+  font-size:clamp(1.6rem,4vw,2.6rem);font-weight:800;letter-spacing:-0.5px;
+  background:linear-gradient(90deg,#00e676,#42a5f5,#ffc107);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.header-sub{color:var(--sub);margin-top:6px;font-size:.9rem;font-weight:500}
+.header-stats{
+  display:flex;justify-content:center;gap:28px;margin-top:16px;flex-wrap:wrap;
+}
+.stat-pill{
+  background:rgba(255,255,255,.05);border:1px solid var(--border);
+  border-radius:20px;padding:5px 14px;font-size:.82rem;font-weight:600;color:var(--text);
+}
+.stat-pill span{color:var(--green)}
+
+/* ── FILTERS ── */
+.filters{
+  position:sticky;top:0;z-index:100;
+  background:rgba(7,9,15,.92);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+  padding:12px 24px;display:flex;gap:16px;flex-wrap:wrap;align-items:center;
+}
+.filter-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.filter-label{color:var(--sub);font-size:.78rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.filter-btn{
+  background:transparent;border:1px solid var(--border);color:var(--sub);
+  padding:5px 13px;border-radius:20px;font-size:.8rem;font-weight:600;cursor:pointer;
+  transition:all .2s;font-family:inherit;
+}
+.filter-btn:hover{border-color:var(--green);color:var(--text)}
+.filter-btn.active{background:var(--green);border-color:var(--green);color:#000}
+.filter-btn.active-gold{background:var(--gold);border-color:var(--gold);color:#000}
+.filter-btn.active-blue{background:var(--blue);border-color:var(--blue);color:#000}
+.search-wrap{margin-left:auto}
+.search-input{
+  background:var(--card);border:1px solid var(--border);color:var(--text);
+  padding:6px 14px;border-radius:20px;font-size:.82rem;font-family:inherit;
+  outline:none;width:180px;transition:border-color .2s;
+}
+.search-input:focus{border-color:var(--green)}
+.search-input::placeholder{color:var(--sub)}
+
+/* ── MAIN LAYOUT ── */
+.main{max-width:1400px;margin:0 auto;padding:28px 20px}
+.section-title{
+  font-size:1rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+  color:var(--sub);margin-bottom:16px;display:flex;align-items:center;gap:8px;
+}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* ── PICKS GRID ── */
+.picks-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
+  gap:14px;margin-bottom:36px;
+}
+.pick-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;cursor:default;transition:transform .15s,border-color .15s;
+  position:relative;overflow:hidden;
+}
+.pick-card:hover{transform:translateY(-2px)}
+.pick-card.tier-LOCK  {border-top:3px solid var(--gold)}
+.pick-card.tier-STRONG{border-top:3px solid var(--blue)}
+.pick-card.tier-LEAN  {border-top:3px solid var(--green)}
+.pick-card.hidden{display:none}
+
+.pick-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+.pick-type-badge{
+  font-size:.68rem;font-weight:700;letter-spacing:.8px;padding:3px 9px;border-radius:4px;
+  text-transform:uppercase;
+}
+.badge-ML   {background:rgba(66,165,245,.15);color:#42a5f5;border:1px solid rgba(66,165,245,.3)}
+.badge-RL   {background:rgba(171,71,188,.15);color:#ce93d8;border:1px solid rgba(171,71,188,.3)}
+.badge-TOTAL{background:rgba(0,230,118,.15);color:#00e676;border:1px solid rgba(0,230,118,.3)}
+.tier-badge{
+  font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:4px;
+}
+.tb-LOCK  {background:rgba(255,193,7,.15);color:var(--gold);border:1px solid rgba(255,193,7,.3)}
+.tb-STRONG{background:rgba(66,165,245,.15);color:var(--blue);border:1px solid rgba(66,165,245,.3)}
+.tb-LEAN  {background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.3)}
+
+.pick-label{font-size:1.08rem;font-weight:700;color:var(--text);margin-bottom:4px}
+.pick-game{font-size:.78rem;color:var(--sub);margin-bottom:12px}
+
+.conf-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.conf-bar-wrap{flex:1;height:7px;background:rgba(255,255,255,.07);border-radius:4px;overflow:hidden}
+.conf-bar{height:100%;border-radius:4px;transition:width .4s ease}
+.bar-LOCK  {background:linear-gradient(90deg,#e65100,var(--gold))}
+.bar-STRONG{background:linear-gradient(90deg,#0d47a1,var(--blue))}
+.bar-LEAN  {background:linear-gradient(90deg,#1b5e20,var(--green))}
+.conf-pct{font-size:.95rem;font-weight:700;white-space:nowrap}
+.pct-LOCK  {color:var(--gold)}
+.pct-STRONG{color:var(--blue)}
+.pct-LEAN  {color:var(--green)}
+
+.pick-reasoning{
+  font-size:.74rem;color:var(--sub);line-height:1.5;
+  border-top:1px solid var(--border);padding-top:8px;margin-top:4px;
+}
+
+/* ── PARLAY CARDS ── */
+.parlay-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:36px}
+.parlay-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;position:relative;overflow:hidden;
+}
+.parlay-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--green),var(--blue),var(--gold));
+}
+.parlay-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.parlay-tag{font-size:.7rem;font-weight:700;letter-spacing:.6px;color:var(--sub);text-transform:uppercase}
+.parlay-payout{
+  font-size:.95rem;font-weight:800;color:var(--green);
+  background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.25);
+  padding:3px 10px;border-radius:6px;
+}
+.parlay-conf{font-size:1.5rem;font-weight:800;color:var(--text);margin-bottom:12px}
+.parlay-conf span{font-size:.85rem;font-weight:500;color:var(--sub);margin-left:4px}
+.parlay-legs{display:flex;flex-direction:column;gap:8px}
+.parlay-leg{
+  background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;
+  display:flex;align-items:center;gap:10px;
+}
+.leg-conf{
+  font-size:.78rem;font-weight:700;white-space:nowrap;padding:2px 8px;border-radius:4px;
+}
+.leg-LOCK  {background:rgba(255,193,7,.15);color:var(--gold)}
+.leg-STRONG{background:rgba(66,165,245,.15);color:var(--blue)}
+.leg-LEAN  {background:rgba(0,230,118,.15);color:var(--green)}
+.leg-info{flex:1}
+.leg-label{font-size:.85rem;font-weight:600;color:var(--text)}
+.leg-game {font-size:.72rem;color:var(--sub);margin-top:1px}
+
+/* ── GAME BREAKDOWN ── */
+.games-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:14px}
+.game-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.game-header{
+  background:var(--card2);padding:12px 16px;display:flex;justify-content:space-between;align-items:center;
+  border-bottom:1px solid var(--border);
+}
+.matchup{font-size:.95rem;font-weight:700}
+.game-time{font-size:.75rem;color:var(--sub)}
+.game-body{padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.game-row{display:flex;justify-content:space-between;align-items:center;font-size:.8rem}
+.row-label{color:var(--sub);font-weight:600;min-width:48px}
+.row-val{color:var(--text);font-weight:500;text-align:right}
+.park-badge{
+  display:inline-block;font-size:.68rem;font-weight:700;padding:2px 7px;border-radius:4px;margin-left:6px;
+}
+.park-hitter {background:rgba(239,83,80,.15);color:#ef9a9a}
+.park-pitcher{background:rgba(66,165,245,.15);color:#90caf9}
+.park-neutral{background:rgba(255,255,255,.06);color:var(--sub)}
+.wp-row{display:flex;gap:6px;margin-top:4px}
+.wp-bar-outer{flex:1;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden;height:6px;margin-top:2px}
+.wp-bar-inner{height:100%;background:var(--green);border-radius:4px}
+.wp-team{font-size:.78rem;font-weight:600}
+.wp-pct {font-size:.85rem;font-weight:700;color:var(--green)}
+
+/* ── EMPTY STATE ── */
+.empty{text-align:center;color:var(--sub);padding:48px;font-size:.95rem}
+
+/* ── TABS ── */
+.section-tabs{display:flex;gap:0;margin-bottom:16px;border:1px solid var(--border);border-radius:8px;overflow:hidden;width:fit-content}
+.section-tab{
+  padding:7px 18px;font-size:.82rem;font-weight:600;cursor:pointer;
+  background:transparent;border:none;color:var(--sub);font-family:inherit;
+  transition:all .15s;
+}
+.section-tab.active{background:var(--green);color:#000}
+.section-tab:hover:not(.active){background:rgba(255,255,255,.05);color:var(--text)}
+
+/* ── RESULTS COUNT ── */
+.results-count{font-size:.8rem;color:var(--sub);margin-bottom:10px}
+.results-count b{color:var(--text)}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#2e4060}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>⚾ Sports Betting Parlay Genius</h1>
+  <div class="header-sub" id="dateStr"></div>
+  <div class="header-stats">
+    <div class="stat-pill">Games <span id="gameCount">—</span></div>
+    <div class="stat-pill">Picks <span id="pickCount">—</span></div>
+    <div class="stat-pill">Locks <span id="lockCount">—</span></div>
+    <div class="stat-pill">Top Pick <span id="topPick">—</span></div>
+  </div>
+</div>
+
+<div class="filters">
+  <div class="filter-group">
+    <span class="filter-label">Bet Type</span>
+    <button class="filter-btn active" data-group="type" data-val="all">All</button>
+    <button class="filter-btn" data-group="type" data-val="ML">Moneyline</button>
+    <button class="filter-btn" data-group="type" data-val="RL">Run Line</button>
+    <button class="filter-btn" data-group="type" data-val="TOTAL">Over/Under</button>
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Confidence</span>
+    <button class="filter-btn active" data-group="tier" data-val="all">All</button>
+    <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock</button>
+    <button class="filter-btn" data-group="tier" data-val="STRONG">⭐⭐ Strong</button>
+    <button class="filter-btn" data-group="tier" data-val="LEAN">⭐ Lean</button>
+  </div>
+  <div class="search-wrap">
+    <input class="search-input" id="teamSearch" placeholder="Search team…" type="text"/>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- PICKS -->
+  <div class="section-title">🎯 Individual Picks</div>
+  <div class="results-count" id="pickResults"></div>
+  <div class="picks-grid" id="picksGrid"></div>
+
+  <!-- PARLAYS -->
+  <div class="section-title">🔥 Parlay Recommendations</div>
+  <div class="section-tabs">
+    <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
+    <button class="section-tab" data-parlay="3">3-Leg (+595)</button>
+  </div>
+  <div class="parlay-grid" id="parlayGrid"></div>
+
+  <!-- GAME BREAKDOWN -->
+  <div class="section-title">📊 Game Breakdown</div>
+  <div class="games-grid" id="gamesGrid"></div>
+
+</div>
+
+<script>
+// ── Embedded Data ────────────────────────────────────────────────────────────
+const DATA_DATE    = "2026-04-15";
+const DATA_PICKS   = [{"type": "ML", "label": "Pittsburgh Pirates ML", "team": "Pittsburgh Pirates", "conf": 85.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates", "game_id": "823399", "venue": "PNC Park", "reasoning": "Jake Irvin ERA 5.79 (home SP TBD) | Recent: Washington Nationals 5.0 RPG (0% W) | Pittsburgh Pirates 16.0 RPG (100% W)", "exp_total": 15.35, "away": "Washington Nationals", "home": "Pittsburgh Pirates"}, {"type": "ML", "label": "Cincinnati Reds ML", "team": "Cincinnati Reds", "conf": 85.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds", "game_id": "824532", "venue": "Great American Ball Park", "reasoning": "Tyler Mahle ERA 2.83 vs Rhett Lowder ERA 1.00 | Recent: San Francisco Giants 4.5 RPG (50% W) | Cincinnati Reds 4.5 RPG (50% W) | Hitter park (factor 108.0)", "exp_total": 4.43, "away": "San Francisco Giants", "home": "Cincinnati Reds"}, {"type": "ML", "label": "Baltimore Orioles ML", "team": "Baltimore Orioles", "conf": 84.3, "tier": "LOCK", "game": "Arizona Diamondbacks @ Baltimore Orioles", "game_id": "824855", "venue": "Oriole Park at Camden Yards", "reasoning": "Eduardo Rodriguez ERA 5.00 vs Kyle Bradish ERA 2.34 | Recent: Arizona Diamondbacks 7.0 RPG (0% W) | Baltimore Orioles 9.0 RPG (100% W)", "exp_total": 10.66, "away": "Arizona Diamondbacks", "home": "Baltimore Orioles"}, {"type": "ML", "label": "Los Angeles Dodgers ML", "team": "Los Angeles Dodgers", "conf": 82.9, "tier": "LOCK", "game": "New York Mets @ Los Angeles Dodgers", "game_id": "823963", "venue": "UNIQLO Field at Dodger Stadium", "reasoning": "Clay Holmes ERA 3.48 vs Shohei Ohtani ERA 2.52 | Recent: New York Mets 0.0 RPG (0% W) | Los Angeles Dodgers 4.0 RPG (100% W)", "exp_total": 5.83, "away": "New York Mets", "home": "Los Angeles Dodgers"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Arizona Diamondbacks @ Baltimore Orioles", "game_id": "824855", "venue": "Oriole Park at Camden Yards", "reasoning": "Model projects 10.7 runs vs 8.5 line (2.2 run edge)", "exp_total": 10.66, "away": "Arizona Diamondbacks", "home": "Baltimore Orioles"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates", "game_id": "823399", "venue": "PNC Park", "reasoning": "Model projects 15.3 runs vs 8.5 line (6.8 run edge) | Weak pitching matchup (avg ERA 4.99)", "exp_total": 15.35, "away": "Washington Nationals", "home": "Pittsburgh Pirates"}, {"type": "TOTAL", "label": "UNDER 8.5", "team": "UNDER", "conf": 74.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds", "game_id": "824532", "venue": "Great American Ball Park", "reasoning": "Model projects 4.4 runs vs 8.5 line (4.1 run edge) | Hitter-friendly park (factor 108.0) | Elite pitching matchup (avg ERA 1.92)", "exp_total": 4.43, "away": "San Francisco Giants", "home": "Cincinnati Reds"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Chicago Cubs @ Philadelphia Phillies", "game_id": "823477", "venue": "Citizens Bank Park", "reasoning": "Model projects 12.5 runs vs 8.5 line (4.0 run edge)", "exp_total": 12.5, "away": "Chicago Cubs", "home": "Philadelphia Phillies"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees", "game_id": "823561", "venue": "Yankee Stadium", "reasoning": "Model projects 12.5 runs vs 8.5 line (4.0 run edge)", "exp_total": 12.54, "away": "Los Angeles Angels", "home": "New York Yankees"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Miami Marlins @ Atlanta Braves", "game_id": "824936", "venue": "Truist Park", "reasoning": "Model projects 14.2 runs vs 8.5 line (5.7 run edge) | Weak pitching matchup (avg ERA 5.58)", "exp_total": 14.16, "away": "Miami Marlins", "home": "Atlanta Braves"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Texas Rangers @ Athletics", "game_id": "825021", "venue": "Sutter Health Park", "reasoning": "Model projects 12.5 runs vs 8.5 line (4.0 run edge) | Weak pitching matchup (avg ERA 6.21)", "exp_total": 12.46, "away": "Texas Rangers", "home": "Athletics"}, {"type": "TOTAL", "label": "UNDER 8.5", "team": "UNDER", "conf": 74.0, "tier": "LOCK", "game": "New York Mets @ Los Angeles Dodgers", "game_id": "823963", "venue": "UNIQLO Field at Dodger Stadium", "reasoning": "Model projects 5.8 runs vs 8.5 line (2.7 run edge) | Elite pitching matchup (avg ERA 3.00)", "exp_total": 5.83, "away": "New York Mets", "home": "Los Angeles Dodgers"}, {"type": "ML", "label": "New York Yankees ML", "team": "New York Yankees", "conf": 73.5, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees", "game_id": "823561", "venue": "Yankee Stadium", "reasoning": "Away SP TBD vs Luis Gil ERA 3.08 | Recent: Los Angeles Angels 10.0 RPG (0% W) | New York Yankees 11.0 RPG (100% W)", "exp_total": 12.54, "away": "Los Angeles Angels", "home": "New York Yankees"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 70.9, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox", "game_id": "824615", "venue": "Rate Field", "reasoning": "Model projects 10.0 runs vs 8.5 line (1.5 run edge)", "exp_total": 9.96, "away": "Tampa Bay Rays", "home": "Chicago White Sox"}, {"type": "RL", "label": "Pittsburgh Pirates -1.5", "team": "Pittsburgh Pirates", "conf": 70.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates", "game_id": "823399", "venue": "PNC Park", "reasoning": "ML conf 85% | Projected margin 6.5 runs | Pittsburgh Pirates 100% W last 10", "exp_total": 15.35, "away": "Washington Nationals", "home": "Pittsburgh Pirates"}, {"type": "RL", "label": "Cincinnati Reds -1.5", "team": "Cincinnati Reds", "conf": 70.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds", "game_id": "824532", "venue": "Great American Ball Park", "reasoning": "ML conf 85% | Projected margin 2.2 runs", "exp_total": 4.43, "away": "San Francisco Giants", "home": "Cincinnati Reds"}, {"type": "ML", "label": "Milwaukee Brewers ML", "team": "Milwaukee Brewers", "conf": 69.9, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers", "game_id": "823803", "venue": "American Family Field", "reasoning": "Dylan Cease ERA 4.86 vs Chad Patrick ERA 3.35 | Recent: Toronto Blue Jays 4.5 RPG (50% W) | Milwaukee Brewers 4.5 RPG (50% W)", "exp_total": 9.58, "away": "Toronto Blue Jays", "home": "Milwaukee Brewers"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 69.9, "tier": "LOCK", "game": "Cleveland Guardians @ St. Louis Cardinals", "game_id": "823071", "venue": "Busch Stadium", "reasoning": "Model projects 9.9 runs vs 8.5 line (1.4 run edge)", "exp_total": 9.89, "away": "Cleveland Guardians", "home": "St. Louis Cardinals"}, {"type": "RL", "label": "Baltimore Orioles -1.5", "team": "Baltimore Orioles", "conf": 69.4, "tier": "LOCK", "game": "Arizona Diamondbacks @ Baltimore Orioles", "game_id": "824855", "venue": "Oriole Park at Camden Yards", "reasoning": "ML conf 84% | Projected margin 4.1 runs | Baltimore Orioles 100% W last 10", "exp_total": 10.66, "away": "Arizona Diamondbacks", "home": "Baltimore Orioles"}, {"type": "ML", "label": "Cleveland Guardians ML", "team": "Cleveland Guardians", "conf": 68.6, "tier": "LOCK", "game": "Cleveland Guardians @ St. Louis Cardinals", "game_id": "823071", "venue": "Busch Stadium", "reasoning": "Slade Cecconi ERA 4.13 vs Dustin May ERA 4.59 | Recent: Cleveland Guardians 9.0 RPG (100% W) | St. Louis Cardinals 3.0 RPG (0% W)", "exp_total": 9.89, "away": "Cleveland Guardians", "home": "St. Louis Cardinals"}, {"type": "RL", "label": "Los Angeles Dodgers -1.5", "team": "Los Angeles Dodgers", "conf": 68.3, "tier": "LOCK", "game": "New York Mets @ Los Angeles Dodgers", "game_id": "823963", "venue": "UNIQLO Field at Dodger Stadium", "reasoning": "ML conf 83% | Projected margin 2.1 runs | Los Angeles Dodgers 100% W last 10", "exp_total": 5.83, "away": "New York Mets", "home": "Los Angeles Dodgers"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 65.4, "tier": "STRONG", "game": "Toronto Blue Jays @ Milwaukee Brewers", "game_id": "823803", "venue": "American Family Field", "reasoning": "Model projects 9.6 runs vs 8.5 line (1.1 run edge)", "exp_total": 9.58, "away": "Toronto Blue Jays", "home": "Milwaukee Brewers"}, {"type": "ML", "label": "Miami Marlins ML", "team": "Miami Marlins", "conf": 65.1, "tier": "STRONG", "game": "Miami Marlins @ Atlanta Braves", "game_id": "824936", "venue": "Truist Park", "reasoning": "Chris Paddack ERA 5.48 vs Bryce Elder ERA 5.67 | Recent: Miami Marlins 10.0 RPG (100% W) | Atlanta Braves 4.0 RPG (0% W)", "exp_total": 14.16, "away": "Miami Marlins", "home": "Atlanta Braves"}, {"type": "TOTAL", "label": "UNDER 8.5", "team": "UNDER", "conf": 64.4, "tier": "STRONG", "game": "Colorado Rockies @ Houston Astros", "game_id": "824209", "venue": "Daikin Park", "reasoning": "Model projects 7.5 runs vs 8.5 line (1.0 run edge)", "exp_total": 7.49, "away": "Colorado Rockies", "home": "Houston Astros"}, {"type": "ML", "label": "Philadelphia Phillies ML", "team": "Philadelphia Phillies", "conf": 63.2, "tier": "STRONG", "game": "Chicago Cubs @ Philadelphia Phillies", "game_id": "823477", "venue": "Citizens Bank Park", "reasoning": "Shota Imanaga ERA 3.64 vs Jes\u00fas Luzardo ERA 3.99 | Recent: Chicago Cubs 7.0 RPG (0% W) | Philadelphia Phillies 13.0 RPG (100% W)", "exp_total": 12.5, "away": "Chicago Cubs", "home": "Philadelphia Phillies"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 61.9, "tier": "LEAN", "game": "Seattle Mariners @ San Diego Padres", "game_id": "823314", "venue": "Petco Park", "reasoning": "Model projects 9.3 runs vs 8.5 line (0.8 run edge) | Pitcher-friendly park (factor 96.0)", "exp_total": 9.33, "away": "Seattle Mariners", "home": "San Diego Padres"}, {"type": "ML", "label": "Texas Rangers ML", "team": "Texas Rangers", "conf": 61.3, "tier": "LEAN", "game": "Texas Rangers @ Athletics", "game_id": "825021", "venue": "Sutter Health Park", "reasoning": "Kumar Rocker ERA 6.80 vs J.T. Ginn ERA 5.61 | Recent: Texas Rangers 8.0 RPG (100% W) | Athletics 1.0 RPG (0% W)", "exp_total": 12.46, "away": "Texas Rangers", "home": "Athletics"}, {"type": "ML", "label": "Chicago White Sox ML", "team": "Chicago White Sox", "conf": 61.1, "tier": "LEAN", "game": "Tampa Bay Rays @ Chicago White Sox", "game_id": "824615", "venue": "Rate Field", "reasoning": "Jesse Scholtens ERA 5.22 vs Sean Burke ERA 4.14 | Recent: Tampa Bay Rays 4.5 RPG (50% W) | Chicago White Sox 4.5 RPG (50% W)", "exp_total": 9.96, "away": "Tampa Bay Rays", "home": "Chicago White Sox"}, {"type": "RL", "label": "New York Yankees -1.5", "team": "New York Yankees", "conf": 60.8, "tier": "LEAN", "game": "Los Angeles Angels @ New York Yankees", "game_id": "823561", "venue": "Yankee Stadium", "reasoning": "ML conf 73% | Projected margin 3.0 runs | New York Yankees 100% W last 10", "exp_total": 12.54, "away": "Los Angeles Angels", "home": "New York Yankees"}, {"type": "ML", "label": "San Diego Padres ML", "team": "San Diego Padres", "conf": 58.9, "tier": "LEAN", "game": "Seattle Mariners @ San Diego Padres", "game_id": "823314", "venue": "Petco Park", "reasoning": "Emerson Hancock ERA 4.88 vs Randy V\u00e1squez ERA 3.67 | Recent: Seattle Mariners 6.0 RPG (100% W) | San Diego Padres 4.5 RPG (50% W) | Pitcher park (factor 96.0)", "exp_total": 9.33, "away": "Seattle Mariners", "home": "San Diego Padres"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 58.1, "tier": "LEAN", "game": "Kansas City Royals @ Detroit Tigers", "game_id": "824291", "venue": "Comerica Park", "reasoning": "Model projects 9.1 runs vs 8.5 line (0.6 run edge)", "exp_total": 9.07, "away": "Kansas City Royals", "home": "Detroit Tigers"}, {"type": "RL", "label": "Milwaukee Brewers -1.5", "team": "Milwaukee Brewers", "conf": 57.9, "tier": "LEAN", "game": "Toronto Blue Jays @ Milwaukee Brewers", "game_id": "823803", "venue": "American Family Field", "reasoning": "ML conf 70% | Projected margin 1.9 runs", "exp_total": 9.58, "away": "Toronto Blue Jays", "home": "Milwaukee Brewers"}, {"type": "RL", "label": "Cleveland Guardians -1.5", "team": "Cleveland Guardians", "conf": 56.9, "tier": "LEAN", "game": "Cleveland Guardians @ St. Louis Cardinals", "game_id": "823071", "venue": "Busch Stadium", "reasoning": "ML conf 69% | Projected margin 2.4 runs | Cleveland Guardians 100% W last 10", "exp_total": 9.89, "away": "Cleveland Guardians", "home": "St. Louis Cardinals"}, {"type": "ML", "label": "Detroit Tigers ML", "team": "Detroit Tigers", "conf": 56.1, "tier": "LEAN", "game": "Kansas City Royals @ Detroit Tigers", "game_id": "824291", "venue": "Comerica Park", "reasoning": "Seth Lugo ERA 4.33 vs Jack Flaherty ERA 4.50 | Recent: Kansas City Royals 4.5 RPG (50% W) | Detroit Tigers 4.5 RPG (50% W)", "exp_total": 9.07, "away": "Kansas City Royals", "home": "Detroit Tigers"}, {"type": "ML", "label": "Boston Red Sox ML", "team": "Boston Red Sox", "conf": 55.5, "tier": "LEAN", "game": "Boston Red Sox @ Minnesota Twins", "game_id": "823722", "venue": "Target Field", "reasoning": "Connelly Early ERA 2.23 vs Simeon Woods Richardson ERA 3.76 | Recent: Boston Red Sox 6.0 RPG (0% W) | Minnesota Twins 13.0 RPG (100% W)", "exp_total": 8.47, "away": "Boston Red Sox", "home": "Minnesota Twins"}];
+const DATA_GAMES   = [{"game_id": "824855", "away": "Arizona Diamondbacks", "home": "Baltimore Orioles", "venue": "Oriole Park at Camden Yards", "time": "16:35 UTC", "park_runs": 104.0, "park_tag": "Neutral", "away_sp": "Eduardo Rodriguez", "home_sp": "Kyle Bradish", "away_era": "5.00", "home_era": "2.34", "away_fip": "4.44", "home_fip": "2.36", "away_rpg": 4.88, "home_rpg": 4.18, "away_ops": 0.758, "home_ops": 0.699, "away_form": 7.0, "home_form": 9.0, "exp_away": 3.256, "exp_home": 7.402, "exp_total": 10.66, "away_wp": 15.7, "home_wp": 84.3, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Baltimore Orioles -1.5", "rl_team": "Baltimore Orioles", "rl_conf": 69.4}, {"game_id": "823071", "away": "Cleveland Guardians", "home": "St. Louis Cardinals", "venue": "Busch Stadium", "time": "17:15 UTC", "park_runs": 98.0, "park_tag": "Neutral", "away_sp": "Slade Cecconi", "home_sp": "Dustin May", "away_era": "4.13", "home_era": "4.59", "away_fip": "4.30", "home_fip": "4.38", "away_rpg": 3.97, "home_rpg": 4.25, "away_ops": 0.669, "home_ops": 0.693, "away_form": 9.0, "home_form": 3.0, "exp_away": 6.134, "exp_home": 3.754, "exp_total": 9.89, "away_wp": 68.6, "home_wp": 31.4, "total_pick": "OVER", "total_line": 8.5, "total_conf": 69.9, "rl_pick": "Cleveland Guardians -1.5", "rl_team": "Cleveland Guardians", "rl_conf": 56.9}, {"game_id": "823722", "away": "Boston Red Sox", "home": "Minnesota Twins", "venue": "Target Field", "time": "17:40 UTC", "park_runs": 98.0, "park_tag": "Neutral", "away_sp": "Connelly Early", "home_sp": "Simeon Woods Richardson", "away_era": "2.23", "home_era": "3.76", "away_fip": "0.71", "home_fip": "4.21", "away_rpg": 4.85, "home_rpg": 4.18, "away_ops": 0.745, "home_ops": 0.707, "away_form": 6.0, "home_form": 13.0, "exp_away": 4.607, "exp_home": 3.86, "exp_total": 8.47, "away_wp": 55.5, "home_wp": 44.5, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 50.4, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}, {"game_id": "824291", "away": "Kansas City Royals", "home": "Detroit Tigers", "venue": "Comerica Park", "time": "22:40 UTC", "park_runs": 97.0, "park_tag": "Neutral", "away_sp": "Seth Lugo", "home_sp": "Jack Flaherty", "away_era": "4.33", "home_era": "4.50", "away_fip": "4.89", "home_fip": "3.80", "away_rpg": 4.02, "home_rpg": 4.68, "away_ops": 0.706, "home_ops": 0.729, "away_form": 4.5, "home_form": 4.5, "exp_away": 4.354, "exp_home": 4.712, "exp_total": 9.07, "away_wp": 43.9, "home_wp": 56.1, "total_pick": "OVER", "total_line": 8.5, "total_conf": 58.1, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}, {"game_id": "823399", "away": "Washington Nationals", "home": "Pittsburgh Pirates", "venue": "PNC Park", "time": "22:40 UTC", "park_runs": 98.0, "park_tag": "Neutral", "away_sp": "Jake Irvin", "home_sp": "TBD", "away_era": "5.79", "home_era": "4.20", "away_fip": "5.52", "home_fip": "4.20", "away_rpg": 4.24, "home_rpg": 3.6, "away_ops": 0.693, "home_ops": 0.655, "away_form": 5.0, "home_form": 16.0, "exp_away": 4.417, "exp_home": 10.935, "exp_total": 15.35, "away_wp": 15.0, "home_wp": 85.0, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Pittsburgh Pirates -1.5", "rl_team": "Pittsburgh Pirates", "rl_conf": 70.0}, {"game_id": "824532", "away": "San Francisco Giants", "home": "Cincinnati Reds", "venue": "Great American Ball Park", "time": "22:40 UTC", "park_runs": 108.0, "park_tag": "Hitter-Friendly", "away_sp": "Tyler Mahle", "home_sp": "Rhett Lowder", "away_era": "2.83", "home_era": "1.00", "away_fip": "3.69", "home_fip": "3.13", "away_rpg": 4.35, "home_rpg": 4.42, "away_ops": 0.697, "home_ops": 0.706, "away_form": 4.5, "home_form": 4.5, "exp_away": 1.128, "exp_home": 3.306, "exp_total": 4.43, "away_wp": 15.0, "home_wp": 85.0, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Cincinnati Reds -1.5", "rl_team": "Cincinnati Reds", "rl_conf": 70.0}, {"game_id": "823477", "away": "Chicago Cubs", "home": "Philadelphia Phillies", "venue": "Citizens Bank Park", "time": "22:40 UTC", "park_runs": 103.0, "park_tag": "Neutral", "away_sp": "Shota Imanaga", "home_sp": "Jes\u00fas Luzardo", "away_era": "3.64", "home_era": "3.99", "away_fip": "4.70", "home_fip": "2.70", "away_rpg": 4.89, "home_rpg": 4.8, "away_ops": 0.75, "home_ops": 0.759, "away_form": 7.0, "home_form": 13.0, "exp_away": 5.513, "exp_home": 6.991, "exp_total": 12.5, "away_wp": 36.8, "home_wp": 63.2, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Philadelphia Phillies -1.5", "rl_team": "Philadelphia Phillies", "rl_conf": 52.6}, {"game_id": "823561", "away": "Los Angeles Angels", "home": "New York Yankees", "venue": "Yankee Stadium", "time": "23:05 UTC", "park_runs": 105.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "Luis Gil", "away_era": "4.20", "home_era": "3.08", "away_fip": "4.20", "home_fip": "4.71", "away_rpg": 4.15, "home_rpg": 5.24, "away_ops": 0.695, "home_ops": 0.787, "away_form": 10.0, "home_form": 11.0, "exp_away": 4.769, "exp_home": 7.772, "exp_total": 12.54, "away_wp": 26.5, "home_wp": 73.5, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "New York Yankees -1.5", "rl_team": "New York Yankees", "rl_conf": 60.8}, {"game_id": "824936", "away": "Miami Marlins", "home": "Atlanta Braves", "venue": "Truist Park", "time": "23:15 UTC", "park_runs": 99.0, "park_tag": "Neutral", "away_sp": "Chris Paddack", "home_sp": "Bryce Elder", "away_era": "5.48", "home_era": "5.67", "away_fip": "5.11", "home_fip": "4.56", "away_rpg": 4.38, "home_rpg": 4.47, "away_ops": 0.707, "home_ops": 0.719, "away_form": 10.0, "home_form": 4.0, "exp_away": 8.488, "exp_home": 5.674, "exp_total": 14.16, "away_wp": 65.1, "home_wp": 34.9, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Miami Marlins -1.5", "rl_team": "Miami Marlins", "rl_conf": 54.1}, {"game_id": "824615", "away": "Tampa Bay Rays", "home": "Chicago White Sox", "venue": "Rate Field", "time": "23:40 UTC", "park_runs": 103.0, "park_tag": "Neutral", "away_sp": "Jesse Scholtens", "home_sp": "Sean Burke", "away_era": "5.22", "home_era": "4.14", "away_fip": "4.98", "home_fip": "4.71", "away_rpg": 4.41, "home_rpg": 3.99, "away_ops": 0.714, "home_ops": 0.675, "away_form": 4.5, "home_form": 4.5, "exp_away": 4.51, "exp_home": 5.447, "exp_total": 9.96, "away_wp": 39.0, "home_wp": 61.1, "total_pick": "OVER", "total_line": 8.5, "total_conf": 70.9, "rl_pick": "Chicago White Sox -1.5", "rl_team": "Chicago White Sox", "rl_conf": 50.8}, {"game_id": "823803", "away": "Toronto Blue Jays", "home": "Milwaukee Brewers", "venue": "American Family Field", "time": "23:40 UTC", "park_runs": 101.0, "park_tag": "Neutral", "away_sp": "Dylan Cease", "home_sp": "Chad Patrick", "away_era": "4.86", "home_era": "3.35", "away_fip": "3.49", "home_fip": "3.30", "away_rpg": 4.93, "home_rpg": 4.97, "away_ops": 0.76, "home_ops": 0.735, "away_form": 4.5, "home_form": 4.5, "exp_away": 3.852, "exp_home": 5.731, "exp_total": 9.58, "away_wp": 30.1, "home_wp": 69.9, "total_pick": "OVER", "total_line": 8.5, "total_conf": 65.4, "rl_pick": "Milwaukee Brewers -1.5", "rl_team": "Milwaukee Brewers", "rl_conf": 57.9}, {"game_id": "824209", "away": "Colorado Rockies", "home": "Houston Astros", "venue": "Daikin Park", "time": "00:10 UTC", "park_runs": 100.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 3.69, "home_rpg": 4.24, "away_ops": 0.679, "home_ops": 0.714, "away_form": 4.5, "home_form": 2.0, "exp_away": 3.97, "exp_home": 3.522, "exp_total": 7.49, "away_wp": 53.0, "home_wp": 47.0, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 64.4, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}, {"game_id": "823314", "away": "Seattle Mariners", "home": "San Diego Padres", "venue": "Petco Park", "time": "01:40 UTC", "park_runs": 96.0, "park_tag": "Pitcher-Friendly", "away_sp": "Emerson Hancock", "home_sp": "Randy V\u00e1squez", "away_era": "4.88", "home_era": "3.67", "away_fip": "4.99", "home_fip": "4.59", "away_rpg": 4.73, "home_rpg": 4.33, "away_ops": 0.74, "home_ops": 0.711, "away_form": 6.0, "home_form": 4.5, "exp_away": 4.342, "exp_home": 4.992, "exp_total": 9.33, "away_wp": 41.1, "home_wp": 58.9, "total_pick": "OVER", "total_line": 8.5, "total_conf": 61.9, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}, {"game_id": "825021", "away": "Texas Rangers", "home": "Athletics", "venue": "Sutter Health Park", "time": "01:40 UTC", "park_runs": 97.0, "park_tag": "Neutral", "away_sp": "Kumar Rocker", "home_sp": "J.T. Ginn", "away_era": "6.80", "home_era": "5.61", "away_fip": "5.40", "home_fip": "4.75", "away_rpg": 4.22, "home_rpg": 4.53, "away_ops": 0.683, "home_ops": 0.749, "away_form": 8.0, "home_form": 1.0, "exp_away": 7.185, "exp_home": 5.276, "exp_total": 12.46, "away_wp": 61.3, "home_wp": 38.7, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Texas Rangers -1.5", "rl_team": "Texas Rangers", "rl_conf": 51.0}, {"game_id": "823963", "away": "New York Mets", "home": "Los Angeles Dodgers", "venue": "UNIQLO Field at Dodger Stadium", "time": "02:10 UTC", "park_runs": 100.0, "park_tag": "Neutral", "away_sp": "Clay Holmes", "home_sp": "Shohei Ohtani", "away_era": "3.48", "home_era": "2.52", "away_fip": "3.67", "home_fip": "1.92", "away_rpg": 4.73, "home_rpg": 5.09, "away_ops": 0.753, "home_ops": 0.768, "away_form": 0.0, "home_form": 4.0, "exp_away": 1.845, "exp_home": 3.987, "exp_total": 5.83, "away_wp": 17.1, "home_wp": 82.9, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Los Angeles Dodgers -1.5", "rl_team": "Los Angeles Dodgers", "rl_conf": 68.3}];
+const DATA_P2      = [{"n_legs": 2, "combined": 72.2, "payout": "+260", "legs": [{"label": "Pittsburgh Pirates ML", "conf": 85.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates"}, {"label": "Cincinnati Reds ML", "conf": 85.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds"}]}, {"n_legs": 2, "combined": 71.7, "payout": "+260", "legs": [{"label": "Pittsburgh Pirates ML", "conf": 85.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates"}, {"label": "Baltimore Orioles ML", "conf": 84.3, "tier": "LOCK", "game": "Arizona Diamondbacks @ Baltimore Orioles"}]}, {"n_legs": 2, "combined": 71.7, "payout": "+260", "legs": [{"label": "Cincinnati Reds ML", "conf": 85.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds"}, {"label": "Baltimore Orioles ML", "conf": 84.3, "tier": "LOCK", "game": "Arizona Diamondbacks @ Baltimore Orioles"}]}, {"n_legs": 2, "combined": 70.5, "payout": "+260", "legs": [{"label": "Pittsburgh Pirates ML", "conf": 85.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates"}, {"label": "Los Angeles Dodgers ML", "conf": 82.9, "tier": "LOCK", "game": "New York Mets @ Los Angeles Dodgers"}]}, {"n_legs": 2, "combined": 70.5, "payout": "+260", "legs": [{"label": "Cincinnati Reds ML", "conf": 85.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds"}, {"label": "Los Angeles Dodgers ML", "conf": 82.9, "tier": "LOCK", "game": "New York Mets @ Los Angeles Dodgers"}]}];
+const DATA_P3      = [{"n_legs": 3, "combined": 60.9, "payout": "+595", "legs": [{"label": "Pittsburgh Pirates ML", "conf": 85.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates"}, {"label": "Cincinnati Reds ML", "conf": 85.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds"}, {"label": "Baltimore Orioles ML", "conf": 84.3, "tier": "LOCK", "game": "Arizona Diamondbacks @ Baltimore Orioles"}]}, {"n_legs": 3, "combined": 59.9, "payout": "+595", "legs": [{"label": "Pittsburgh Pirates ML", "conf": 85.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates"}, {"label": "Cincinnati Reds ML", "conf": 85.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds"}, {"label": "Los Angeles Dodgers ML", "conf": 82.9, "tier": "LOCK", "game": "New York Mets @ Los Angeles Dodgers"}]}, {"n_legs": 3, "combined": 59.4, "payout": "+595", "legs": [{"label": "Pittsburgh Pirates ML", "conf": 85.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates"}, {"label": "Baltimore Orioles ML", "conf": 84.3, "tier": "LOCK", "game": "Arizona Diamondbacks @ Baltimore Orioles"}, {"label": "Los Angeles Dodgers ML", "conf": 82.9, "tier": "LOCK", "game": "New York Mets @ Los Angeles Dodgers"}]}, {"n_legs": 3, "combined": 59.4, "payout": "+595", "legs": [{"label": "Cincinnati Reds ML", "conf": 85.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds"}, {"label": "Baltimore Orioles ML", "conf": 84.3, "tier": "LOCK", "game": "Arizona Diamondbacks @ Baltimore Orioles"}, {"label": "Los Angeles Dodgers ML", "conf": 82.9, "tier": "LOCK", "game": "New York Mets @ Los Angeles Dodgers"}]}, {"n_legs": 3, "combined": 53.5, "payout": "+595", "legs": [{"label": "Pittsburgh Pirates ML", "conf": 85.0, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates"}, {"label": "Cincinnati Reds ML", "conf": 85.0, "tier": "LOCK", "game": "San Francisco Giants @ Cincinnati Reds"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Arizona Diamondbacks @ Baltimore Orioles"}]}];
+
+// ── State ────────────────────────────────────────────────────────────────────
+let filterType = "all", filterTier = "all", filterTeam = "";
+let showParlay = 2;
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+document.getElementById("dateStr").textContent =
+  new Date(DATA_DATE + "T12:00:00").toLocaleDateString("en-US",
+    {weekday:"long",year:"numeric",month:"long",day:"numeric"});
+
+document.getElementById("gameCount").textContent = DATA_GAMES.length;
+document.getElementById("pickCount").textContent = DATA_PICKS.length;
+document.getElementById("lockCount").textContent = DATA_PICKS.filter(p=>p.tier==="LOCK").length;
+if(DATA_PICKS.length){
+  document.getElementById("topPick").textContent =
+    DATA_PICKS[0].label + " (" + DATA_PICKS[0].conf + "%)";
+}
+
+// ── Render Picks ─────────────────────────────────────────────────────────────
+function renderPicks(){
+  const grid = document.getElementById("picksGrid");
+  grid.innerHTML = "";
+  let visible = 0;
+  DATA_PICKS.forEach(p=>{
+    const show = (filterType==="all" || p.type===filterType)
+              && (filterTier==="all" || p.tier===filterTier)
+              && (!filterTeam || p.away.toLowerCase().includes(filterTeam)
+                             || p.home.toLowerCase().includes(filterTeam)
+                             || p.team.toLowerCase().includes(filterTeam));
+    if(!show) return;
+    visible++;
+    const w = p.conf; // already %
+    grid.innerHTML += `
+      <div class="pick-card tier-${p.tier}" data-type="${p.type}" data-tier="${p.tier}">
+        <div class="pick-top">
+          <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"O/U":p.type}</span>
+          <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
+        </div>
+        <div class="pick-label">${p.label}</div>
+        <div class="pick-game">${p.game}</div>
+        <div class="conf-row">
+          <div class="conf-bar-wrap">
+            <div class="conf-bar bar-${p.tier}" style="width:${w}%"></div>
+          </div>
+          <span class="conf-pct pct-${p.tier}">${w}%</span>
+        </div>
+        <div class="pick-reasoning">${p.reasoning}</div>
+      </div>`;
+  });
+  document.getElementById("pickResults").innerHTML =
+    `Showing <b>${visible}</b> of <b>${DATA_PICKS.length}</b> picks`;
+  if(visible===0) grid.innerHTML = `<div class="empty">No picks match the current filters.</div>`;
+}
+
+function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":"⭐"; }
+
+// ── Render Parlays ────────────────────────────────────────────────────────────
+function renderParlays(){
+  const data = showParlay===2 ? DATA_P2 : DATA_P3;
+  const grid = document.getElementById("parlayGrid");
+  grid.innerHTML = "";
+  if(!data.length){
+    grid.innerHTML=`<div class="empty">Not enough qualified legs for ${showParlay}-leg parlays today.</div>`;
+    return;
+  }
+  data.forEach((par,i)=>{
+    const legsHtml = par.legs.map(l=>`
+      <div class="parlay-leg">
+        <span class="leg-conf leg-${l.tier}">${l.conf}%</span>
+        <div class="leg-info">
+          <div class="leg-label">${l.label}</div>
+          <div class="leg-game">${l.game}</div>
+        </div>
+      </div>`).join("");
+    grid.innerHTML += `
+      <div class="parlay-card">
+        <div class="parlay-header">
+          <span class="parlay-tag">Parlay ${i+1} &bull; ${par.n_legs} Legs</span>
+          <span class="parlay-payout">${par.payout}</span>
+        </div>
+        <div class="parlay-conf">${par.combined}%<span>combined confidence</span></div>
+        <div class="parlay-legs">${legsHtml}</div>
+      </div>`;
+  });
+}
+
+// ── Render Games ─────────────────────────────────────────────────────────────
+function parkClass(tag){
+  if(tag.includes("Hitter")) return "park-hitter";
+  if(tag.includes("Pitcher")) return "park-pitcher";
+  return "park-neutral";
+}
+
+function renderGames(){
+  const grid = document.getElementById("gamesGrid");
+  grid.innerHTML = "";
+  DATA_GAMES.forEach(g=>{
+    const homeW = g.home_wp, awayW = g.away_wp;
+    const totalDir = g.exp_total > g.total_line ? "↑ OVER" : "↓ UNDER";
+    const totalCol = g.exp_total > g.total_line ? "color:var(--red)" : "color:var(--blue)";
+    grid.innerHTML += `
+      <div class="game-card">
+        <div class="game-header">
+          <span class="matchup">${g.away} @ ${g.home}</span>
+          <span class="game-time">${g.time}</span>
+        </div>
+        <div class="game-body">
+          <div class="game-row">
+            <span class="row-label">Park</span>
+            <span class="row-val">${g.venue.length>30?g.venue.slice(0,28)+"…":g.venue}
+              <span class="park-badge ${parkClass(g.park_tag)}">${g.park_tag} (${g.park_runs})</span>
+            </span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Away SP</span>
+            <span class="row-val">${g.away_sp} &bull; ERA ${g.away_era} / FIP ${g.away_fip}</span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Home SP</span>
+            <span class="row-val">${g.home_sp} &bull; ERA ${g.home_era} / FIP ${g.home_fip}</span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Offense</span>
+            <span class="row-val">${g.away} ${g.away_rpg} RPG &nbsp;|&nbsp; ${g.home} ${g.home_rpg} RPG</span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Projected</span>
+            <span class="row-val">${g.away} <b>${g.exp_away}</b> &nbsp;|&nbsp; ${g.home} <b>${g.exp_home}</b></span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Total</span>
+            <span class="row-val">
+              <b style="${totalCol}">${totalDir}</b> &nbsp;
+              Model ${g.exp_total} vs ${g.total_line} line &nbsp;
+              <span style="color:var(--sub)">(${g.total_conf}% conf)</span>
+            </span>
+          </div>
+          ${g.rl_team ? `<div class="game-row"><span class="row-label">Run Line</span>
+            <span class="row-val">${g.rl_pick} &nbsp;<span style="color:var(--sub)">(${g.rl_conf}% conf)</span></span></div>` : ""}
+          <div style="margin-top:6px">
+            <div style="display:flex;justify-content:space-between;font-size:.76rem;color:var(--sub);margin-bottom:4px">
+              <span>${g.away} ${g.away_wp}%</span><span>${g.home} ${g.home_wp}%</span>
+            </div>
+            <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.06)">
+              <div style="width:${g.away_wp}%;background:var(--blue)"></div>
+              <div style="width:${g.home_wp}%;background:var(--green)"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--sub);margin-top:3px">
+              <span>Away</span><span>Home</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  });
+}
+
+// ── Filter Handlers ───────────────────────────────────────────────────────────
+document.querySelectorAll(".filter-btn").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    const group = btn.dataset.group, val = btn.dataset.val;
+    document.querySelectorAll(`.filter-btn[data-group="${group}"]`).forEach(b=>{
+      b.classList.remove("active","active-gold","active-blue");
+    });
+    if(val==="LOCK") btn.classList.add("active-gold");
+    else if(val==="STRONG") btn.classList.add("active-blue");
+    else btn.classList.add("active");
+    if(group==="type") filterType = val;
+    else               filterTier = val;
+    renderPicks();
+  });
+});
+
+document.getElementById("teamSearch").addEventListener("input", e=>{
+  filterTeam = e.target.value.trim().toLowerCase();
+  renderPicks();
+});
+
+document.querySelectorAll(".section-tab").forEach(tab=>{
+  tab.addEventListener("click",()=>{
+    document.querySelectorAll(".section-tab").forEach(t=>t.classList.remove("active"));
+    tab.classList.add("active");
+    showParlay = parseInt(tab.dataset.parlay);
+    renderParlays();
+  });
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+renderPicks();
+renderParlays();
+renderGames();
+</script>
+</body>
+</html>

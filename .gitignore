@@ -14,4 +14,4 @@ data/raw/
 
 # Keep clean master files in version control
 # data/clean/ is intentionally NOT ignored
-picks/
+# picks/ is intentionally tracked so HTML dashboards are served via GitHub Pages

@@ -1,0 +1,36 @@
+date,game,type,label,conf,tier,reasoning
+2026-04-15,Washington Nationals @ Pittsburgh Pirates,ML,Pittsburgh Pirates ML,0.85,LOCK,Jake Irvin ERA 5.79 (home SP TBD) | Recent: Washington Nationals 5.0 RPG (0% W) | Pittsburgh Pirates 16.0 RPG (100% W)
+2026-04-15,San Francisco Giants @ Cincinnati Reds,ML,Cincinnati Reds ML,0.85,LOCK,Tyler Mahle ERA 2.83 vs Rhett Lowder ERA 1.00 | Recent: San Francisco Giants 4.5 RPG (50% W) | Cincinnati Reds 4.5 RPG (50% W) | Hitter park (factor 108.0)
+2026-04-15,Arizona Diamondbacks @ Baltimore Orioles,ML,Baltimore Orioles ML,0.843,LOCK,Eduardo Rodriguez ERA 5.00 vs Kyle Bradish ERA 2.34 | Recent: Arizona Diamondbacks 7.0 RPG (0% W) | Baltimore Orioles 9.0 RPG (100% W)
+2026-04-15,New York Mets @ Los Angeles Dodgers,ML,Los Angeles Dodgers ML,0.8288,LOCK,Clay Holmes ERA 3.48 vs Shohei Ohtani ERA 2.52 | Recent: New York Mets 0.0 RPG (0% W) | Los Angeles Dodgers 4.0 RPG (100% W)
+2026-04-15,Arizona Diamondbacks @ Baltimore Orioles,TOTAL,OVER 8.5,0.74,LOCK,Model projects 10.7 runs vs 8.5 line (2.2 run edge)
+2026-04-15,Washington Nationals @ Pittsburgh Pirates,TOTAL,OVER 8.5,0.74,LOCK,Model projects 15.3 runs vs 8.5 line (6.8 run edge) | Weak pitching matchup (avg ERA 4.99)
+2026-04-15,San Francisco Giants @ Cincinnati Reds,TOTAL,UNDER 8.5,0.74,LOCK,Model projects 4.4 runs vs 8.5 line (4.1 run edge) | Hitter-friendly park (factor 108.0) | Elite pitching matchup (avg ERA 1.92)
+2026-04-15,Chicago Cubs @ Philadelphia Phillies,TOTAL,OVER 8.5,0.74,LOCK,Model projects 12.5 runs vs 8.5 line (4.0 run edge)
+2026-04-15,Los Angeles Angels @ New York Yankees,TOTAL,OVER 8.5,0.74,LOCK,Model projects 12.5 runs vs 8.5 line (4.0 run edge)
+2026-04-15,Miami Marlins @ Atlanta Braves,TOTAL,OVER 8.5,0.74,LOCK,Model projects 14.2 runs vs 8.5 line (5.7 run edge) | Weak pitching matchup (avg ERA 5.58)
+2026-04-15,Texas Rangers @ Athletics,TOTAL,OVER 8.5,0.74,LOCK,Model projects 12.5 runs vs 8.5 line (4.0 run edge) | Weak pitching matchup (avg ERA 6.21)
+2026-04-15,New York Mets @ Los Angeles Dodgers,TOTAL,UNDER 8.5,0.74,LOCK,Model projects 5.8 runs vs 8.5 line (2.7 run edge) | Elite pitching matchup (avg ERA 3.00)
+2026-04-15,Los Angeles Angels @ New York Yankees,ML,New York Yankees ML,0.7347,LOCK,Away SP TBD vs Luis Gil ERA 3.08 | Recent: Los Angeles Angels 10.0 RPG (0% W) | New York Yankees 11.0 RPG (100% W)
+2026-04-15,Tampa Bay Rays @ Chicago White Sox,TOTAL,OVER 8.5,0.7086,LOCK,Model projects 10.0 runs vs 8.5 line (1.5 run edge)
+2026-04-15,Washington Nationals @ Pittsburgh Pirates,RL,Pittsburgh Pirates -1.5,0.7,LOCK,ML conf 85% | Projected margin 6.5 runs | Pittsburgh Pirates 100% W last 10
+2026-04-15,San Francisco Giants @ Cincinnati Reds,RL,Cincinnati Reds -1.5,0.7,LOCK,ML conf 85% | Projected margin 2.2 runs
+2026-04-15,Toronto Blue Jays @ Milwaukee Brewers,ML,Milwaukee Brewers ML,0.6992,LOCK,Dylan Cease ERA 4.86 vs Chad Patrick ERA 3.35 | Recent: Toronto Blue Jays 4.5 RPG (50% W) | Milwaukee Brewers 4.5 RPG (50% W)
+2026-04-15,Cleveland Guardians @ St. Louis Cardinals,TOTAL,OVER 8.5,0.6986,LOCK,Model projects 9.9 runs vs 8.5 line (1.4 run edge)
+2026-04-15,Arizona Diamondbacks @ Baltimore Orioles,RL,Baltimore Orioles -1.5,0.6944,LOCK,ML conf 84% | Projected margin 4.1 runs | Baltimore Orioles 100% W last 10
+2026-04-15,Cleveland Guardians @ St. Louis Cardinals,ML,Cleveland Guardians ML,0.6857,LOCK,Slade Cecconi ERA 4.13 vs Dustin May ERA 4.59 | Recent: Cleveland Guardians 9.0 RPG (100% W) | St. Louis Cardinals 3.0 RPG (0% W)
+2026-04-15,New York Mets @ Los Angeles Dodgers,RL,Los Angeles Dodgers -1.5,0.683,LOCK,ML conf 83% | Projected margin 2.1 runs | Los Angeles Dodgers 100% W last 10
+2026-04-15,Toronto Blue Jays @ Milwaukee Brewers,TOTAL,OVER 8.5,0.6543,STRONG,Model projects 9.6 runs vs 8.5 line (1.1 run edge)
+2026-04-15,Miami Marlins @ Atlanta Braves,ML,Miami Marlins ML,0.6514,STRONG,Chris Paddack ERA 5.48 vs Bryce Elder ERA 5.67 | Recent: Miami Marlins 10.0 RPG (100% W) | Atlanta Braves 4.0 RPG (0% W)
+2026-04-15,Colorado Rockies @ Houston Astros,TOTAL,UNDER 8.5,0.6443,STRONG,Model projects 7.5 runs vs 8.5 line (1.0 run edge)
+2026-04-15,Chicago Cubs @ Philadelphia Phillies,ML,Philadelphia Phillies ML,0.632,STRONG,Shota Imanaga ERA 3.64 vs Jesús Luzardo ERA 3.99 | Recent: Chicago Cubs 7.0 RPG (0% W) | Philadelphia Phillies 13.0 RPG (100% W)
+2026-04-15,Seattle Mariners @ San Diego Padres,TOTAL,OVER 8.5,0.6186,LEAN,Model projects 9.3 runs vs 8.5 line (0.8 run edge) | Pitcher-friendly park (factor 96.0)
+2026-04-15,Texas Rangers @ Athletics,ML,Texas Rangers ML,0.6126,LEAN,Kumar Rocker ERA 6.80 vs J.T. Ginn ERA 5.61 | Recent: Texas Rangers 8.0 RPG (100% W) | Athletics 1.0 RPG (0% W)
+2026-04-15,Tampa Bay Rays @ Chicago White Sox,ML,Chicago White Sox ML,0.6105,LEAN,Jesse Scholtens ERA 5.22 vs Sean Burke ERA 4.14 | Recent: Tampa Bay Rays 4.5 RPG (50% W) | Chicago White Sox 4.5 RPG (50% W)
+2026-04-15,Los Angeles Angels @ New York Yankees,RL,New York Yankees -1.5,0.6078,LEAN,ML conf 73% | Projected margin 3.0 runs | New York Yankees 100% W last 10
+2026-04-15,Seattle Mariners @ San Diego Padres,ML,San Diego Padres ML,0.5885,LEAN,Emerson Hancock ERA 4.88 vs Randy Vásquez ERA 3.67 | Recent: Seattle Mariners 6.0 RPG (100% W) | San Diego Padres 4.5 RPG (50% W) | Pitcher park (factor 96.0)
+2026-04-15,Kansas City Royals @ Detroit Tigers,TOTAL,OVER 8.5,0.5814,LEAN,Model projects 9.1 runs vs 8.5 line (0.6 run edge)
+2026-04-15,Toronto Blue Jays @ Milwaukee Brewers,RL,Milwaukee Brewers -1.5,0.5794,LEAN,ML conf 70% | Projected margin 1.9 runs
+2026-04-15,Cleveland Guardians @ St. Louis Cardinals,RL,Cleveland Guardians -1.5,0.5686,LEAN,ML conf 69% | Projected margin 2.4 runs | Cleveland Guardians 100% W last 10
+2026-04-15,Kansas City Royals @ Detroit Tigers,ML,Detroit Tigers ML,0.5611,LEAN,Seth Lugo ERA 4.33 vs Jack Flaherty ERA 4.50 | Recent: Kansas City Royals 4.5 RPG (50% W) | Detroit Tigers 4.5 RPG (50% W)
+2026-04-15,Boston Red Sox @ Minnesota Twins,ML,Boston Red Sox ML,0.5552,LEAN,Connelly Early ERA 2.23 vs Simeon Woods Richardson ERA 3.76 | Recent: Boston Red Sox 6.0 RPG (0% W) | Minnesota Twins 13.0 RPG (100% W)
