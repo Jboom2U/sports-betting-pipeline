@@ -14,3 +14,4 @@ data/raw/
 
 # Keep clean master files in version control
 # data/clean/ is intentionally NOT ignored
+picks/
