@@ -1,0 +1,31 @@
+venue,team,park_factor_runs,park_factor_hr,roof,surface,notes
+Coors Field,Colorado Rockies,117,122,Open,Grass,High-altitude Denver - biggest hitter park in baseball
+Great American Ball Park,Cincinnati Reds,108,112,Open,Grass,Hitter-friendly in Cincinnati
+Yankee Stadium,New York Yankees,105,119,Open,Grass,Short porch in right field inflates HR significantly
+Fenway Park,Boston Red Sox,104,102,Open,Grass,Green Monster boosts hits; small park overall
+Globe Life Field,Texas Rangers,103,105,Retractable,Grass,Texas heat in a sealed environment
+Citizens Bank Park,Philadelphia Phillies,103,107,Open,Grass,Hitter-friendly with short fences
+Rogers Centre,Toronto Blue Jays,103,105,Retractable,Artificial,Indoor dome; consistent warm conditions
+Wrigley Field,Chicago Cubs,103,108,Open,Grass,Wind-dependent; strong winds can make it extreme either way
+Guaranteed Rate Field,Chicago White Sox,103,106,Open,Grass,Hitter-friendly south-side park
+American Family Field,Milwaukee Brewers,101,104,Retractable,Grass,Moderate hitter advantage
+Chase Field,Arizona Diamondbacks,101,105,Retractable,Grass,Phoenix heat; retractable roof used in summer
+Dodger Stadium,Los Angeles Dodgers,100,100,Open,Grass,Neutral park; slight pitcher lean at elevation
+T-Mobile Park,Seattle Mariners,99,97,Retractable,Grass,Marine air suppresses offense; slight pitcher lean
+Kauffman Stadium,Kansas City Royals,100,98,Open,Grass,Spacious outfield; neutral to slight pitcher lean
+Nationals Park,Washington Nationals,100,100,Open,Grass,Neutral park
+Minute Maid Park,Houston Astros,99,101,Retractable,Grass,Roof controls conditions; neutral overall
+Truist Park,Atlanta Braves,99,101,Open,Grass,Moderate; slight pitcher lean
+Target Field,Minnesota Twins,98,97,Open,Grass,Cold weather suppresses offense early/late season
+Progressive Field,Cleveland Guardians,99,98,Open,Grass,Slight pitcher lean
+Busch Stadium,St. Louis Cardinals,98,95,Open,Grass,Spacious; pitcher-friendly especially for HR
+Angel Stadium,Los Angeles Angels,98,97,Open,Grass,Spacious; pitcher-friendly
+Comerica Park,Detroit Tigers,97,90,Open,Grass,Large park; one of the best pitcher parks for HR
+PNC Park,Pittsburgh Pirates,98,96,Open,Grass,Pitcher-friendly with deep outfield gaps
+Oracle Park,San Francisco Giants,95,91,Open,Grass,Marine layer and cold air; one of the most pitcher-friendly parks
+Petco Park,San Diego Padres,96,93,Open,Grass,Marine layer keeps ball down; pitcher-friendly
+Tropicana Field,Tampa Bay Rays,96,98,Fixed,Artificial,Indoor dome; artificial turf speeds up grounders
+loanDepot park,Miami Marlins,96,96,Retractable,Grass,Hot humid air; roof used most games
+Citi Field,New York Mets,97,98,Open,Grass,Pitcher-friendly; deep fences hurt HR
+Camden Yards,Baltimore Orioles,104,107,Open,Grass,Hitter-friendly with short right field
+Sutter Health Park,Oakland Athletics,97,96,Open,Grass,Sacramento temporary home; neutral conditions

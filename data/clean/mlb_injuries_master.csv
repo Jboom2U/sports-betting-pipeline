@@ -1,0 +1,39 @@
+record_type,game_date,player_name,player_id,team,team_id,transaction,description,effective_date,timestamp
+injury,2026-04-14,Parker Meadows,678009,Detroit Tigers,116,Status Change,Detroit Tigers transferred CF Parker Meadows from the 10-day injured list to the 60-day injured list. Left radius fracture.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Tatsuya Imai,837227,Houston Astros,117,Status Change,"Houston Astros placed RHP Tatsuya Imai on the 15-day injured list retroactive to April 12, 2026. Right arm fatigue.",2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Cole Henry,669371,Washington Nationals,120,Status Change,Washington Nationals placed RHP Cole Henry on the 15-day injured list. Right rotator cuff strain.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Ryan Mountcastle,663624,Baltimore Orioles,110,Status Change,Baltimore Orioles placed 1B Ryan Mountcastle on the 60-day injured list. Left foot fracture.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Yaramil Hiraldo,682274,Baltimore Orioles,110,Status Change,Baltimore Orioles transferred RHP Yaramil Hiraldo from the 15-day injured list to the 60-day injured list. Right shoulder inflammation.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Shane Bieber,669456,Toronto Blue Jays,141,Status Change,Toronto Blue Jays transferred RHP Shane Bieber from the 15-day injured list to the 60-day injured list. Right elbow inflammation.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Jonathan Bowlan,680742,Philadelphia Phillies,143,Status Change,Philadelphia Phillies placed RHP Jonathan Bowlan on the 15-day injured list. Right groin strain.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Luke Williams,663897,Atlanta Braves,144,Designated for Assignment,Atlanta Braves designated SS Luke Williams for assignment.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Eduardo Villegas,840113,Los Angeles Dodgers,119,Signed as Free Agent,Los Angeles Dodgers signed free agent RHP Eduardo Villegas to a minor league contract.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Jeremy Peña,665161,Houston Astros,117,Status Change,"Houston Astros placed SS Jeremy Peña on the 10-day injured list retroactive to April 12, 2026. Grade one hamstring strain.",2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Hunter Gaddis,683769,Cleveland Guardians,114,Status Change,Cleveland Guardians activated RHP Hunter Gaddis from the 15-day injured list.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Ben Casparius,676508,Los Angeles Dodgers,119,Status Change,Los Angeles Dodgers placed RHP Ben Casparius on the 15-day injured list. Right shoulder inflammation.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Ken Waldichuk,686610,Washington Nationals,120,Status Change,Washington Nationals placed LHP Ken Waldichuk on the 15-day injured list. Left forearm tightness.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,George Valera,671655,Cleveland Guardians,114,Status Change,Cleveland Guardians activated RF George Valera from the 10-day injured list.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Yoniel Curet,692414,Detroit Tigers,116,Claimed Off Waivers,Detroit Tigers claimed RHP Yoniel Curet off waivers from Philadelphia Phillies.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Weston Wilson,642215,Baltimore Orioles,110,Selected,Baltimore Orioles selected the contract of LF Weston Wilson from Norfolk Tides.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Seth Johnson,686751,Philadelphia Phillies,143,Recalled,Philadelphia Phillies recalled RHP Seth Johnson from Lehigh Valley IronPigs.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Noelvi Marte,682622,Louisville Bats,416,Optioned,Cincinnati Reds optioned OF Noelvi Marte to Louisville Bats.,2026-04-13,2026-04-14 22:09:08
+injury,2026-04-14,Merrill Kelly,518876,Arizona Diamondbacks,109,Status Change,Arizona Diamondbacks activated RHP Merrill Kelly from the 15-day injured list.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Gabriel Moreno,672515,Arizona Diamondbacks,109,Status Change,"Arizona Diamondbacks placed C Gabriel Moreno on the 10-day injured list retroactive to April 11, 2026. Left oblique strain.",2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Ethan Roberts,681799,Chicago Cubs,112,Status Change,"Chicago Cubs placed RHP Ethan Roberts on the 15-day injured list retroactive to April 13, 2026. Right middle finger laceration.",2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Pavin Smith,656976,Arizona Diamondbacks,109,Status Change,Arizona Diamondbacks transferred 1B Pavin Smith from the 10-day injured list to the 60-day injured list. Left elbow inflammation.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Christian Yelich,592885,Milwaukee Brewers,158,Status Change,"Milwaukee Brewers placed LF Christian Yelich on the 10-day injured list retroactive to April 13, 2026. Left groin strain.",2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Jonathan Cannon,686563,Chicago White Sox,145,Status Change,"Chicago White Sox placed RHP Jonathan Cannon on the 15-day injured list retroactive to April 13, 2026. Right hip inflammation.",2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Everson Pereira,677592,Chicago White Sox,145,Status Change,Chicago White Sox activated CF Everson Pereira from the 10-day injured list.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Johan Oviedo,670912,Boston Red Sox,111,Status Change,Boston Red Sox transferred RHP Johan Oviedo from the 15-day injured list to the 60-day injured list. Right elbow strain.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Ryan Pepiot,686752,Tampa Bay Rays,139,Status Change,Tampa Bay Rays transferred RHP Ryan Pepiot from the 15-day injured list to the 60-day injured list. Right hip inflammation.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Nick Pivetta,601713,San Diego Padres,135,Status Change,"San Diego Padres placed RHP Nick Pivetta on the 15-day injured list retroactive to April 13, 2026. Right elbow inflammation.",2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Rob Zastryzny,642239,Milwaukee Brewers,158,Status Change,Milwaukee Brewers placed LHP Rob Zastryzny on the 60-day injured list. Left shoulder strain.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Joey Gerber,680702,New York Mets,121,Status Change,New York Mets placed RHP Joey Gerber on the 15-day injured list. Right finger blister.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Zack Wheeler,554430,Reading Fightin Phils,522,Assigned,Philadelphia Phillies sent RHP Zack Wheeler on a rehab assignment to Reading Fightin Phils.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Griff Mcgarry,676046,Los Angeles Dodgers,119,Trade,Philadelphia Phillies traded RHP Griff McGarry to Los Angeles Dodgers for Future Considerations. International Bonus Pool Money.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Chase Shugart,663767,Philadelphia Phillies,143,Recalled,Philadelphia Phillies recalled RHP Chase Shugart from Lehigh Valley IronPigs.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Yerry De Los Santos,660787,New York Yankees,147,Recalled,New York Yankees recalled RHP Yerry De los Santos from Scranton/Wilkes-Barre RailRiders.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Jake Bird,656234,Scranton/Wilkes-Barre RailRiders,531,Optioned,New York Yankees optioned RHP Jake Bird to Scranton/Wilkes-Barre RailRiders.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Greg Jones,675659,Milwaukee Brewers,158,Selected,Milwaukee Brewers selected the contract of RF Greg Jones from Nashville Sounds.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,Rece Hinds,677956,Cincinnati Reds,113,Recalled,Cincinnati Reds recalled RF Rece Hinds from Louisville Bats.,2026-04-14,2026-04-14 22:09:08
+injury,2026-04-14,,,Philadelphia Phillies,143,Trade,Philadelphia Phillies traded RHP Griff McGarry to Los Angeles Dodgers for Future Considerations. International Bonus Pool Money.,2026-04-14,2026-04-14 22:09:08
