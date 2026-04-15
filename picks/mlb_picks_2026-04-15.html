@@ -48,13 +48,31 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 }
 .header-sub{color:var(--sub);margin-top:6px;font-size:.9rem;font-weight:500}
 .header-stats{
-  display:flex;justify-content:center;gap:28px;margin-top:16px;flex-wrap:wrap;
+  display:flex;justify-content:center;gap:28px;margin-top:16px;flex-wrap:wrap;align-items:center;
 }
 .stat-pill{
   background:rgba(255,255,255,.05);border:1px solid var(--border);
   border-radius:20px;padding:5px 14px;font-size:.82rem;font-weight:600;color:var(--text);
 }
 .stat-pill span{color:var(--green)}
+/* ── REFRESH BUTTON ── */
+#refreshBtn{
+  display:none;align-items:center;gap:8px;
+  background:linear-gradient(135deg,#00e676,#00b248);
+  border:none;border-radius:24px;padding:9px 22px;
+  font-size:.88rem;font-weight:700;color:#000;cursor:pointer;
+  font-family:'Inter',sans-serif;transition:opacity .2s,transform .15s;
+  box-shadow:0 0 20px rgba(0,230,118,.3);
+}
+#refreshBtn:hover{opacity:.88;transform:scale(1.03)}
+#refreshBtn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+#refreshBtn svg{width:15px;height:15px;flex-shrink:0}
+.spin{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#refreshStatus{
+  font-size:.75rem;color:var(--sub);margin-top:6px;
+  min-height:16px;text-align:center;
+}
 
 /* ── FILTERS ── */
 .filters{
@@ -234,7 +252,14 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="stat-pill">Picks <span id="pickCount">—</span></div>
     <div class="stat-pill">Locks <span id="lockCount">—</span></div>
     <div class="stat-pill">Top Pick <span id="topPick">—</span></div>
+    <button id="refreshBtn" onclick="doRefresh()">
+      <svg id="refreshIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+      Refresh Picks
+    </button>
   </div>
+  <div id="refreshStatus"></div>
 </div>
 
 <div class="filters">
@@ -470,6 +495,45 @@ document.querySelectorAll(".section-tab").forEach(tab=>{
     renderParlays();
   });
 });
+
+// ── Refresh Button (only shown when served locally) ───────────────────────────
+const LOCAL_API = "http://localhost:8765";
+const isLocal   = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+
+if(isLocal){
+  document.getElementById("refreshBtn").style.display = "inline-flex";
+}
+
+async function doRefresh(){
+  const btn    = document.getElementById("refreshBtn");
+  const icon   = document.getElementById("refreshIcon");
+  const status = document.getElementById("refreshStatus");
+
+  btn.disabled = true;
+  icon.classList.add("spin");
+  status.style.color = "var(--sub)";
+  status.textContent = "Running pipeline… this takes about 30 seconds";
+
+  try{
+    const res = await fetch(LOCAL_API + "/refresh", {method:"GET"});
+    if(res.ok){
+      status.style.color = "var(--green)";
+      status.textContent = "✓ Done! Reloading picks...";
+      setTimeout(()=> location.reload(), 1200);
+    } else {
+      const msg = await res.text();
+      status.style.color = "var(--red)";
+      status.textContent = "Error: " + msg.slice(0,120);
+      btn.disabled = false;
+      icon.classList.remove("spin");
+    }
+  } catch(e){
+    status.style.color = "#ef9a9a";
+    status.textContent = "Could not reach local server. Is serve_picks.py running?";
+    btn.disabled = false;
+    icon.classList.remove("spin");
+  }
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 renderPicks();
