@@ -847,17 +847,12 @@ def main():
         print(f"No games found for {target}. Run python run_pipeline.py first.")
         sys.exit(0)
 
-    picks     = generate_picks(scored)
-    parlays_2 = build_parlays(picks, legs=2, max_parlays=5)
-    parlays_3 = build_parlays(picks, legs=3, max_parlays=5)
-
-    # Today's live/completed scores — fetch directly from MLB API for freshness
+    # Fetch live scores FIRST — filter finished games before generating picks
     today_scores = fetch_live_scores(actual_date)
     if not today_scores:
-        # Fall back to master CSV if API unavailable
         today_scores = model.get_today_scores(actual_date)
 
-    # Remove any scored games that the API now shows as Final
+    # Remove games the MLB API confirms as Final BEFORE picks are generated
     finished = set(
         (s["away_team"], s["home_team"])
         for s in today_scores
@@ -865,11 +860,16 @@ def main():
     )
     if finished:
         before = len(scored)
-        scored = [g for g in scored
-                  if (g["away_team"], g["home_team"]) not in finished]
+        scored  = [g for g in scored
+                   if (g["away_team"], g["home_team"]) not in finished]
         removed = before - len(scored)
         if removed:
-            log.info(f"Removed {removed} additional finished game(s) from picks")
+            log.info(f"Removed {removed} finished game(s) confirmed by live API")
+
+    # Now generate picks from the fully filtered game list
+    picks     = generate_picks(scored)
+    parlays_2 = build_parlays(picks, legs=2, max_parlays=5)
+    parlays_3 = build_parlays(picks, legs=3, max_parlays=5)
 
     # Serialize
     picks_json  = json.dumps(prep_picks(picks))
