@@ -198,6 +198,100 @@ def prep_games(scored):
     return out
 
 
+def load_standings() -> dict:
+    """Load latest W-L record for every team from the standings master."""
+    path = os.path.join(os.path.dirname(__file__), "data", "clean",
+                        "mlb_standings_master.csv")
+    records: dict[str, dict] = {}
+    if not os.path.exists(path):
+        return records
+    import csv as _csv
+    with open(path, encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            team = row.get("team", "").strip()
+            if team:
+                existing = records.get(team)
+                if not existing or row.get("game_date", "") >= existing.get("game_date", ""):
+                    records[team] = row
+    return records
+
+
+def prep_schedule_view(all_games: list, live_scores: list, standings: dict) -> list:
+    """
+    Build a full today's-games list combining schedule data,
+    live API status, and team records.
+
+    all_games  — all scored game dicts for the date (including already-started)
+    live_scores — from fetch_live_scores() with status/score/inning
+    standings  — team_name -> standings row
+    """
+    # Index live scores by (away, home) for quick lookup
+    live_idx: dict[tuple, dict] = {}
+    for s in live_scores:
+        key = (s.get("away_team", ""), s.get("home_team", ""))
+        live_idx[key] = s
+
+    def record_str(team: str) -> str:
+        row = standings.get(team, {})
+        if not row:
+            # Partial name match
+            tl = team.lower()
+            for k, v in standings.items():
+                if k.lower() in tl or tl in k.lower():
+                    row = v
+                    break
+        if row:
+            w = row.get("wins", "?")
+            l = row.get("losses", "?")
+            streak = row.get("streak", "")
+            last10 = row.get("last_10", "")
+            return {"record": f"{w}-{l}", "streak": streak, "last10": last10}
+        return {"record": "—", "streak": "", "last10": ""}
+
+    out = []
+    for g in all_games:
+        away = g.get("away_team", "")
+        home = g.get("home_team", "")
+        key  = (away, home)
+        live = live_idx.get(key, {})
+
+        # Status
+        if live.get("status") == "Final":
+            status = "Final"
+        elif live.get("status") == "Live":
+            inh   = live.get("inning_half", "")[:3]
+            inn   = live.get("inning", "")
+            status = f"Live — {inh} {inn}"
+        else:
+            status = "Upcoming"
+
+        away_rec = record_str(away)
+        home_rec = record_str(home)
+
+        out.append({
+            "game_id":      g.get("game_id", ""),
+            "away_team":    away,
+            "home_team":    home,
+            "away_record":  away_rec["record"],
+            "away_streak":  away_rec["streak"],
+            "away_last10":  away_rec["last10"],
+            "home_record":  home_rec["record"],
+            "home_streak":  home_rec["streak"],
+            "home_last10":  home_rec["last10"],
+            "venue":        g.get("venue", ""),
+            "game_time_utc": g.get("game_time_utc", ""),
+            "status":       status,
+            "away_score":   live.get("away_score", ""),
+            "home_score":   live.get("home_score", ""),
+            "away_sp":      g.get("away_sp", "TBD"),
+            "home_sp":      g.get("home_sp", "TBD"),
+        })
+
+    # Sort by game time
+    out.sort(key=lambda x: x.get("game_time_utc", ""))
+    return out
+
+
 def prep_props(props: list) -> list:
     """Serialize player props for HTML embedding."""
     out = []
@@ -555,6 +649,35 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .section-panel{display:none}
 .section-panel.active{display:block}
 
+/* ── TODAY'S GAMES ── */
+.schedule-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:36px}
+.sched-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.sched-status-bar{
+  padding:5px 14px;font-size:.7rem;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
+  display:flex;align-items:center;gap:6px;
+}
+.status-upcoming{background:rgba(66,165,245,.12);color:var(--blue)}
+.status-live    {background:rgba(255,107,53,.15);color:#ff6b35}
+.status-final   {background:rgba(255,255,255,.06);color:var(--sub)}
+.live-dot{width:7px;height:7px;border-radius:50%;background:#ff6b35;animation:pulse 1.5s infinite;flex-shrink:0}
+.sched-matchup{padding:14px 16px 10px}
+.sched-team-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.sched-team-info{display:flex;flex-direction:column;gap:2px}
+.sched-team-name{font-size:1rem;font-weight:700;color:var(--text)}
+.sched-team-record{font-size:.78rem;font-weight:600;color:var(--sub)}
+.sched-team-streak{font-size:.68rem;color:var(--sub)}
+.sched-score-block{text-align:center;min-width:54px}
+.sched-score{font-size:1.5rem;font-weight:800;color:var(--text)}
+.sched-score.winner{color:var(--green)}
+.sched-vs{font-size:.85rem;color:var(--sub);font-weight:600}
+.sched-at-label{font-size:.62rem;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+.sched-divider{height:1px;background:var(--border);margin:0 16px}
+.sched-footer{padding:8px 16px;display:flex;justify-content:space-between;align-items:center;font-size:.75rem}
+.sched-time{font-weight:700;color:var(--text)}
+.sched-venue{color:var(--sub);text-align:right;max-width:55%}
+.sched-pitchers{padding:4px 16px 10px;font-size:.72rem;color:var(--sub);
+  display:flex;justify-content:space-between}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:var(--bg)}
@@ -616,6 +739,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   <!-- SECTION NAV -->
   <div class="section-nav">
     <button class="section-nav-btn active" data-panel="panel-picks">🎯 Game Picks</button>
+    <button class="section-nav-btn" data-panel="panel-schedule">📅 Today's Games</button>
     <button class="section-nav-btn" data-panel="panel-props">👤 Player Props</button>
     <button class="section-nav-btn" data-panel="panel-games">📊 Game Breakdown</button>
   </div>
@@ -631,6 +755,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
       <button class="section-tab" data-parlay="3">3-Leg (+595)</button>
     </div>
     <div class="parlay-grid" id="parlayGrid"></div>
+  </div>
+
+  <!-- PANEL: TODAY'S GAMES -->
+  <div class="section-panel" id="panel-schedule">
+    <div class="schedule-grid" id="scheduleGrid"></div>
   </div>
 
   <!-- PANEL: PLAYER PROPS -->
@@ -667,7 +796,8 @@ const DATA_GAMES   = __GAMES__;
 const DATA_P2      = __P2__;
 const DATA_P3      = __P3__;
 const DATA_SCORES  = __SCORES__;
-const DATA_PROPS   = __PROPS__;
+const DATA_PROPS    = __PROPS__;
+const DATA_SCHEDULE = __SCHEDULE__;
 
 // ── State ────────────────────────────────────────────────────────────────────
 let filterType = "all", filterTier = "all", filterTeam = "";
@@ -882,6 +1012,89 @@ document.querySelectorAll(".section-nav-btn").forEach(btn=>{
   });
 });
 
+// ── Render Today's Games ──────────────────────────────────────────────────────
+function localGameTime(utcStr){
+  if(!utcStr) return "TBD";
+  try{
+    const d = new Date(utcStr.endsWith("Z") ? utcStr : utcStr + "Z");
+    return d.toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit", timeZoneName:"short"});
+  } catch(e){ return utcStr; }
+}
+
+function renderSchedule(){
+  const grid = document.getElementById("scheduleGrid");
+  grid.innerHTML = "";
+  if(!DATA_SCHEDULE || DATA_SCHEDULE.length === 0){
+    grid.innerHTML = `<div class="empty">No games found for today.</div>`;
+    return;
+  }
+  DATA_SCHEDULE.forEach(g=>{
+    const isLive    = g.status.startsWith("Live");
+    const isFinal   = g.status === "Final";
+    const isUpcoming= g.status === "Upcoming";
+
+    const statusClass = isLive ? "status-live" : isFinal ? "status-final" : "status-upcoming";
+    const statusLabel = isLive
+      ? `<span class="live-dot"></span> LIVE &bull; ${g.status.replace("Live — ","")}`
+      : isFinal ? "⚾ Final" : `⏰ ${localGameTime(g.game_time_utc)}`;
+
+    // Score display
+    let awayScoreHtml = "", homeScoreHtml = "", vsHtml = "";
+    if(isFinal || isLive){
+      const awayW = parseInt(g.away_score) > parseInt(g.home_score);
+      const homeW = parseInt(g.home_score) > parseInt(g.away_score);
+      awayScoreHtml = `<div class="sched-score${awayW?' winner':''}">${g.away_score}</div>`;
+      homeScoreHtml = `<div class="sched-score${homeW?' winner':''}">${g.home_score}</div>`;
+      vsHtml        = `<div class="sched-vs">-</div>`;
+    } else {
+      vsHtml = `<div><div class="sched-vs">@</div><div class="sched-time">${localGameTime(g.game_time_utc)}</div></div>`;
+    }
+
+    const awayStreak = g.away_streak ? ` &bull; ${g.away_streak}` : "";
+    const homeStreak = g.home_streak ? ` &bull; ${g.home_streak}` : "";
+    const awayL10    = g.away_last10 ? ` (L10: ${g.away_last10})` : "";
+    const homeL10    = g.home_last10 ? ` (L10: ${g.home_last10})` : "";
+
+    const venueTrunc = g.venue.length > 28 ? g.venue.slice(0,26)+"…" : g.venue;
+
+    grid.innerHTML += `
+      <div class="sched-card">
+        <div class="sched-status-bar ${statusClass}">${statusLabel}</div>
+        <div class="sched-matchup">
+          <div class="sched-team-row">
+            <div class="sched-team-info">
+              <div class="sched-team-name">${g.away_team}</div>
+              <div class="sched-team-record">${g.away_record}${awayStreak}</div>
+              ${awayL10 ? `<div class="sched-team-streak">${awayL10}</div>` : ""}
+              <div class="sched-at-label">Away</div>
+            </div>
+            <div class="sched-score-block">
+              ${awayScoreHtml}
+              ${vsHtml}
+              ${homeScoreHtml}
+            </div>
+            <div class="sched-team-info" style="text-align:right;align-items:flex-end">
+              <div class="sched-team-name">${g.home_team}</div>
+              <div class="sched-team-record">${g.home_record}${homeStreak}</div>
+              ${homeL10 ? `<div class="sched-team-streak">${homeL10}</div>` : ""}
+              <div class="sched-at-label">Home</div>
+            </div>
+          </div>
+        </div>
+        <div class="sched-divider"></div>
+        <div class="sched-pitchers">
+          <span>SP: ${g.away_sp||"TBD"}</span>
+          <span>SP: ${g.home_sp||"TBD"}</span>
+        </div>
+        <div class="sched-divider"></div>
+        <div class="sched-footer">
+          <span class="sched-time">${isFinal||isLive ? g.status : localGameTime(g.game_time_utc)}</span>
+          <span class="sched-venue">${venueTrunc}</span>
+        </div>
+      </div>`;
+  });
+}
+
 // ── Render Props ──────────────────────────────────────────────────────────────
 let propFilterType = "all", propFilterTier = "all";
 
@@ -1061,6 +1274,7 @@ function renderTicker(){
 renderTicker();
 renderPicks();
 renderParlays();
+renderSchedule();
 renderGames();
 renderProps();
 </script>
@@ -1086,8 +1300,13 @@ def main():
     model = MLBModel()
     model.load()
 
+    # score_today filters to upcoming games only — we also need all games for the schedule tab
+    all_schedule = [g for g in model.schedule if g.get("game_date") == (
+        args.date or datetime.now().strftime("%Y-%m-%d")
+    )]
+
     scored, actual_date = model.score_today(target)
-    if not scored:
+    if not scored and not all_schedule:
         print(f"No games found for {target}. Run python run_pipeline.py first.")
         sys.exit(0)
 
@@ -1114,6 +1333,13 @@ def main():
     picks     = generate_picks(scored)
     parlays_2 = build_parlays(picks, legs=2, max_parlays=5)
     parlays_3 = build_parlays(picks, legs=3, max_parlays=5)
+
+    # Load standings for team records
+    standings = load_standings()
+
+    # Build schedule view (all games today, not just unstarted)
+    schedule_games = all_schedule if all_schedule else scored
+    schedule_json  = json.dumps(prep_schedule_view(schedule_games, today_scores, standings))
 
     # ── Refresh lineups + hitter stats before props ───────────────────────────
     # Run every time run_picks_html.py is called so props stay current.
@@ -1148,13 +1374,14 @@ def main():
     scores_json = json.dumps(prep_scores_ticker(today_scores))
 
     html = (HTML
-            .replace("__DATE__",   actual_date)
-            .replace("__PICKS__",  picks_json)
-            .replace("__GAMES__",  games_json)
-            .replace("__P2__",     p2_json)
-            .replace("__P3__",     p3_json)
-            .replace("__SCORES__", scores_json)
-            .replace("__PROPS__",  props_json))
+            .replace("__DATE__",     actual_date)
+            .replace("__PICKS__",    picks_json)
+            .replace("__GAMES__",    games_json)
+            .replace("__P2__",       p2_json)
+            .replace("__P3__",       p3_json)
+            .replace("__SCORES__",   scores_json)
+            .replace("__PROPS__",    props_json)
+            .replace("__SCHEDULE__", schedule_json))
 
     os.makedirs(PICKS_DIR, exist_ok=True)
     out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")
