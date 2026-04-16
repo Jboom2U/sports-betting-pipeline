@@ -3,13 +3,15 @@ mlb_model.py
 Core MLB betting model.
 
 Scores each game for moneyline, run line, and totals using:
-  - Pitcher season stats and home/away splits (most recent season)
+  - Pitcher season stats, home/away splits, LHB/RHB platoon splits
+  - Last 3 starts recent form vs season average
   - Team offensive and pitching stats
   - Park run/HR factors
   - Recent team form (last 10 games)
+  - Weather: wind component (out/in to CF), temperature, precipitation
 
 Pythagorean win expectation model (exponent 1.83) drives win probability.
-Expected runs uses: team RPG * pitcher suppression factor * park factor.
+Expected runs uses: team RPG * pitcher suppression * park factor * weather adj.
 """
 
 import csv
@@ -31,12 +33,21 @@ LEAGUE = {
     "ops":          0.720,
 }
 
-PYTHAGOREAN_EXP  = 1.83   # baseball Pythagorean exponent
-HOME_FIELD_BOOST = 0.025  # small residual home advantage beyond captured stats
-RECENT_WEIGHT    = 0.35   # how much recent form (last 10 games) influences expected runs
-SEASON_WEIGHT    = 0.65
-SPLIT_WEIGHT     = 0.30   # home/away split influence on pitcher ERA
+PYTHAGOREAN_EXP   = 1.83
+HOME_FIELD_BOOST  = 0.025
+RECENT_WEIGHT     = 0.35
+SEASON_WEIGHT     = 0.65
+SPLIT_WEIGHT      = 0.30
 SEASON_ERA_WEIGHT = 0.70
+
+# Weather adjustment constants
+WIND_RUNS_PER_MPH = 0.04   # each 1 mph blowing OUT adds ~0.04 expected runs to total
+COLD_PENALTY      = 0.012  # each 1°F below 65 reduces expected runs by 1.2%
+PRECIP_PENALTY    = 0.003  # each 1% precip probability reduces expected runs slightly
+
+# Recent starts blending (last 3 starts vs season)
+RECENT_STARTS_WEIGHT = 0.30
+SEASON_ERA_VS_RECENT = 0.70
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -69,14 +80,17 @@ class MLBModel:
     """
 
     def __init__(self):
-        self.pitchers       = {}   # name -> {season -> stats_dict}
-        self.pitcher_splits = {}   # name -> {season -> {"home"->dict, "away"->dict}}
-        self.team_hitting   = {}   # name -> {season -> stats_dict}
-        self.team_pitching  = {}   # name -> {season -> stats_dict}
-        self.park_factors   = {}   # venue -> stats_dict
-        self.scores         = []   # all historical game rows
-        self.schedule       = []   # upcoming schedule rows
-        self._loaded        = False
+        self.pitchers        = {}   # name -> {season -> stats_dict}
+        self.pitcher_splits  = {}   # name -> {season -> {"home"->dict, "away"->dict}}
+        self.pitcher_platoon = {}   # name -> {season -> {"vs. Left"->dict, "vs. Right"->dict}}
+        self.pitcher_recent  = {}   # name -> [last 3 starts dicts]
+        self.team_hitting    = {}   # name -> {season -> stats_dict}
+        self.team_pitching   = {}   # name -> {season -> stats_dict}
+        self.park_factors    = {}   # venue -> stats_dict
+        self.weather         = {}   # game_id -> weather_dict
+        self.scores          = []   # all historical game rows
+        self.schedule        = []   # upcoming schedule rows
+        self._loaded         = False
 
     # ── Data Loading ──────────────────────────────────────────────────────────
     def load(self):
@@ -117,11 +131,44 @@ class MLBModel:
             if name and season:
                 self.team_pitching.setdefault(name, {})[season] = row
 
+        # Pitcher platoon splits: name -> season -> {vs. Left / vs. Right -> row}
+        for row in read_csv(os.path.join(CLEAN_DIR, "mlb_pitcher_platoon_master.csv")):
+            name   = row.get("player_name", "").strip()
+            season = row.get("season", "")
+            split  = row.get("split", "")
+            if name and season and split:
+                self.pitcher_platoon.setdefault(name, {}).setdefault(season, {})[split] = row
+
+        # Pitcher recent starts: name -> list of start dicts (sorted recent first)
+        for row in read_csv(os.path.join(CLEAN_DIR, "mlb_pitcher_recent_master.csv")):
+            name = row.get("player_name", "").strip()
+            if name:
+                self.pitcher_recent.setdefault(name, []).append(row)
+        # Sort each pitcher's starts by date desc
+        for name in self.pitcher_recent:
+            self.pitcher_recent[name].sort(key=lambda x: x.get("game_date",""), reverse=True)
+
         # Park factors: venue -> row
         for row in read_csv(os.path.join(DATA_DIR, "park_factors.csv")):
             venue = row.get("venue", "").strip()
             if venue:
                 self.park_factors[venue] = row
+
+        # Weather: game_id -> row (today's file if available)
+        today = datetime.now().strftime("%Y-%m-%d")
+        raw_dir = os.path.join(BASE_DIR, "data", "raw")
+        weather_file = os.path.join(raw_dir, f"mlb_weather_{today}.csv")
+        if not os.path.exists(weather_file):
+            # Try most recent weather file
+            import glob
+            files = sorted(glob.glob(os.path.join(raw_dir, "mlb_weather_*.csv")), reverse=True)
+            weather_file = files[0] if files else None
+        if weather_file and os.path.exists(weather_file):
+            for row in read_csv(weather_file):
+                gid = row.get("game_id", "")
+                if gid:
+                    self.weather[gid] = row
+            log.info(f"Weather loaded: {len(self.weather)} games")
 
         # Historical scores and upcoming schedule
         self.scores   = read_csv(os.path.join(CLEAN_DIR, "mlb_scores_master.csv"))
@@ -129,7 +176,8 @@ class MLBModel:
 
         self._loaded = True
         log.info(f"Loaded: {len(self.pitchers)} pitchers | {len(self.team_hitting)} teams | "
-                 f"{len(self.park_factors)} parks | {len(self.scores)} historical games")
+                 f"{len(self.park_factors)} parks | {len(self.scores)} historical games | "
+                 f"{len(self.weather)} weather records")
 
     # ── Pitcher Lookup ────────────────────────────────────────────────────────
     def get_pitcher(self, name: str, is_home: bool) -> dict:
@@ -211,6 +259,50 @@ class MLBModel:
         return {"park_factor_runs": "100", "park_factor_hr": "100",
                 "notes": "Unknown park - neutral assumed"}
 
+    # ── Platoon Split Lookup ─────────────────────────────────────────────────
+    def get_platoon(self, name: str, vs: str) -> dict:
+        """
+        Get pitcher stats vs left or right handed batters.
+        vs: 'vs. Left' or 'vs. Right'
+        """
+        if not name or name not in self.pitcher_platoon:
+            return {}
+        season = sorted(self.pitcher_platoon[name].keys())[-1]
+        return self.pitcher_platoon[name][season].get(vs, {})
+
+    # ── Recent Starts Summary ─────────────────────────────────────────────────
+    def get_recent_form_pitcher(self, name: str, n: int = 3) -> dict:
+        """
+        Summarize last N starts: avg ERA, avg game score, trend vs season.
+        Returns empty dict if no data.
+        """
+        if not name or name not in self.pitcher_recent:
+            return {}
+        starts = self.pitcher_recent[name][:n]
+        if not starts:
+            return {}
+
+        ips     = [sf(s.get("innings_pitched"), 0) for s in starts]
+        ers     = [sf(s.get("earned_runs"), 0) for s in starts]
+        scores  = [sf(s.get("game_score"), 50) for s in starts]
+        total_ip = sum(ips)
+
+        recent_era  = round((sum(ers) * 9 / total_ip), 2) if total_ip > 0 else None
+        avg_gs      = round(sum(scores) / len(scores), 1)
+        trend       = "HOT" if avg_gs >= 60 else ("COLD" if avg_gs <= 40 else "NEUTRAL")
+
+        return {
+            "n":           len(starts),
+            "recent_era":  recent_era,
+            "avg_gs":      avg_gs,
+            "trend":       trend,
+            "last_dates":  [s.get("game_date","") for s in starts],
+        }
+
+    # ── Weather Lookup ────────────────────────────────────────────────────────
+    def get_weather(self, game_id: str) -> dict:
+        return self.weather.get(str(game_id), {})
+
     # ── Recent Form ───────────────────────────────────────────────────────────
     def recent_form(self, team: str, n: int = 10) -> dict:
         """Last N games avg runs scored/allowed and win pct."""
@@ -247,10 +339,11 @@ class MLBModel:
 
     # ── Expected Runs ─────────────────────────────────────────────────────────
     def exp_runs(self, team: str, opp_pitcher: dict,
-                 park_run_factor: float, is_home: bool) -> float:
+                 park_run_factor: float, is_home: bool,
+                 weather: dict = None) -> float:
         """
         Expected runs scored by `team` facing `opp_pitcher` at this park.
-        Formula: (blended RPG) * pitcher_suppression * park_adj * home_boost
+        Formula: (blended RPG) * pitcher_suppression * park_adj * home_boost * weather_adj
         """
         offense = self.get_offense(team)
         form    = self.recent_form(team)
@@ -259,20 +352,43 @@ class MLBModel:
         base_rpg = (SEASON_WEIGHT * offense["rpg"] +
                     RECENT_WEIGHT * form["rpg"])
 
-        # Pitcher suppression: ERA ratio vs league average
-        # ERA 3.00 / 4.20 = 0.714 -> team scores 71% of normal
-        # ERA 5.50 / 4.20 = 1.310 -> team scores 131% of normal
-        era_adj     = opp_pitcher.get("era_adj", LEAGUE["era"])
-        suppression = era_adj / LEAGUE["era"]
+        # Blend season ERA with recent starts ERA
+        era_season = opp_pitcher.get("era_adj", LEAGUE["era"])
+        pitcher_name = opp_pitcher.get("name", "")
+        recent_sp = self.get_recent_form_pitcher(pitcher_name)
+        if recent_sp and recent_sp.get("recent_era"):
+            era_eff = (SEASON_ERA_VS_RECENT * era_season +
+                       RECENT_STARTS_WEIGHT * recent_sp["recent_era"])
+        else:
+            era_eff = era_season
 
-        # Park adjustment
-        park_adj = park_run_factor / 100.0
-
-        # Small home offensive boost
-        loc_boost = 1.02 if is_home else 1.0
+        suppression = era_eff / LEAGUE["era"]
+        park_adj    = park_run_factor / 100.0
+        loc_boost   = 1.02 if is_home else 1.0
 
         expected = base_rpg * suppression * park_adj * loc_boost
-        return max(0.5, round(expected, 3))   # floor prevents division by zero
+
+        # Weather adjustments (applied to each team's expected runs)
+        if weather and not weather.get("roof"):
+            wc      = sf(weather.get("wind_component"), 0)
+            temp    = sf(weather.get("temp_f"), 70)
+            precip  = sf(weather.get("precip_prob"), 0)
+
+            # Wind: each mph blowing out adds WIND_RUNS_PER_MPH to expected total
+            # We apply half per team
+            wind_adj = 1.0 + (wc * WIND_RUNS_PER_MPH * 0.5 / max(base_rpg, 1))
+
+            # Cold: reduce expected runs when below 65°F
+            cold_adj = 1.0
+            if temp < 65:
+                cold_adj = max(0.85, 1.0 - (65 - temp) * COLD_PENALTY)
+
+            # Precipitation: slight suppression if rain likely
+            precip_adj = max(0.95, 1.0 - precip * PRECIP_PENALTY)
+
+            expected *= wind_adj * cold_adj * precip_adj
+
+        return max(0.5, round(expected, 3))
 
     # ── Score a Single Game ───────────────────────────────────────────────────
     def score_game(self, game: dict) -> dict:
@@ -299,9 +415,22 @@ class MLBModel:
         away_form     = self.recent_form(away)
         home_form     = self.recent_form(home)
 
+        # Pitcher recent starts
+        away_sp_recent = self.get_recent_form_pitcher(away_sp_name)
+        home_sp_recent = self.get_recent_form_pitcher(home_sp_name)
+
+        # Platoon splits
+        away_vs_lhb = self.get_platoon(away_sp_name, "vs. Left")
+        away_vs_rhb = self.get_platoon(away_sp_name, "vs. Right")
+        home_vs_lhb = self.get_platoon(home_sp_name, "vs. Left")
+        home_vs_rhb = self.get_platoon(home_sp_name, "vs. Right")
+
+        # Weather
+        weather = self.get_weather(game.get("game_id", ""))
+
         # Expected runs
-        exp_away = self.exp_runs(away, home_sp, park_runs, is_home=False)
-        exp_home = self.exp_runs(home, away_sp, park_runs, is_home=True)
+        exp_away = self.exp_runs(away, home_sp, park_runs, is_home=False, weather=weather)
+        exp_home = self.exp_runs(home, away_sp, park_runs, is_home=True,  weather=weather)
         exp_total = round(exp_away + exp_home, 2)
 
         # Pythagorean win probability
@@ -384,6 +513,29 @@ class MLBModel:
             "exp_away":       exp_away,
             "exp_home":       exp_home,
             "exp_total":      exp_total,
+
+            # Pitcher recent form
+            "away_sp_trend":  away_sp_recent.get("trend", "N/A"),
+            "away_sp_r_era":  away_sp_recent.get("recent_era"),
+            "away_sp_gs":     away_sp_recent.get("avg_gs"),
+            "home_sp_trend":  home_sp_recent.get("trend", "N/A"),
+            "home_sp_r_era":  home_sp_recent.get("recent_era"),
+            "home_sp_gs":     home_sp_recent.get("avg_gs"),
+
+            # Platoon splits (ERA vs LHB / RHB)
+            "away_era_vs_lhb": sf(away_vs_lhb.get("era")),
+            "away_era_vs_rhb": sf(away_vs_rhb.get("era")),
+            "home_era_vs_lhb": sf(home_vs_lhb.get("era")),
+            "home_era_vs_rhb": sf(home_vs_rhb.get("era")),
+
+            # Weather
+            "weather_flag":   weather.get("weather_flag", "NORMAL"),
+            "wind_component": sf(weather.get("wind_component"), 0),
+            "wind_label":     weather.get("wind_label", "N/A"),
+            "wind_speed":     sf(weather.get("wind_speed_mph"), 0),
+            "temp_f":         sf(weather.get("temp_f"), 70),
+            "precip_prob":    sf(weather.get("precip_prob"), 0),
+            "has_roof":       weather.get("roof", False),
 
             # Picks
             "home_wp":        home_wp,

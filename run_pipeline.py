@@ -70,6 +70,54 @@ def main():
         log.error(f"NORMALIZE FAILED: {e}", exc_info=True)
         sys.exit(1)
 
+    # ── Step 3: Weather for today's games ─────────────────────────────────────
+    try:
+        from scrapers.mlb_weather_scraper import run as run_weather
+        today = datetime.now().strftime("%Y-%m-%d")
+        weather_rows = run_weather(target_date=today)
+        log.info(f"Weather fetched: {len(weather_rows)} games")
+    except Exception as e:
+        log.warning(f"Weather fetch failed (non-fatal): {e}")
+
+    # ── Step 4: Today's probable pitcher recent starts ─────────────────────────
+    try:
+        from scrapers.mlb_pitcher_scraper import fetch_all_recent_starts
+        from normalize.mlb_pitcher_normalize import normalize_recent_starts
+        import csv as _csv
+
+        # Get today's probable pitchers from schedule master
+        sched_path = os.path.join(os.path.dirname(__file__), "data", "clean", "mlb_schedule_master.csv")
+        today = datetime.now().strftime("%Y-%m-%d")
+        pitcher_ids = []
+        if os.path.exists(sched_path):
+            with open(sched_path, encoding="utf-8") as f:
+                for row in _csv.DictReader(f):
+                    if row.get("game_date") == today:
+                        for col in ("away_probable_pitcher", "home_probable_pitcher"):
+                            pname = row.get(col, "").strip()
+                            if pname and pname != "TBD":
+                                pitcher_ids.append(pname)
+
+        # Look up player IDs from pitcher stats master
+        stats_path = os.path.join(os.path.dirname(__file__), "data", "clean", "mlb_pitcher_stats_master.csv")
+        name_to_id = {}
+        if os.path.exists(stats_path):
+            with open(stats_path, encoding="utf-8") as f:
+                for row in _csv.DictReader(f):
+                    name_to_id[row.get("player_name","").strip()] = row.get("player_id","")
+
+        id_name_pairs = [(name_to_id[n], n) for n in pitcher_ids if n in name_to_id]
+
+        if id_name_pairs:
+            season = datetime.now().year
+            recent = fetch_all_recent_starts(id_name_pairs, season, n=5)
+            normalize_recent_starts(recent)
+            log.info(f"Recent starts fetched: {len(recent)} rows for {len(id_name_pairs)} pitchers")
+        else:
+            log.info("No pitcher IDs resolved for today — skipping recent starts")
+    except Exception as e:
+        log.warning(f"Recent starts fetch failed (non-fatal): {e}")
+
     log.info("=" * 60)
     log.info("PIPELINE COMPLETE")
     log.info("=" * 60)

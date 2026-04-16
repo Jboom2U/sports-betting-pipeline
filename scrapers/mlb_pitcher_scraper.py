@@ -200,6 +200,170 @@ def fetch_home_away_splits(season: int) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LHB / RHB PLATOON SPLITS
+# ─────────────────────────────────────────────────────────────────────────────
+PLATOON_FIELDNAMES = [
+    "season", "player_id", "player_name", "split",
+    "games_started", "era", "whip", "innings_pitched",
+    "strikeouts", "walks", "home_runs_allowed",
+    "k_per_9", "bb_per_9", "fip", "batting_avg_against",
+    "ops_against", "timestamp",
+]
+
+def fetch_platoon_splits(season: int) -> list:
+    """Pull pitcher stats vs left-handed and right-handed batters."""
+    url = f"{MLB_API}/stats"
+    params = {
+        "stats":      "statSplits",
+        "group":      "pitching",
+        "season":     season,
+        "sitCodes":   "vl,vr",        # vl = vs LHB, vr = vs RHB
+        "playerPool": "All",
+        "gameType":   "R",
+        "sportId":    1,
+        "limit":      2000,
+    }
+    log.info(f"Fetching pitcher platoon splits (LHB/RHB) for {season}")
+    try:
+        resp = requests.get(url, params=params, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.warning(f"Platoon splits fetch failed ({season}): {e}")
+        return []
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+
+    for stat_group in data.get("stats", []):
+        for split in stat_group.get("splits", []):
+            stat        = split.get("stat", {})
+            player      = split.get("player", {})
+            split_label = split.get("split", {}).get("description", "")
+
+            # Filter to meaningful sample (10+ PA proxy via AB)
+            ab = safe_float(stat.get("atBats") or 0)
+            if ab < 30:
+                continue
+
+            ip = safe_float(stat.get("inningsPitched"))
+            hr = safe_float(stat.get("homeRuns"))
+            bb = safe_float(stat.get("baseOnBalls"))
+            k  = safe_float(stat.get("strikeOuts"))
+
+            rows.append({
+                "season":              season,
+                "player_id":           player.get("id", ""),
+                "player_name":         player.get("fullName", ""),
+                "split":               split_label,   # "vs. Left" or "vs. Right"
+                "games_started":       stat.get("gamesStarted", ""),
+                "era":                 stat.get("era", ""),
+                "whip":                stat.get("whip", ""),
+                "innings_pitched":     ip,
+                "strikeouts":          k,
+                "walks":               bb,
+                "home_runs_allowed":   hr,
+                "k_per_9":             per_9(k, ip),
+                "bb_per_9":            per_9(bb, ip),
+                "fip":                 fip(hr, bb, k, ip),
+                "batting_avg_against": stat.get("avg", ""),
+                "ops_against":         stat.get("ops", ""),
+                "timestamp":           timestamp,
+            })
+
+    log.info(f"Platoon splits {season}: {len(rows)} records")
+    return rows
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LAST N STARTS (recent form)
+# ─────────────────────────────────────────────────────────────────────────────
+RECENT_FIELDNAMES = [
+    "player_id", "player_name", "season",
+    "game_date", "opponent", "is_home",
+    "innings_pitched", "hits", "runs", "earned_runs",
+    "strikeouts", "walks", "home_runs", "era_game",
+    "game_score", "timestamp",
+]
+
+def fetch_recent_starts(player_id: str, player_name: str,
+                         season: int, n: int = 5) -> list:
+    """Pull last N starts from a pitcher's game log."""
+    url = f"{MLB_API}/people/{player_id}/stats"
+    params = {
+        "stats":    "gameLog",
+        "group":    "pitching",
+        "season":   season,
+        "gameType": "R",
+    }
+    try:
+        resp = requests.get(url, params=params, headers=HEADERS, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.warning(f"Game log failed for {player_name}: {e}")
+        return []
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    starts = []
+
+    for stat_group in data.get("stats", []):
+        for split in stat_group.get("splits", []):
+            stat = split.get("stat", {})
+            gs   = int(stat.get("gamesStarted") or 0)
+            if gs == 0:
+                continue    # skip relief appearances
+
+            ip    = safe_float(stat.get("inningsPitched"))
+            er    = safe_float(stat.get("earnedRuns"))
+            era_g = round((er * 9 / ip), 2) if ip > 0 else 0.0
+
+            # Bill James Game Score (simplified)
+            k  = safe_float(stat.get("strikeOuts"))
+            bb = safe_float(stat.get("baseOnBalls"))
+            h  = safe_float(stat.get("hits"))
+            gs_score = round(50 + (ip * 3) + k - (2 * bb) - (2 * h) - (3 * er), 1)
+
+            game    = split.get("game", {})
+            is_home = not split.get("isAway", False)
+            opp     = (split.get("opponent") or {}).get("name", "")
+
+            starts.append({
+                "player_id":      player_id,
+                "player_name":    player_name,
+                "season":         season,
+                "game_date":      split.get("date", ""),
+                "opponent":       opp,
+                "is_home":        is_home,
+                "innings_pitched":ip,
+                "hits":           h,
+                "runs":           safe_float(stat.get("runs")),
+                "earned_runs":    er,
+                "strikeouts":     k,
+                "walks":          bb,
+                "home_runs":      safe_float(stat.get("homeRuns")),
+                "era_game":       era_g,
+                "game_score":     gs_score,
+                "timestamp":      timestamp,
+            })
+
+    # Return most recent N starts sorted desc
+    starts.sort(key=lambda x: x["game_date"], reverse=True)
+    return starts[:n]
+
+
+def fetch_all_recent_starts(pitcher_ids: list, season: int, n: int = 5) -> list:
+    """Pull last N starts for a list of (player_id, player_name) tuples."""
+    all_rows = []
+    for pid, pname in pitcher_ids:
+        rows = fetch_recent_starts(pid, pname, season, n)
+        all_rows.extend(rows)
+        time.sleep(0.25)
+    log.info(f"Recent starts fetched: {len(all_rows)} rows for {len(pitcher_ids)} pitchers")
+    return all_rows
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WRITE
 # ─────────────────────────────────────────────────────────────────────────────
 def write_raw(rows: list, filename: str, fieldnames: list):
@@ -222,8 +386,9 @@ def run() -> dict:
     log.info("Pitcher Scraper started")
     log.info("=" * 60)
 
-    total_stats  = 0
-    total_splits = 0
+    total_stats   = 0
+    total_splits  = 0
+    total_platoon = 0
 
     for season in SEASONS:
         stats = fetch_season_stats(season)
@@ -236,8 +401,15 @@ def run() -> dict:
         total_splits += len(splits)
         time.sleep(0.5)
 
-    log.info(f"Pitcher scraper complete | {total_stats} stat rows | {total_splits} split rows")
-    return {"pitcher_stats": total_stats, "pitcher_splits": total_splits}
+        platoon = fetch_platoon_splits(season)
+        write_raw(platoon, f"mlb_pitcher_platoon_{season}.csv", PLATOON_FIELDNAMES)
+        total_platoon += len(platoon)
+        time.sleep(0.5)
+
+    log.info(f"Pitcher scraper complete | {total_stats} stat rows | "
+             f"{total_splits} split rows | {total_platoon} platoon rows")
+    return {"pitcher_stats": total_stats, "pitcher_splits": total_splits,
+            "pitcher_platoon": total_platoon}
 
 
 if __name__ == "__main__":
