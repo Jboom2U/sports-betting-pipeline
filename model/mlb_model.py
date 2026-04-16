@@ -648,11 +648,56 @@ class MLBModel:
             "rl_conf":        rl_conf,
         }
 
+    # ── Game Status Helpers ───────────────────────────────────────────────────
+    def _game_is_over(self, game: dict) -> bool:
+        """
+        Returns True if the game has likely ended based on:
+        1. Status field = 'Final'
+        2. game_time_utc + 3.5 hours < current UTC time
+        3. game_id found in today's scores master
+        """
+        from datetime import timezone, timedelta
+
+        # Status field check
+        status = game.get("status", "").lower()
+        if status in ("final", "game over", "completed"):
+            return True
+
+        # Time-based check: if start time + 3.5 hrs has passed, likely over
+        game_time = game.get("game_time_utc", "")
+        if game_time:
+            try:
+                gt = datetime.strptime(game_time, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                cutoff = gt + timedelta(hours=3, minutes=30)
+                if datetime.now(timezone.utc) > cutoff:
+                    return True
+            except ValueError:
+                pass
+
+        # Check scores master for this game_id
+        game_id = str(game.get("game_id", ""))
+        if game_id:
+            for row in self.scores:
+                if str(row.get("game_id", "")) == game_id and \
+                   row.get("status", "").lower() == "final":
+                    return True
+
+        return False
+
+    def get_today_scores(self, target_date: str = None) -> list:
+        """Return completed game scores for target_date for the ticker."""
+        if target_date is None:
+            target_date = datetime.now().strftime("%Y-%m-%d")
+        return [r for r in self.scores
+                if r.get("game_date") == target_date
+                and r.get("status", "").lower() == "final"]
+
     # ── Score All Games for a Date ────────────────────────────────────────────
     def score_today(self, target_date: str = None) -> tuple:
         """
         Score all games for target_date. Returns (scored_games, actual_date).
-        Falls back to next available date if no games found today.
+        Automatically excludes games that have started or finished.
+        Falls back to next available date if no upcoming games found.
         """
         if not self._loaded:
             self.load()
@@ -660,23 +705,27 @@ class MLBModel:
         if target_date is None:
             target_date = datetime.now().strftime("%Y-%m-%d")
 
-        games = [g for g in self.schedule if g.get("game_date") == target_date
-                 and g.get("status", "").lower() not in ("final",)]
+        all_today = [g for g in self.schedule if g.get("game_date") == target_date]
+        games     = [g for g in all_today if not self._game_is_over(g)]
 
-        # If nothing today, use next available future slate
+        skipped = len(all_today) - len(games)
+        if skipped:
+            log.info(f"Filtered out {skipped} completed/in-progress game(s)")
+
+        # If nothing upcoming today, use next available future slate
         if not games:
             future = sorted(set(
                 g["game_date"] for g in self.schedule
-                if g.get("game_date", "") >= target_date
-                and g.get("status", "").lower() not in ("final",)
+                if g.get("game_date", "") > target_date
             ))
             if future:
                 target_date = future[0]
-                games = [g for g in self.schedule if g.get("game_date") == target_date
-                         and g.get("status", "").lower() not in ("final",)]
-                log.info(f"Using next available slate: {target_date}")
+                games = [g for g in self.schedule
+                         if g.get("game_date") == target_date
+                         and not self._game_is_over(g)]
+                log.info(f"All today's games done — using next slate: {target_date}")
 
-        log.info(f"Scoring {len(games)} games for {target_date}")
+        log.info(f"Scoring {len(games)} upcoming games for {target_date}")
 
         scored = []
         for game in games:

@@ -23,6 +23,34 @@ PICKS_DIR = os.path.join(os.path.dirname(__file__), "picks")
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA PREP
 # ─────────────────────────────────────────────────────────────────────────────
+def prep_scores_ticker(scores: list) -> list:
+    """Prepare completed game scores for the ticker."""
+    out = []
+    for s in scores:
+        away  = s.get("away_team", "")
+        home  = s.get("home_team", "")
+        ascore = s.get("away_score", "")
+        hscore = s.get("home_score", "")
+        if not away or not home:
+            continue
+        # Shorten team names to city only
+        def city(name):
+            parts = name.split()
+            return parts[0] if parts else name
+        winner = s.get("winner", "")
+        out.append({
+            "away":      away,
+            "home":      home,
+            "away_city": city(away),
+            "home_city": city(home),
+            "away_score":str(ascore),
+            "home_score":str(hscore),
+            "winner":    winner,
+            "innings":   s.get("innings", "9"),
+        })
+    return out
+
+
 def prep_picks(picks):
     out = []
     for p in picks:
@@ -348,6 +376,34 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .results-count{font-size:.8rem;color:var(--sub);margin-bottom:10px}
 .results-count b{color:var(--text)}
 
+/* ── SCORES TICKER ── */
+.ticker-wrap{
+  background:#080c14;border-bottom:1px solid var(--border);
+  overflow:hidden;white-space:nowrap;padding:0;height:34px;
+  display:flex;align-items:center;
+}
+.ticker-label{
+  background:var(--green);color:#000;font-weight:800;font-size:.72rem;
+  letter-spacing:.8px;padding:0 12px;height:100%;display:flex;
+  align-items:center;white-space:nowrap;flex-shrink:0;text-transform:uppercase;
+}
+.ticker-track{
+  display:inline-flex;animation:ticker 40s linear infinite;
+  padding-left:100%;
+}
+.ticker-track:hover{animation-play-state:paused}
+@keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.ticker-item{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:0 24px;font-size:.78rem;font-weight:600;color:var(--text);
+  border-right:1px solid var(--border);
+}
+.ticker-score{font-weight:800;font-size:.85rem}
+.ticker-score.win{color:var(--green)}
+.ticker-score.loss{color:var(--sub)}
+.ticker-final{font-size:.65rem;color:var(--sub);text-transform:uppercase;letter-spacing:.5px}
+.ticker-empty{color:var(--sub);font-size:.78rem;padding:0 20px}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:var(--bg)}
@@ -373,6 +429,13 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     </button>
   </div>
   <div id="refreshStatus"></div>
+</div>
+
+<div class="ticker-wrap" id="scoreTicker">
+  <div class="ticker-label">⚾ Scores</div>
+  <div class="ticker-track" id="tickerTrack">
+    <span class="ticker-empty">No completed games yet today</span>
+  </div>
 </div>
 
 <div class="filters">
@@ -423,6 +486,7 @@ const DATA_PICKS   = __PICKS__;
 const DATA_GAMES   = __GAMES__;
 const DATA_P2      = __P2__;
 const DATA_P3      = __P3__;
+const DATA_SCORES  = __SCORES__;
 
 // ── State ────────────────────────────────────────────────────────────────────
 let filterType = "all", filterTier = "all", filterTeam = "";
@@ -648,7 +712,36 @@ async function doRefresh(){
   }
 }
 
+// ── Scores Ticker ─────────────────────────────────────────────────────────────
+function renderTicker(){
+  const track = document.getElementById("tickerTrack");
+  if(!DATA_SCORES || DATA_SCORES.length === 0){
+    track.innerHTML = `<span class="ticker-empty">No completed games yet today — check back later</span>`;
+    return;
+  }
+  // Build items twice so the loop is seamless
+  let html = "";
+  for(let pass=0; pass<2; pass++){
+    DATA_SCORES.forEach(s=>{
+      const awayWon = parseInt(s.away_score) > parseInt(s.home_score);
+      const inn     = s.innings && s.innings != "9" ? ` (${s.innings})` : "";
+      html += `
+        <div class="ticker-item">
+          <span class="${awayWon?'ticker-score win':'ticker-score loss'}">${s.away_city} ${s.away_score}</span>
+          <span style="color:var(--sub)">@</span>
+          <span class="${!awayWon?'ticker-score win':'ticker-score loss'}">${s.home_city} ${s.home_score}</span>
+          <span class="ticker-final">Final${inn}</span>
+        </div>`;
+    });
+  }
+  track.innerHTML = html;
+  // Adjust animation speed based on number of items
+  const duration = Math.max(20, DATA_SCORES.length * 5);
+  track.style.animationDuration = duration + "s";
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
+renderTicker();
 renderPicks();
 renderParlays();
 renderGames();
@@ -683,18 +776,23 @@ def main():
     parlays_2 = build_parlays(picks, legs=2, max_parlays=5)
     parlays_3 = build_parlays(picks, legs=3, max_parlays=5)
 
+    # Today's completed scores for the ticker
+    today_scores = model.get_today_scores(actual_date)
+
     # Serialize
     picks_json  = json.dumps(prep_picks(picks))
     games_json  = json.dumps(prep_games(scored))
     p2_json     = json.dumps(prep_parlays(parlays_2))
     p3_json     = json.dumps(prep_parlays(parlays_3))
+    scores_json = json.dumps(prep_scores_ticker(today_scores))
 
     html = (HTML
             .replace("__DATE__",   actual_date)
             .replace("__PICKS__",  picks_json)
             .replace("__GAMES__",  games_json)
             .replace("__P2__",     p2_json)
-            .replace("__P3__",     p3_json))
+            .replace("__P3__",     p3_json)
+            .replace("__SCORES__", scores_json))
 
     os.makedirs(PICKS_DIR, exist_ok=True)
     out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")
