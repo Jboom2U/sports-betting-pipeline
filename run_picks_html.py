@@ -443,19 +443,26 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 /* ── SCORES TICKER ── */
 .ticker-wrap{
   background:#080c14;border-bottom:1px solid var(--border);
-  overflow:hidden;white-space:nowrap;padding:0;height:34px;
-  display:flex;align-items:center;
+  padding:0;height:34px;display:flex;align-items:center;
 }
 .ticker-label{
   background:var(--green);color:#000;font-weight:800;font-size:.72rem;
   letter-spacing:.8px;padding:0 12px;height:100%;display:flex;
   align-items:center;white-space:nowrap;flex-shrink:0;text-transform:uppercase;
 }
+.ticker-outer{
+  flex:1;overflow:hidden;height:100%;display:flex;align-items:center;
+}
 .ticker-track{
-  display:inline-flex;animation:ticker 35s linear infinite;
+  display:inline-flex;white-space:nowrap;
+  animation:ticker 35s linear infinite;
+  will-change:transform;
 }
 .ticker-track:hover{animation-play-state:paused}
-@keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@keyframes ticker{
+  0%  {transform:translateX(0)}
+  100%{transform:translateX(-50%)}
+}
 .ticker-item{
   display:inline-flex;align-items:center;gap:6px;
   padding:0 24px;font-size:.78rem;font-weight:600;color:var(--text);
@@ -498,8 +505,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
 <div class="ticker-wrap" id="scoreTicker">
   <div class="ticker-label">⚾ Scores</div>
-  <div class="ticker-track" id="tickerTrack">
-    <span class="ticker-empty">No completed games yet today</span>
+  <div class="ticker-outer">
+    <div class="ticker-track" id="tickerTrack">
+      <span class="ticker-empty">No completed games yet today</span>
+    </div>
   </div>
 </div>
 
