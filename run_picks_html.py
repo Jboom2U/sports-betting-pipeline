@@ -452,8 +452,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   align-items:center;white-space:nowrap;flex-shrink:0;text-transform:uppercase;
 }
 .ticker-track{
-  display:inline-flex;animation:ticker 40s linear infinite;
-  padding-left:100%;
+  display:inline-flex;animation:ticker 35s linear infinite;
 }
 .ticker-track:hover{animation-play-state:paused}
 @keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
@@ -848,6 +847,20 @@ def main():
     if not today_scores:
         # Fall back to master CSV if API unavailable
         today_scores = model.get_today_scores(actual_date)
+
+    # Remove any scored games that the API now shows as Final
+    finished = set(
+        (s["away_team"], s["home_team"])
+        for s in today_scores
+        if s.get("status") == "Final"
+    )
+    if finished:
+        before = len(scored)
+        scored = [g for g in scored
+                  if (g["away_team"], g["home_team"]) not in finished]
+        removed = before - len(scored)
+        if removed:
+            log.info(f"Removed {removed} additional finished game(s) from picks")
 
     # Serialize
     picks_json  = json.dumps(prep_picks(picks))
