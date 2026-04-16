@@ -180,6 +180,42 @@ def prep_games(scored):
             "rl_pick":   g.get("rl_pick", ""),
             "rl_team":   g.get("rl_team", ""),
             "rl_conf":   round(g.get("rl_conf", 0) * 100, 1),
+            # Weather
+            "weather_flag":   g.get("weather_flag", "NORMAL"),
+            "wind_label":     g.get("wind_label", ""),
+            "wind_speed":     round(g.get("wind_speed", 0) or 0, 1),
+            "wind_component": round(g.get("wind_component", 0) or 0, 1),
+            "temp_f":         round(g.get("temp_f", 70) or 70, 0),
+            "precip_prob":    round(g.get("precip_prob", 0) or 0, 0),
+            "has_roof":       bool(g.get("has_roof")),
+            # Bullpen
+            "away_bp_era":    round(g.get("away_bp_era", 4.20) or 4.20, 2),
+            "home_bp_era":    round(g.get("home_bp_era", 4.20) or 4.20, 2),
+            "lineup_confirmed": bool(g.get("lineup_confirmed")),
+            "away_lineup_ops":  g.get("away_lineup_ops"),
+            "home_lineup_ops":  g.get("home_lineup_ops"),
+        })
+    return out
+
+
+def prep_props(props: list) -> list:
+    """Serialize player props for HTML embedding."""
+    out = []
+    for p in props:
+        out.append({
+            "prop_type":    p["prop_type"],
+            "player_name":  p["player_name"],
+            "line":         p["line"],
+            "proj":         p["proj"],
+            "conf":         round(p["confidence"] * 100, 1),
+            "tier":         p["tier"],
+            "game":         p.get("game", ""),
+            "game_id":      p.get("game_id", ""),
+            "away_team":    p.get("away_team", ""),
+            "home_team":    p.get("home_team", ""),
+            "side":         p.get("side", ""),
+            "batting_order":p.get("batting_order", ""),
+            "reasoning":    p.get("reasoning", ""),
         })
     return out
 
@@ -476,6 +512,49 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .ticker-empty{color:var(--sub);font-size:.78rem;padding:0 20px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
+/* ── PROPS SECTION ── */
+.props-filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.props-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px;margin-bottom:36px}
+.prop-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;transition:transform .15s,border-color .15s;position:relative;overflow:hidden;
+}
+.prop-card:hover{transform:translateY(-2px)}
+.prop-card.tier-LOCK  {border-top:3px solid var(--gold)}
+.prop-card.tier-STRONG{border-top:3px solid var(--blue)}
+.prop-card.tier-LEAN  {border-top:3px solid var(--green)}
+.prop-card.hidden{display:none}
+.prop-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+.prop-type-badge{
+  font-size:.7rem;font-weight:700;letter-spacing:.8px;padding:3px 9px;border-radius:4px;text-transform:uppercase;
+}
+.badge-HR   {background:rgba(239,83,80,.15);color:#ef9a9a;border:1px solid rgba(239,83,80,.3)}
+.badge-HITS {background:rgba(66,165,245,.15);color:#90caf9;border:1px solid rgba(66,165,245,.3)}
+.badge-K    {background:rgba(171,71,188,.15);color:#ce93d8;border:1px solid rgba(171,71,188,.3)}
+.prop-player{font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:2px}
+.prop-game  {font-size:.75rem;color:var(--sub);margin-bottom:10px}
+.prop-line-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;
+  background:rgba(255,255,255,.04);border-radius:6px;padding:6px 10px}
+.prop-line-label{font-size:.72rem;color:var(--sub);font-weight:600}
+.prop-line-val{font-size:.92rem;font-weight:700;color:var(--text)}
+.prop-proj-val{font-size:.8rem;font-weight:600;color:var(--green)}
+.prop-reasoning{
+  font-size:.73rem;color:var(--sub);line-height:1.5;
+  border-top:1px solid var(--border);padding-top:8px;margin-top:4px;
+}
+.section-nav{
+  display:flex;gap:0;margin-bottom:24px;border-bottom:2px solid var(--border);
+}
+.section-nav-btn{
+  padding:10px 22px;font-size:.88rem;font-weight:700;cursor:pointer;
+  background:transparent;border:none;border-bottom:2px solid transparent;
+  color:var(--sub);font-family:inherit;transition:all .15s;margin-bottom:-2px;
+}
+.section-nav-btn.active{color:var(--green);border-bottom-color:var(--green)}
+.section-nav-btn:hover:not(.active){color:var(--text)}
+.section-panel{display:none}
+.section-panel.active{display:block}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:var(--bg)}
@@ -534,22 +613,49 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
 <div class="main">
 
-  <!-- PICKS -->
-  <div class="section-title">🎯 Individual Picks</div>
-  <div class="results-count" id="pickResults"></div>
-  <div class="picks-grid" id="picksGrid"></div>
-
-  <!-- PARLAYS -->
-  <div class="section-title">🔥 Parlay Recommendations</div>
-  <div class="section-tabs">
-    <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
-    <button class="section-tab" data-parlay="3">3-Leg (+595)</button>
+  <!-- SECTION NAV -->
+  <div class="section-nav">
+    <button class="section-nav-btn active" data-panel="panel-picks">🎯 Game Picks</button>
+    <button class="section-nav-btn" data-panel="panel-props">👤 Player Props</button>
+    <button class="section-nav-btn" data-panel="panel-games">📊 Game Breakdown</button>
   </div>
-  <div class="parlay-grid" id="parlayGrid"></div>
 
-  <!-- GAME BREAKDOWN -->
-  <div class="section-title">📊 Game Breakdown</div>
-  <div class="games-grid" id="gamesGrid"></div>
+  <!-- PANEL: GAME PICKS -->
+  <div class="section-panel active" id="panel-picks">
+    <div class="section-title">🎯 Individual Picks</div>
+    <div class="results-count" id="pickResults"></div>
+    <div class="picks-grid" id="picksGrid"></div>
+    <div class="section-title">🔥 Parlay Recommendations</div>
+    <div class="section-tabs">
+      <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
+      <button class="section-tab" data-parlay="3">3-Leg (+595)</button>
+    </div>
+    <div class="parlay-grid" id="parlayGrid"></div>
+  </div>
+
+  <!-- PANEL: PLAYER PROPS -->
+  <div class="section-panel" id="panel-props">
+    <div class="props-filter-row">
+      <span class="filter-label">Prop Type</span>
+      <button class="filter-btn active" data-pgroup="ptype" data-pval="all">All</button>
+      <button class="filter-btn" data-pgroup="ptype" data-pval="HR">⚡ Home Runs</button>
+      <button class="filter-btn" data-pgroup="ptype" data-pval="HITS">🎯 Hits</button>
+      <button class="filter-btn" data-pgroup="ptype" data-pval="K">🔥 Strikeouts</button>
+      <span class="filter-label" style="margin-left:12px">Confidence</span>
+      <button class="filter-btn active" data-pgroup="ptier" data-pval="all">All</button>
+      <button class="filter-btn" data-pgroup="ptier" data-pval="LOCK">🔒 Lock</button>
+      <button class="filter-btn" data-pgroup="ptier" data-pval="STRONG">⭐⭐ Strong</button>
+      <button class="filter-btn" data-pgroup="ptier" data-pval="LEAN">⭐ Lean</button>
+    </div>
+    <div class="results-count" id="propResults"></div>
+    <div class="props-grid" id="propsGrid"></div>
+  </div>
+
+  <!-- PANEL: GAME BREAKDOWN -->
+  <div class="section-panel" id="panel-games">
+    <div class="section-title">📊 Game Breakdown</div>
+    <div class="games-grid" id="gamesGrid"></div>
+  </div>
 
 </div>
 
@@ -561,6 +667,7 @@ const DATA_GAMES   = __GAMES__;
 const DATA_P2      = __P2__;
 const DATA_P3      = __P3__;
 const DATA_SCORES  = __SCORES__;
+const DATA_PROPS   = __PROPS__;
 
 // ── State ────────────────────────────────────────────────────────────────────
 let filterType = "all", filterTier = "all", filterTeam = "";
@@ -654,13 +761,52 @@ function parkClass(tag){
   return "park-neutral";
 }
 
+function weatherDisplay(g){
+  if(g.has_roof) return {text:"Retractable Roof / Dome", color:"var(--sub)", icon:"🏟️"};
+  const flag = g.weather_flag;
+  const temp = g.temp_f + "°F";
+  const precip = g.precip_prob > 10 ? ` | ${g.precip_prob}% precip` : "";
+  if(flag==="WIND_OUT"){
+    const mph = Math.abs(g.wind_component).toFixed(1);
+    return {text:`${temp} | Wind ${mph} mph blowing OUT (+${(g.wind_component*0.04*0.5).toFixed(2)} runs)${precip}`, color:"#ef9a9a", icon:"💨"};
+  }
+  if(flag==="WIND_IN"){
+    const mph = Math.abs(g.wind_component).toFixed(1);
+    return {text:`${temp} | Wind ${mph} mph blowing IN (suppresses scoring)${precip}`, color:"#90caf9", icon:"🌬️"};
+  }
+  if(flag==="COLD"){
+    return {text:`${temp} — Cold conditions suppress scoring${precip}`, color:"#90caf9", icon:"🥶"};
+  }
+  if(flag==="PRECIP"){
+    return {text:`${temp} | ${g.precip_prob}% chance of rain`, color:"#ffcc80", icon:"🌧️"};
+  }
+  // NORMAL
+  if(g.wind_speed > 5){
+    const dir = g.wind_label || "";
+    return {text:`${temp} | Wind ${g.wind_speed} mph ${dir}`, color:"var(--sub)", icon:"⛅"};
+  }
+  return {text:`${temp} | Clear conditions`, color:"var(--sub)", icon:"☀️"};
+}
+
 function renderGames(){
   const grid = document.getElementById("gamesGrid");
   grid.innerHTML = "";
   DATA_GAMES.forEach(g=>{
-    const homeW = g.home_wp, awayW = g.away_wp;
+    const homeW    = g.home_wp, awayW = g.away_wp;
     const totalDir = g.exp_total > g.total_line ? "↑ OVER" : "↓ UNDER";
     const totalCol = g.exp_total > g.total_line ? "color:var(--red)" : "color:var(--blue)";
+    const wx       = weatherDisplay(g);
+
+    // Lineup OPS display
+    const lineupRow = g.lineup_confirmed
+      ? `<div class="game-row"><span class="row-label">Lineup OPS</span>
+           <span class="row-val" style="color:var(--green)">
+             ${g.away} <b>${g.away_lineup_ops||"—"}</b> &nbsp;|&nbsp;
+             ${g.home} <b>${g.home_lineup_ops||"—"}</b>
+             <span style="color:var(--sub);font-size:.68rem"> (confirmed)</span>
+           </span></div>`
+      : "";
+
     grid.innerHTML += `
       <div class="game-card">
         <div class="game-header">
@@ -675,6 +821,10 @@ function renderGames(){
             </span>
           </div>
           <div class="game-row">
+            <span class="row-label">Weather</span>
+            <span class="row-val" style="color:${wx.color}">${wx.icon} ${wx.text}</span>
+          </div>
+          <div class="game-row">
             <span class="row-label">Away SP</span>
             <span class="row-val">${g.away_sp} &bull; ERA ${g.away_era} / FIP ${g.away_fip}</span>
           </div>
@@ -683,9 +833,14 @@ function renderGames(){
             <span class="row-val">${g.home_sp} &bull; ERA ${g.home_era} / FIP ${g.home_fip}</span>
           </div>
           <div class="game-row">
+            <span class="row-label">Bullpen</span>
+            <span class="row-val">${g.away} BP ERA ${g.away_bp_era} &nbsp;|&nbsp; ${g.home} BP ERA ${g.home_bp_era}</span>
+          </div>
+          <div class="game-row">
             <span class="row-label">Offense</span>
             <span class="row-val">${g.away} ${g.away_rpg} RPG &nbsp;|&nbsp; ${g.home} ${g.home_rpg} RPG</span>
           </div>
+          ${lineupRow}
           <div class="game-row">
             <span class="row-label">Projected</span>
             <span class="row-val">${g.away} <b>${g.exp_away}</b> &nbsp;|&nbsp; ${g.home} <b>${g.exp_home}</b></span>
@@ -717,8 +872,95 @@ function renderGames(){
   });
 }
 
+// ── Section Nav ───────────────────────────────────────────────────────────────
+document.querySelectorAll(".section-nav-btn").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    document.querySelectorAll(".section-nav-btn").forEach(b=>b.classList.remove("active"));
+    document.querySelectorAll(".section-panel").forEach(p=>p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById(btn.dataset.panel).classList.add("active");
+  });
+});
+
+// ── Render Props ──────────────────────────────────────────────────────────────
+let propFilterType = "all", propFilterTier = "all";
+
+function propIcon(t){ return t==="HR"?"⚡":t==="HITS"?"🎯":"🔥"; }
+function propLabel(t,line){
+  if(t==="HR")   return `HR Over ${line}`;
+  if(t==="HITS") return `Hits Over ${line}`;
+  if(t==="K")    return `Ks Over ${line}`;
+  return `Over ${line}`;
+}
+
+function renderProps(){
+  const grid = document.getElementById("propsGrid");
+  grid.innerHTML = "";
+  let visible = 0;
+  DATA_PROPS.forEach(p=>{
+    const show = (propFilterType==="all" || p.prop_type===propFilterType)
+              && (propFilterTier==="all" || p.tier===propFilterTier);
+    if(!show) return;
+    visible++;
+    const label    = propLabel(p.prop_type, p.line);
+    const overUnder= p.proj >= p.line ? "OVER" : "UNDER";
+    const projColor= overUnder==="OVER" ? "var(--green)" : "var(--blue)";
+    const orderStr = p.batting_order ? ` &bull; Bats ${p.batting_order}` : "";
+    const sideStr  = p.side==="pitcher" ? " (SP)" : (p.side ? ` (${p.side})` : "");
+    grid.innerHTML += `
+      <div class="prop-card tier-${p.tier}">
+        <div class="prop-top">
+          <span class="prop-type-badge badge-${p.prop_type}">${propIcon(p.prop_type)} ${p.prop_type}</span>
+          <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
+        </div>
+        <div class="prop-player">${p.player_name}${sideStr}</div>
+        <div class="prop-game">${p.game}${orderStr}</div>
+        <div class="prop-line-row">
+          <div>
+            <div class="prop-line-label">Line</div>
+            <div class="prop-line-val">${label}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="prop-line-label">Projection</div>
+            <div class="prop-proj-val" style="color:${projColor}">${p.proj} (${overUnder})</div>
+          </div>
+        </div>
+        <div class="conf-row">
+          <div class="conf-bar-wrap">
+            <div class="conf-bar bar-${p.tier}" style="width:${p.conf}%"></div>
+          </div>
+          <span class="conf-pct pct-${p.tier}">${p.conf}%</span>
+        </div>
+        <div class="prop-reasoning">${p.reasoning}</div>
+      </div>`;
+  });
+  document.getElementById("propResults").innerHTML =
+    `Showing <b>${visible}</b> of <b>${DATA_PROPS.length}</b> props`;
+  if(!visible){
+    const msg = DATA_PROPS.length===0
+      ? "Player props require confirmed lineups — check back closer to game time."
+      : "No props match the current filters.";
+    grid.innerHTML = `<div class="empty">${msg}</div>`;
+  }
+}
+
 // ── Filter Handlers ───────────────────────────────────────────────────────────
-document.querySelectorAll(".filter-btn").forEach(btn=>{
+document.querySelectorAll(".filter-btn[data-pgroup]").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    const group = btn.dataset.pgroup, val = btn.dataset.pval;
+    document.querySelectorAll(`.filter-btn[data-pgroup="${group}"]`).forEach(b=>{
+      b.classList.remove("active","active-gold","active-blue");
+    });
+    if(val==="LOCK") btn.classList.add("active-gold");
+    else if(val==="STRONG") btn.classList.add("active-blue");
+    else btn.classList.add("active");
+    if(group==="ptype") propFilterType = val;
+    else                propFilterTier = val;
+    renderProps();
+  });
+});
+
+document.querySelectorAll(".filter-btn[data-group]").forEach(btn=>{
   btn.addEventListener("click",()=>{
     const group = btn.dataset.group, val = btn.dataset.val;
     document.querySelectorAll(`.filter-btn[data-group="${group}"]`).forEach(b=>{
@@ -738,7 +980,7 @@ document.getElementById("teamSearch").addEventListener("input", e=>{
   renderPicks();
 });
 
-document.querySelectorAll(".section-tab").forEach(tab=>{
+document.querySelectorAll(".section-tab[data-parlay]").forEach(tab=>{
   tab.addEventListener("click",()=>{
     document.querySelectorAll(".section-tab").forEach(t=>t.classList.remove("active"));
     tab.classList.add("active");
@@ -820,6 +1062,7 @@ renderTicker();
 renderPicks();
 renderParlays();
 renderGames();
+renderProps();
 </script>
 </body>
 </html>"""
@@ -838,6 +1081,7 @@ def main():
 
     from model.mlb_model import MLBModel
     from model.mlb_picks import generate_picks, build_parlays
+    from model.mlb_props_model import score_all_props
 
     model = MLBModel()
     model.load()
@@ -871,6 +1115,15 @@ def main():
     parlays_2 = build_parlays(picks, legs=2, max_parlays=5)
     parlays_3 = build_parlays(picks, legs=3, max_parlays=5)
 
+    # Player props (non-fatal — works only when lineups confirmed)
+    try:
+        props     = score_all_props(actual_date)
+        props_json = json.dumps(prep_props(props))
+        log.info(f"Props generated: {len(props)} total")
+    except Exception as e:
+        log.warning(f"Props generation failed (non-fatal): {e}")
+        props_json = "[]"
+
     # Serialize
     picks_json  = json.dumps(prep_picks(picks))
     games_json  = json.dumps(prep_games(scored))
@@ -884,7 +1137,8 @@ def main():
             .replace("__GAMES__",  games_json)
             .replace("__P2__",     p2_json)
             .replace("__P3__",     p3_json)
-            .replace("__SCORES__", scores_json))
+            .replace("__SCORES__", scores_json)
+            .replace("__PROPS__",  props_json))
 
     os.makedirs(PICKS_DIR, exist_ok=True)
     out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")

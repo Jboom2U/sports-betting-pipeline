@@ -271,6 +271,49 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .ticker-empty{color:var(--sub);font-size:.78rem;padding:0 20px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
+/* ── PROPS SECTION ── */
+.props-filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.props-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px;margin-bottom:36px}
+.prop-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;transition:transform .15s,border-color .15s;position:relative;overflow:hidden;
+}
+.prop-card:hover{transform:translateY(-2px)}
+.prop-card.tier-LOCK  {border-top:3px solid var(--gold)}
+.prop-card.tier-STRONG{border-top:3px solid var(--blue)}
+.prop-card.tier-LEAN  {border-top:3px solid var(--green)}
+.prop-card.hidden{display:none}
+.prop-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+.prop-type-badge{
+  font-size:.7rem;font-weight:700;letter-spacing:.8px;padding:3px 9px;border-radius:4px;text-transform:uppercase;
+}
+.badge-HR   {background:rgba(239,83,80,.15);color:#ef9a9a;border:1px solid rgba(239,83,80,.3)}
+.badge-HITS {background:rgba(66,165,245,.15);color:#90caf9;border:1px solid rgba(66,165,245,.3)}
+.badge-K    {background:rgba(171,71,188,.15);color:#ce93d8;border:1px solid rgba(171,71,188,.3)}
+.prop-player{font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:2px}
+.prop-game  {font-size:.75rem;color:var(--sub);margin-bottom:10px}
+.prop-line-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;
+  background:rgba(255,255,255,.04);border-radius:6px;padding:6px 10px}
+.prop-line-label{font-size:.72rem;color:var(--sub);font-weight:600}
+.prop-line-val{font-size:.92rem;font-weight:700;color:var(--text)}
+.prop-proj-val{font-size:.8rem;font-weight:600;color:var(--green)}
+.prop-reasoning{
+  font-size:.73rem;color:var(--sub);line-height:1.5;
+  border-top:1px solid var(--border);padding-top:8px;margin-top:4px;
+}
+.section-nav{
+  display:flex;gap:0;margin-bottom:24px;border-bottom:2px solid var(--border);
+}
+.section-nav-btn{
+  padding:10px 22px;font-size:.88rem;font-weight:700;cursor:pointer;
+  background:transparent;border:none;border-bottom:2px solid transparent;
+  color:var(--sub);font-family:inherit;transition:all .15s;margin-bottom:-2px;
+}
+.section-nav-btn.active{color:var(--green);border-bottom-color:var(--green)}
+.section-nav-btn:hover:not(.active){color:var(--text)}
+.section-panel{display:none}
+.section-panel.active{display:block}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:var(--bg)}
@@ -329,33 +372,61 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
 <div class="main">
 
-  <!-- PICKS -->
-  <div class="section-title">🎯 Individual Picks</div>
-  <div class="results-count" id="pickResults"></div>
-  <div class="picks-grid" id="picksGrid"></div>
-
-  <!-- PARLAYS -->
-  <div class="section-title">🔥 Parlay Recommendations</div>
-  <div class="section-tabs">
-    <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
-    <button class="section-tab" data-parlay="3">3-Leg (+595)</button>
+  <!-- SECTION NAV -->
+  <div class="section-nav">
+    <button class="section-nav-btn active" data-panel="panel-picks">🎯 Game Picks</button>
+    <button class="section-nav-btn" data-panel="panel-props">👤 Player Props</button>
+    <button class="section-nav-btn" data-panel="panel-games">📊 Game Breakdown</button>
   </div>
-  <div class="parlay-grid" id="parlayGrid"></div>
 
-  <!-- GAME BREAKDOWN -->
-  <div class="section-title">📊 Game Breakdown</div>
-  <div class="games-grid" id="gamesGrid"></div>
+  <!-- PANEL: GAME PICKS -->
+  <div class="section-panel active" id="panel-picks">
+    <div class="section-title">🎯 Individual Picks</div>
+    <div class="results-count" id="pickResults"></div>
+    <div class="picks-grid" id="picksGrid"></div>
+    <div class="section-title">🔥 Parlay Recommendations</div>
+    <div class="section-tabs">
+      <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
+      <button class="section-tab" data-parlay="3">3-Leg (+595)</button>
+    </div>
+    <div class="parlay-grid" id="parlayGrid"></div>
+  </div>
+
+  <!-- PANEL: PLAYER PROPS -->
+  <div class="section-panel" id="panel-props">
+    <div class="props-filter-row">
+      <span class="filter-label">Prop Type</span>
+      <button class="filter-btn active" data-pgroup="ptype" data-pval="all">All</button>
+      <button class="filter-btn" data-pgroup="ptype" data-pval="HR">⚡ Home Runs</button>
+      <button class="filter-btn" data-pgroup="ptype" data-pval="HITS">🎯 Hits</button>
+      <button class="filter-btn" data-pgroup="ptype" data-pval="K">🔥 Strikeouts</button>
+      <span class="filter-label" style="margin-left:12px">Confidence</span>
+      <button class="filter-btn active" data-pgroup="ptier" data-pval="all">All</button>
+      <button class="filter-btn" data-pgroup="ptier" data-pval="LOCK">🔒 Lock</button>
+      <button class="filter-btn" data-pgroup="ptier" data-pval="STRONG">⭐⭐ Strong</button>
+      <button class="filter-btn" data-pgroup="ptier" data-pval="LEAN">⭐ Lean</button>
+    </div>
+    <div class="results-count" id="propResults"></div>
+    <div class="props-grid" id="propsGrid"></div>
+  </div>
+
+  <!-- PANEL: GAME BREAKDOWN -->
+  <div class="section-panel" id="panel-games">
+    <div class="section-title">📊 Game Breakdown</div>
+    <div class="games-grid" id="gamesGrid"></div>
+  </div>
 
 </div>
 
 <script>
 // ── Embedded Data ────────────────────────────────────────────────────────────
 const DATA_DATE    = "2026-04-16";
-const DATA_PICKS   = [{"type": "ML", "label": "New York Yankees ML", "team": "New York Yankees", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees", "game_id": "823560", "venue": "Yankee Stadium", "reasoning": "Away SP TBD vs Max Fried ERA 2.71 [NEUTRAL] | Recent: Los Angeles Angels 7.0 RPG (33% W) | New York Yankees 5.7 RPG (67% W) | Line: Los Angeles Angels +222 | New York Yankees -276", "exp_total": 9.2, "away": "Los Angeles Angels", "home": "New York Yankees"}, {"type": "TOTAL", "label": "UNDER 8.5", "team": "UNDER", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers", "game_id": "824289", "venue": "Comerica Park", "reasoning": "Model projects 4.7 runs vs 8.0 line (3.8 run edge) | Elite pitching matchup (avg ERA 3.44)", "exp_total": 4.65, "away": "Kansas City Royals", "home": "Detroit Tigers"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers", "game_id": "823801", "venue": "American Family Field", "reasoning": "Model projects 18.3 runs vs 8.0 line (9.8 run edge)", "exp_total": 18.26, "away": "Toronto Blue Jays", "home": "Milwaukee Brewers"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox", "game_id": "824614", "venue": "Rate Field", "reasoning": "Model projects 10.5 runs vs 8.0 line (2.0 run edge)", "exp_total": 10.52, "away": "Tampa Bay Rays", "home": "Chicago White Sox"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Seattle Mariners @ San Diego Padres", "game_id": "823313", "venue": "Petco Park", "reasoning": "Model projects 10.4 runs vs 8.5 line (1.9 run edge) | Pitcher-friendly park (factor 96.0)", "exp_total": 10.44, "away": "Seattle Mariners", "home": "San Diego Padres"}, {"type": "ML", "label": "Toronto Blue Jays ML", "team": "Toronto Blue Jays", "conf": 67.4, "tier": "STRONG", "game": "Toronto Blue Jays @ Milwaukee Brewers", "game_id": "823801", "venue": "American Family Field", "reasoning": "Patrick Corbin ERA 4.69 [COLD] vs Brandon Sproat ERA 4.43 [COLD] | Recent: Toronto Blue Jays 5.0 RPG (50% W) | Milwaukee Brewers 4.5 RPG (50% W) | Line: Toronto Blue Jays +108 | Milwaukee Brewers -127", "exp_total": 18.26, "away": "Toronto Blue Jays", "home": "Milwaukee Brewers"}, {"type": "ML", "label": "Pittsburgh Pirates ML", "team": "Pittsburgh Pirates", "conf": 63.4, "tier": "STRONG", "game": "Washington Nationals @ Pittsburgh Pirates", "game_id": "823396", "venue": "PNC Park", "reasoning": "Recent: Washington Nationals 3.3 RPG (33% W) | Pittsburgh Pirates 7.3 RPG (67% W) | Line: Washington Nationals +138 | Pittsburgh Pirates -162", "exp_total": 8.75, "away": "Washington Nationals", "home": "Pittsburgh Pirates"}, {"type": "ML", "label": "Cincinnati Reds ML", "team": "Cincinnati Reds", "conf": 63.3, "tier": "STRONG", "game": "San Francisco Giants @ Cincinnati Reds", "game_id": "824530", "venue": "Great American Ball Park", "reasoning": "Landen Roupp ERA 4.09 [NEUTRAL] vs Chase Burns ERA 4.36 [NEUTRAL] | Recent: San Francisco Giants 2.0 RPG (0% W) | Cincinnati Reds 5.0 RPG (100% W) | Line: San Francisco Giants +109 | Cincinnati Reds -128 | Hitter park (108.0)", "exp_total": 8.36, "away": "San Francisco Giants", "home": "Cincinnati Reds"}, {"type": "RL", "label": "New York Yankees -1.5", "team": "New York Yankees", "conf": 61.7, "tier": "LEAN", "game": "Los Angeles Angels @ New York Yankees", "game_id": "823560", "venue": "Yankee Stadium", "reasoning": "ML conf 75% | Projected margin 2.3 runs | New York Yankees 67% W last 10", "exp_total": 9.2, "away": "Los Angeles Angels", "home": "New York Yankees"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 60.9, "tier": "LEAN", "game": "Baltimore Orioles @ Cleveland Guardians", "game_id": "824453", "venue": "Progressive Field", "reasoning": "Model projects 9.3 runs vs 8.0 line (0.8 run edge)", "exp_total": 9.26, "away": "Baltimore Orioles", "home": "Cleveland Guardians"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 60.0, "tier": "LEAN", "game": "Los Angeles Angels @ New York Yankees", "game_id": "823560", "venue": "Yankee Stadium", "reasoning": "Model projects 9.2 runs vs 10.0 line (0.7 run edge) | Elite pitching matchup (avg ERA 3.46)", "exp_total": 9.2, "away": "Los Angeles Angels", "home": "New York Yankees"}, {"type": "ML", "label": "Houston Astros ML", "team": "Houston Astros", "conf": 59.6, "tier": "LEAN", "game": "Colorado Rockies @ Houston Astros", "game_id": "824208", "venue": "Daikin Park", "reasoning": "Recent: Colorado Rockies 3.5 RPG (0% W) | Houston Astros 4.0 RPG (67% W)", "exp_total": 7.86, "away": "Colorado Rockies", "home": "Houston Astros"}, {"type": "TOTAL", "label": "UNDER 8.5", "team": "UNDER", "conf": 59.1, "tier": "LEAN", "game": "Colorado Rockies @ Houston Astros", "game_id": "824208", "venue": "Daikin Park", "reasoning": "Model projects 7.9 runs vs 8.5 line (0.6 run edge)", "exp_total": 7.86, "away": "Colorado Rockies", "home": "Houston Astros"}, {"type": "ML", "label": "Tampa Bay Rays ML", "team": "Tampa Bay Rays", "conf": 57.4, "tier": "LEAN", "game": "Tampa Bay Rays @ Chicago White Sox", "game_id": "824614", "venue": "Rate Field", "reasoning": "Steven Matz ERA 5.00 [NEUTRAL] (home SP TBD) | Recent: Tampa Bay Rays 8.0 RPG (100% W) | Chicago White Sox 4.0 RPG (0% W) | Line: Tampa Bay Rays -124 | Chicago White Sox +106", "exp_total": 10.52, "away": "Tampa Bay Rays", "home": "Chicago White Sox"}, {"type": "ML", "label": "San Diego Padres ML", "team": "San Diego Padres", "conf": 56.3, "tier": "LEAN", "game": "Seattle Mariners @ San Diego Padres", "game_id": "823313", "venue": "Petco Park", "reasoning": "Luis Castillo ERA 3.89 [NEUTRAL] vs Walker Buehler ERA 4.60 [NEUTRAL] | Recent: Seattle Mariners 4.3 RPG (33% W) | San Diego Padres 5.5 RPG (100% W) | Pitcher park (96.0)", "exp_total": 10.44, "away": "Seattle Mariners", "home": "San Diego Padres"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 56.0, "tier": "LEAN", "game": "Texas Rangers @ Athletics", "game_id": "825023", "venue": "Sutter Health Park", "reasoning": "Model projects 8.9 runs vs 9.0 line (0.4 run edge)", "exp_total": 8.92, "away": "Texas Rangers", "home": "Athletics"}, {"type": "ML", "label": "Texas Rangers ML", "team": "Texas Rangers", "conf": 56.0, "tier": "LEAN", "game": "Texas Rangers @ Athletics", "game_id": "825023", "venue": "Sutter Health Park", "reasoning": "Jack Leiter ERA 3.97 [NEUTRAL] vs Jacob Lopez ERA 3.65 [COLD] | Recent: Texas Rangers 4.7 RPG (33% W) | Athletics 3.0 RPG (67% W) | Line: Texas Rangers -116 | Athletics +18", "exp_total": 8.92, "away": "Texas Rangers", "home": "Athletics"}, {"type": "RL", "label": "Toronto Blue Jays -1.5", "team": "Toronto Blue Jays", "conf": 55.9, "tier": "LEAN", "game": "Toronto Blue Jays @ Milwaukee Brewers", "game_id": "823801", "venue": "American Family Field", "reasoning": "ML conf 67% | Projected margin 4.1 runs", "exp_total": 18.26, "away": "Toronto Blue Jays", "home": "Milwaukee Brewers"}, {"type": "ML", "label": "Kansas City Royals ML", "team": "Kansas City Royals", "conf": 55.4, "tier": "LEAN", "game": "Kansas City Royals @ Detroit Tigers", "game_id": "824289", "venue": "Comerica Park", "reasoning": "Kris Bubic ERA 2.37 [HOT] vs Keider Montero ERA 4.51 [HOT] | Recent: Kansas City Royals 1.0 RPG (0% W) | Detroit Tigers 2.0 RPG (100% W) | Line: Kansas City Royals -111 | Detroit Tigers -106", "exp_total": 4.65, "away": "Kansas City Royals", "home": "Detroit Tigers"}];
-const DATA_GAMES   = [{"game_id": "823396", "away": "Washington Nationals", "home": "Pittsburgh Pirates", "venue": "PNC Park", "time": "16:35 UTC", "park_runs": 98.0, "park_tag": "Neutral", "away_sp": "Foster Griffin", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.24, "home_rpg": 3.6, "away_ops": 0.693, "home_ops": 0.655, "away_form": 3.3, "home_form": 7.3, "exp_away": 3.845, "exp_home": 4.904, "exp_total": 8.75, "away_wp": 36.5, "home_wp": 63.4, "total_pick": "OVER", "total_line": 8.5, "total_conf": 53.6, "rl_pick": "Pittsburgh Pirates -1.5", "rl_team": "Pittsburgh Pirates", "rl_conf": 52.8}, {"game_id": "824530", "away": "San Francisco Giants", "home": "Cincinnati Reds", "venue": "Great American Ball Park", "time": "16:40 UTC", "park_runs": 108.0, "park_tag": "Hitter-Friendly", "away_sp": "Landen Roupp", "home_sp": "Chase Burns", "away_era": "4.09", "home_era": "4.36", "away_fip": "4.08", "home_fip": "2.33", "away_rpg": 4.35, "home_rpg": 4.42, "away_ops": 0.697, "home_ops": 0.706, "away_form": 2.0, "home_form": 5.0, "exp_away": 3.679, "exp_home": 4.681, "exp_total": 8.36, "away_wp": 36.7, "home_wp": 63.3, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 52.0, "rl_pick": "Cincinnati Reds -1.5", "rl_team": "Cincinnati Reds", "rl_conf": 52.7}, {"game_id": "824289", "away": "Kansas City Royals", "home": "Detroit Tigers", "venue": "Comerica Park", "time": "17:10 UTC", "park_runs": 97.0, "park_tag": "Neutral", "away_sp": "Kris Bubic", "home_sp": "Keider Montero", "away_era": "2.37", "home_era": "4.51", "away_fip": "2.78", "home_fip": "5.14", "away_rpg": 4.02, "home_rpg": 4.68, "away_ops": 0.706, "home_ops": 0.729, "away_form": 1.0, "home_form": 2.0, "exp_away": 2.527, "exp_home": 2.123, "exp_total": 4.65, "away_wp": 55.4, "home_wp": 44.6, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}, {"game_id": "823560", "away": "Los Angeles Angels", "home": "New York Yankees", "venue": "Yankee Stadium", "time": "17:35 UTC", "park_runs": 105.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "Max Fried", "away_era": "4.20", "home_era": "2.71", "away_fip": "4.20", "home_fip": "2.79", "away_rpg": 4.15, "home_rpg": 5.24, "away_ops": 0.695, "home_ops": 0.787, "away_form": 7.0, "home_form": 5.7, "exp_away": 3.43, "exp_home": 5.773, "exp_total": 9.2, "away_wp": 25.3, "home_wp": 74.7, "total_pick": "OVER", "total_line": 8.5, "total_conf": 60.0, "rl_pick": "New York Yankees -1.5", "rl_team": "New York Yankees", "rl_conf": 61.7}, {"game_id": "823801", "away": "Toronto Blue Jays", "home": "Milwaukee Brewers", "venue": "American Family Field", "time": "17:40 UTC", "park_runs": 101.0, "park_tag": "Neutral", "away_sp": "Patrick Corbin", "home_sp": "Brandon Sproat", "away_era": "4.69", "home_era": "4.43", "away_fip": "4.42", "home_fip": "2.35", "away_rpg": 4.93, "home_rpg": 4.97, "away_ops": 0.76, "home_ops": 0.735, "away_form": 5.0, "home_form": 4.5, "exp_away": 11.197, "exp_home": 7.06, "exp_total": 18.26, "away_wp": 67.4, "home_wp": 32.6, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Toronto Blue Jays -1.5", "rl_team": "Toronto Blue Jays", "rl_conf": 55.9}, {"game_id": "824614", "away": "Tampa Bay Rays", "home": "Chicago White Sox", "venue": "Rate Field", "time": "18:10 UTC", "park_runs": 103.0, "park_tag": "Neutral", "away_sp": "Steven Matz", "home_sp": "Anthony Kay", "away_era": "5.00", "home_era": "4.20", "away_fip": "4.61", "home_fip": "4.20", "away_rpg": 4.41, "home_rpg": 3.99, "away_ops": 0.714, "home_ops": 0.675, "away_form": 8.0, "home_form": 4.0, "exp_away": 5.834, "exp_home": 4.682, "exp_total": 10.52, "away_wp": 57.4, "home_wp": 42.6, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}, {"game_id": "825023", "away": "Texas Rangers", "home": "Athletics", "venue": "Sutter Health Park", "time": "19:05 UTC", "park_runs": 97.0, "park_tag": "Neutral", "away_sp": "Jack Leiter", "home_sp": "Jacob Lopez", "away_era": "3.97", "home_era": "3.65", "away_fip": "4.01", "home_fip": "3.70", "away_rpg": 4.22, "home_rpg": 4.53, "away_ops": 0.683, "home_ops": 0.749, "away_form": 4.7, "home_form": 3.0, "exp_away": 4.875, "exp_home": 4.046, "exp_total": 8.92, "away_wp": 56.0, "home_wp": 44.0, "total_pick": "OVER", "total_line": 8.5, "total_conf": 56.0, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}, {"game_id": "824453", "away": "Baltimore Orioles", "home": "Cleveland Guardians", "venue": "Progressive Field", "time": "22:10 UTC", "park_runs": 99.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.18, "home_rpg": 3.97, "away_ops": 0.699, "home_ops": 0.669, "away_form": 5.7, "home_form": 5.7, "exp_away": 4.653, "exp_home": 4.608, "exp_total": 9.26, "away_wp": 47.9, "home_wp": 52.1, "total_pick": "OVER", "total_line": 8.5, "total_conf": 60.9, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}, {"game_id": "824208", "away": "Colorado Rockies", "home": "Houston Astros", "venue": "Daikin Park", "time": "00:10 UTC", "park_runs": 100.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 3.69, "home_rpg": 4.24, "away_ops": 0.679, "home_ops": 0.714, "away_form": 3.5, "home_form": 4.0, "exp_away": 3.62, "exp_home": 4.236, "exp_total": 7.86, "away_wp": 40.4, "home_wp": 59.6, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 59.1, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}, {"game_id": "823313", "away": "Seattle Mariners", "home": "San Diego Padres", "venue": "Petco Park", "time": "00:40 UTC", "park_runs": 96.0, "park_tag": "Pitcher-Friendly", "away_sp": "Luis Castillo", "home_sp": "Walker Buehler", "away_era": "3.89", "home_era": "4.60", "away_fip": "3.81", "home_fip": "5.25", "away_rpg": 4.73, "home_rpg": 4.33, "away_ops": 0.74, "home_ops": 0.711, "away_form": 4.3, "home_form": 5.5, "exp_away": 5.004, "exp_home": 5.438, "exp_total": 10.44, "away_wp": 43.7, "home_wp": 56.3, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0}];
-const DATA_P2      = [{"n_legs": 2, "combined": 55.3, "payout": "+260", "legs": [{"label": "New York Yankees ML", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}]}, {"n_legs": 2, "combined": 55.3, "payout": "+260", "legs": [{"label": "New York Yankees ML", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}]}, {"n_legs": 2, "combined": 55.3, "payout": "+260", "legs": [{"label": "New York Yankees ML", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox"}]}, {"n_legs": 2, "combined": 55.3, "payout": "+260", "legs": [{"label": "New York Yankees ML", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Seattle Mariners @ San Diego Padres"}]}, {"n_legs": 2, "combined": 54.8, "payout": "+260", "legs": [{"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}]}];
-const DATA_P3      = [{"n_legs": 3, "combined": 40.9, "payout": "+595", "legs": [{"label": "New York Yankees ML", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}]}, {"n_legs": 3, "combined": 40.9, "payout": "+595", "legs": [{"label": "New York Yankees ML", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox"}]}, {"n_legs": 3, "combined": 40.9, "payout": "+595", "legs": [{"label": "New York Yankees ML", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Seattle Mariners @ San Diego Padres"}]}, {"n_legs": 3, "combined": 40.9, "payout": "+595", "legs": [{"label": "New York Yankees ML", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox"}]}, {"n_legs": 3, "combined": 40.9, "payout": "+595", "legs": [{"label": "New York Yankees ML", "conf": 74.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Seattle Mariners @ San Diego Padres"}]}];
-const DATA_SCORES  = [];
+const DATA_PICKS   = [{"type": "ML", "label": "New York Yankees ML", "team": "New York Yankees", "conf": 76.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees", "game_id": "823560", "venue": "Yankee Stadium", "reasoning": "Away SP TBD vs Max Fried ERA 2.71 [NEUTRAL] | Recent: Los Angeles Angels 7.0 RPG (33% W) | New York Yankees 5.7 RPG (67% W) | \ud83d\udcb0 STEAM: Sharp $ on New York Yankees (WITH model) | Line: Los Angeles Angels +230 | New York Yankees -280", "exp_total": 9.57, "away": "Los Angeles Angels", "home": "New York Yankees"}, {"type": "TOTAL", "label": "UNDER 8.5", "team": "UNDER", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers", "game_id": "824289", "venue": "Comerica Park", "reasoning": "Model projects 5.0 runs vs 8.0 line (3.5 run edge) | Elite pitching matchup (avg ERA 3.44)", "exp_total": 5.02, "away": "Kansas City Royals", "home": "Detroit Tigers"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers", "game_id": "823801", "venue": "American Family Field", "reasoning": "Model projects 15.1 runs vs 8.0 line (6.6 run edge)", "exp_total": 15.11, "away": "Toronto Blue Jays", "home": "Milwaukee Brewers"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox", "game_id": "824614", "venue": "Rate Field", "reasoning": "Model projects 10.9 runs vs 8.0 line (2.4 run edge)", "exp_total": 10.88, "away": "Tampa Bay Rays", "home": "Chicago White Sox"}, {"type": "ML", "label": "Pittsburgh Pirates ML", "team": "Pittsburgh Pirates", "conf": 70.4, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates", "game_id": "823396", "venue": "PNC Park", "reasoning": "Recent: Washington Nationals 3.3 RPG (33% W) | Pittsburgh Pirates 7.3 RPG (67% W) | \ud83d\udcb0 DRIFT: Sharp $ on Washington Nationals (AGAINST model) | Line: Washington Nationals +131 | Pittsburgh Pirates -154", "exp_total": 9.19, "away": "Washington Nationals", "home": "Pittsburgh Pirates"}, {"type": "ML", "label": "Cincinnati Reds ML", "team": "Cincinnati Reds", "conf": 66.8, "tier": "STRONG", "game": "San Francisco Giants @ Cincinnati Reds", "game_id": "824530", "venue": "Great American Ball Park", "reasoning": "Landen Roupp ERA 4.09 [NEUTRAL] vs Chase Burns ERA 4.36 [NEUTRAL] | Recent: San Francisco Giants 2.0 RPG (0% W) | Cincinnati Reds 5.0 RPG (100% W) | Line: San Francisco Giants +109 | Cincinnati Reds -128 | Hitter park (108.0)", "exp_total": 8.54, "away": "San Francisco Giants", "home": "Cincinnati Reds"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 65.3, "tier": "STRONG", "game": "Los Angeles Angels @ New York Yankees", "game_id": "823560", "venue": "Yankee Stadium", "reasoning": "Model projects 9.6 runs vs 10.0 line (1.1 run edge) | Elite pitching matchup (avg ERA 3.46)", "exp_total": 9.57, "away": "Los Angeles Angels", "home": "New York Yankees"}, {"type": "ML", "label": "Tampa Bay Rays ML", "team": "Tampa Bay Rays", "conf": 61.5, "tier": "LEAN", "game": "Tampa Bay Rays @ Chicago White Sox", "game_id": "824614", "venue": "Rate Field", "reasoning": "Steven Matz ERA 5.00 [NEUTRAL] (home SP TBD) | Recent: Tampa Bay Rays 8.0 RPG (100% W) | Chicago White Sox 4.0 RPG (0% W) | Line: Tampa Bay Rays -124 | Chicago White Sox +106", "exp_total": 10.88, "away": "Tampa Bay Rays", "home": "Chicago White Sox"}, {"type": "ML", "label": "Toronto Blue Jays ML", "team": "Toronto Blue Jays", "conf": 61.2, "tier": "LEAN", "game": "Toronto Blue Jays @ Milwaukee Brewers", "game_id": "823801", "venue": "American Family Field", "reasoning": "Patrick Corbin ERA 4.69 [COLD] vs Brandon Sproat ERA 4.43 [COLD] | Recent: Toronto Blue Jays 5.0 RPG (50% W) | Milwaukee Brewers 4.5 RPG (50% W) | Line: Toronto Blue Jays +109 | Milwaukee Brewers -128", "exp_total": 15.11, "away": "Toronto Blue Jays", "home": "Milwaukee Brewers"}, {"type": "RL", "label": "Pittsburgh Pirates -1.5", "team": "Pittsburgh Pirates", "conf": 60.7, "tier": "LEAN", "game": "Washington Nationals @ Pittsburgh Pirates", "game_id": "823396", "venue": "PNC Park", "reasoning": "ML conf 70% | Projected margin 2.2 runs | Pittsburgh Pirates 67% W last 10", "exp_total": 9.19, "away": "Washington Nationals", "home": "Pittsburgh Pirates"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 59.9, "tier": "LEAN", "game": "Washington Nationals @ Pittsburgh Pirates", "game_id": "823396", "venue": "PNC Park", "reasoning": "Model projects 9.2 runs vs 9.0 line (0.7 run edge)", "exp_total": 9.19, "away": "Washington Nationals", "home": "Pittsburgh Pirates"}, {"type": "RL", "label": "New York Yankees -1.5", "team": "New York Yankees", "conf": 59.4, "tier": "LEAN", "game": "Los Angeles Angels @ New York Yankees", "game_id": "823560", "venue": "Yankee Stadium", "reasoning": "ML conf 77% | Projected margin 2.1 runs | New York Yankees 67% W last 10", "exp_total": 9.57, "away": "Los Angeles Angels", "home": "New York Yankees"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 59.0, "tier": "LEAN", "game": "Seattle Mariners @ San Diego Padres", "game_id": "823313", "venue": "Petco Park", "reasoning": "Model projects 9.1 runs vs 8.5 line (0.6 run edge) | Pitcher-friendly park (factor 96.0)", "exp_total": 9.13, "away": "Seattle Mariners", "home": "San Diego Padres"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 58.7, "tier": "LEAN", "game": "Baltimore Orioles @ Cleveland Guardians", "game_id": "824453", "venue": "Progressive Field", "reasoning": "Model projects 9.1 runs vs 8.0 line (0.6 run edge)", "exp_total": 9.11, "away": "Baltimore Orioles", "home": "Cleveland Guardians"}, {"type": "ML", "label": "Texas Rangers ML", "team": "Texas Rangers", "conf": 57.7, "tier": "LEAN", "game": "Texas Rangers @ Athletics", "game_id": "825023", "venue": "Sutter Health Park", "reasoning": "Jack Leiter ERA 3.97 [NEUTRAL] vs Jacob Lopez ERA 3.65 [COLD] | Recent: Texas Rangers 4.7 RPG (33% W) | Athletics 3.0 RPG (67% W) | Line: Texas Rangers -116 | Athletics +19", "exp_total": 8.37, "away": "Texas Rangers", "home": "Athletics"}, {"type": "RL", "label": "Cincinnati Reds -1.5", "team": "Cincinnati Reds", "conf": 55.4, "tier": "LEAN", "game": "San Francisco Giants @ Cincinnati Reds", "game_id": "824530", "venue": "Great American Ball Park", "reasoning": "ML conf 67% | Projected margin 1.4 runs | Cincinnati Reds 100% W last 10", "exp_total": 8.54, "away": "San Francisco Giants", "home": "Cincinnati Reds"}, {"type": "ML", "label": "San Diego Padres ML", "team": "San Diego Padres", "conf": 55.1, "tier": "LEAN", "game": "Seattle Mariners @ San Diego Padres", "game_id": "823313", "venue": "Petco Park", "reasoning": "Luis Castillo ERA 3.89 [NEUTRAL] vs Walker Buehler ERA 4.60 [NEUTRAL] | Recent: Seattle Mariners 4.3 RPG (33% W) | San Diego Padres 5.5 RPG (100% W) | Pitcher park (96.0)", "exp_total": 9.13, "away": "Seattle Mariners", "home": "San Diego Padres"}];
+const DATA_GAMES   = [{"game_id": "823396", "away": "Washington Nationals", "home": "Pittsburgh Pirates", "venue": "PNC Park", "time": "16:35 UTC", "park_runs": 98.0, "park_tag": "Neutral", "away_sp": "Foster Griffin", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.24, "home_rpg": 3.6, "away_ops": 0.693, "home_ops": 0.655, "away_form": 3.3, "home_form": 7.3, "exp_away": 3.497, "exp_home": 5.693, "exp_total": 9.19, "away_wp": 26.6, "home_wp": 73.4, "total_pick": "OVER", "total_line": 8.5, "total_conf": 59.9, "rl_pick": "Pittsburgh Pirates -1.5", "rl_team": "Pittsburgh Pirates", "rl_conf": 60.7, "weather_flag": "WIND_OUT", "wind_label": "OUT to CF", "wind_speed": 14.3, "wind_component": 6.7, "temp_f": 80.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 5.89, "home_bp_era": 3.25, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824530", "away": "San Francisco Giants", "home": "Cincinnati Reds", "venue": "Great American Ball Park", "time": "16:40 UTC", "park_runs": 108.0, "park_tag": "Hitter-Friendly", "away_sp": "Landen Roupp", "home_sp": "Chase Burns", "away_era": "4.09", "home_era": "4.36", "away_fip": "4.08", "home_fip": "2.33", "away_rpg": 4.35, "home_rpg": 4.42, "away_ops": 0.697, "home_ops": 0.706, "away_form": 2.0, "home_form": 5.0, "exp_away": 3.591, "exp_home": 4.948, "exp_total": 8.54, "away_wp": 33.2, "home_wp": 66.8, "total_pick": "OVER", "total_line": 8.5, "total_conf": 50.6, "rl_pick": "Cincinnati Reds -1.5", "rl_team": "Cincinnati Reds", "rl_conf": 55.4, "weather_flag": "WIND_OUT", "wind_label": "OUT to CF", "wind_speed": 15.7, "wind_component": 13.6, "temp_f": 78.0, "precip_prob": 6.0, "has_roof": true, "away_bp_era": 4.41, "home_bp_era": 3.81, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824289", "away": "Kansas City Royals", "home": "Detroit Tigers", "venue": "Comerica Park", "time": "17:10 UTC", "park_runs": 97.0, "park_tag": "Neutral", "away_sp": "Kris Bubic", "home_sp": "Keider Montero", "away_era": "2.37", "home_era": "4.51", "away_fip": "2.78", "home_fip": "5.14", "away_rpg": 4.02, "home_rpg": 4.68, "away_ops": 0.706, "home_ops": 0.729, "away_form": 1.0, "home_form": 2.0, "exp_away": 2.433, "exp_home": 2.589, "exp_total": 5.02, "away_wp": 44.7, "home_wp": 55.3, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "PRECIP", "wind_label": "OUT to CF", "wind_speed": 8.7, "wind_component": 8.7, "temp_f": 65.0, "precip_prob": 38.0, "has_roof": true, "away_bp_era": 3.73, "home_bp_era": 3.35, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "823560", "away": "Los Angeles Angels", "home": "New York Yankees", "venue": "Yankee Stadium", "time": "17:35 UTC", "park_runs": 105.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "Max Fried", "away_era": "4.20", "home_era": "2.71", "away_fip": "4.20", "home_fip": "2.79", "away_rpg": 4.15, "home_rpg": 5.24, "away_ops": 0.695, "home_ops": 0.787, "away_form": 7.0, "home_form": 5.7, "exp_away": 3.742, "exp_home": 5.828, "exp_total": 9.57, "away_wp": 28.3, "home_wp": 71.7, "total_pick": "OVER", "total_line": 8.5, "total_conf": 65.3, "rl_pick": "New York Yankees -1.5", "rl_team": "New York Yankees", "rl_conf": 59.4, "weather_flag": "WIND_OUT", "wind_label": "OUT to CF", "wind_speed": 10.9, "wind_component": 10.9, "temp_f": 90.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 4.3, "home_bp_era": 3.27, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "823801", "away": "Toronto Blue Jays", "home": "Milwaukee Brewers", "venue": "American Family Field", "time": "17:40 UTC", "park_runs": 101.0, "park_tag": "Neutral", "away_sp": "Patrick Corbin", "home_sp": "Brandon Sproat", "away_era": "4.69", "home_era": "4.43", "away_fip": "4.42", "home_fip": "2.35", "away_rpg": 4.93, "home_rpg": 4.97, "away_ops": 0.76, "home_ops": 0.735, "away_form": 5.0, "home_form": 4.5, "exp_away": 8.705, "exp_home": 6.407, "exp_total": 15.11, "away_wp": 61.2, "home_wp": 38.8, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Toronto Blue Jays -1.5", "rl_team": "Toronto Blue Jays", "rl_conf": 50.9, "weather_flag": "ROOF", "wind_label": "N/A", "wind_speed": 0, "wind_component": 0, "temp_f": 70.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 4.6, "home_bp_era": 4.17, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824614", "away": "Tampa Bay Rays", "home": "Chicago White Sox", "venue": "Rate Field", "time": "18:10 UTC", "park_runs": 103.0, "park_tag": "Neutral", "away_sp": "Steven Matz", "home_sp": "Anthony Kay", "away_era": "5.00", "home_era": "4.20", "away_fip": "4.61", "home_fip": "4.20", "away_rpg": 4.41, "home_rpg": 3.99, "away_ops": 0.714, "home_ops": 0.675, "away_form": 8.0, "home_form": 4.0, "exp_away": 6.29, "exp_home": 4.592, "exp_total": 10.88, "away_wp": 61.5, "home_wp": 38.5, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "Tampa Bay Rays -1.5", "rl_team": "Tampa Bay Rays", "rl_conf": 51.2, "weather_flag": "PRECIP", "wind_label": "OUT to CF", "wind_speed": 15.5, "wind_component": 2.4, "temp_f": 68.0, "precip_prob": 30.0, "has_roof": true, "away_bp_era": 4.46, "home_bp_era": 5.02, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "825023", "away": "Texas Rangers", "home": "Athletics", "venue": "Sutter Health Park", "time": "19:05 UTC", "park_runs": 97.0, "park_tag": "Neutral", "away_sp": "Jack Leiter", "home_sp": "Jacob Lopez", "away_era": "3.97", "home_era": "3.65", "away_fip": "4.01", "home_fip": "3.70", "away_rpg": 4.22, "home_rpg": 4.53, "away_ops": 0.683, "home_ops": 0.749, "away_form": 4.7, "home_form": 3.0, "exp_away": 4.656, "exp_home": 3.714, "exp_total": 8.37, "away_wp": 57.7, "home_wp": 42.3, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 51.9, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "WIND_IN", "wind_label": "IN from CF", "wind_speed": 14.5, "wind_component": -14.2, "temp_f": 64.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 3.42, "home_bp_era": 4.28, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824453", "away": "Baltimore Orioles", "home": "Cleveland Guardians", "venue": "Progressive Field", "time": "22:10 UTC", "park_runs": 99.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.18, "home_rpg": 3.97, "away_ops": 0.699, "home_ops": 0.669, "away_form": 5.7, "home_form": 5.7, "exp_away": 4.591, "exp_home": 4.516, "exp_total": 9.11, "away_wp": 48.2, "home_wp": 51.7, "total_pick": "OVER", "total_line": 8.5, "total_conf": 58.7, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "NORMAL", "wind_label": "OUT to CF", "wind_speed": 6.1, "wind_component": 2.6, "temp_f": 62.0, "precip_prob": 12.0, "has_roof": true, "away_bp_era": 3.99, "home_bp_era": 4.06, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824208", "away": "Colorado Rockies", "home": "Houston Astros", "venue": "Daikin Park", "time": "00:10 UTC", "park_runs": 100.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 3.69, "home_rpg": 4.24, "away_ops": 0.679, "home_ops": 0.714, "away_form": 3.5, "home_form": 4.0, "exp_away": 4.299, "exp_home": 4.204, "exp_total": 8.5, "away_wp": 48.5, "home_wp": 51.5, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 50.0, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "ROOF", "wind_label": "N/A", "wind_speed": 0, "wind_component": 0, "temp_f": 70.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 4.12, "home_bp_era": 6.17, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "823313", "away": "Seattle Mariners", "home": "San Diego Padres", "venue": "Petco Park", "time": "00:40 UTC", "park_runs": 96.0, "park_tag": "Pitcher-Friendly", "away_sp": "Luis Castillo", "home_sp": "Walker Buehler", "away_era": "3.89", "home_era": "4.60", "away_fip": "3.81", "home_fip": "5.25", "away_rpg": 4.73, "home_rpg": 4.33, "away_ops": 0.74, "home_ops": 0.711, "away_form": 4.3, "home_form": 5.5, "exp_away": 4.438, "exp_home": 4.696, "exp_total": 9.13, "away_wp": 44.9, "home_wp": 55.1, "total_pick": "OVER", "total_line": 8.5, "total_conf": 59.0, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "NORMAL", "wind_label": "OUT to CF", "wind_speed": 7.8, "wind_component": 5.8, "temp_f": 66.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 3.24, "home_bp_era": 3.42, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}];
+const DATA_P2      = [{"n_legs": 2, "combined": 56.8, "payout": "+260", "legs": [{"label": "New York Yankees ML", "conf": 76.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}]}, {"n_legs": 2, "combined": 56.8, "payout": "+260", "legs": [{"label": "New York Yankees ML", "conf": 76.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}]}, {"n_legs": 2, "combined": 56.8, "payout": "+260", "legs": [{"label": "New York Yankees ML", "conf": 76.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox"}]}, {"n_legs": 2, "combined": 54.8, "payout": "+260", "legs": [{"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}]}, {"n_legs": 2, "combined": 54.8, "payout": "+260", "legs": [{"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox"}]}];
+const DATA_P3      = [{"n_legs": 3, "combined": 42.0, "payout": "+595", "legs": [{"label": "New York Yankees ML", "conf": 76.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}]}, {"n_legs": 3, "combined": 42.0, "payout": "+595", "legs": [{"label": "New York Yankees ML", "conf": 76.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox"}]}, {"n_legs": 3, "combined": 42.0, "payout": "+595", "legs": [{"label": "New York Yankees ML", "conf": 76.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox"}]}, {"n_legs": 3, "combined": 40.5, "payout": "+595", "legs": [{"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Toronto Blue Jays @ Milwaukee Brewers"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Tampa Bay Rays @ Chicago White Sox"}]}, {"n_legs": 3, "combined": 40.0, "payout": "+595", "legs": [{"label": "New York Yankees ML", "conf": 76.7, "tier": "LOCK", "game": "Los Angeles Angels @ New York Yankees"}, {"label": "UNDER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Kansas City Royals @ Detroit Tigers"}, {"label": "Pittsburgh Pirates ML", "conf": 70.4, "tier": "LOCK", "game": "Washington Nationals @ Pittsburgh Pirates"}]}];
+const DATA_SCORES  = [{"away": "Washington Nationals", "home": "Pittsburgh Pirates", "away_city": "Washington", "home_city": "Pittsburgh", "away_score": "0", "home_score": "0", "is_live": true, "label": "Bot 2"}, {"away": "San Francisco Giants", "home": "Cincinnati Reds", "away_city": "San", "home_city": "Cincinnati", "away_score": "0", "home_score": "0", "is_live": true, "label": "Top 2"}];
+const DATA_PROPS   = [];
 
 // ── State ────────────────────────────────────────────────────────────────────
 let filterType = "all", filterTier = "all", filterTeam = "";
@@ -449,13 +520,52 @@ function parkClass(tag){
   return "park-neutral";
 }
 
+function weatherDisplay(g){
+  if(g.has_roof) return {text:"Retractable Roof / Dome", color:"var(--sub)", icon:"🏟️"};
+  const flag = g.weather_flag;
+  const temp = g.temp_f + "°F";
+  const precip = g.precip_prob > 10 ? ` | ${g.precip_prob}% precip` : "";
+  if(flag==="WIND_OUT"){
+    const mph = Math.abs(g.wind_component).toFixed(1);
+    return {text:`${temp} | Wind ${mph} mph blowing OUT (+${(g.wind_component*0.04*0.5).toFixed(2)} runs)${precip}`, color:"#ef9a9a", icon:"💨"};
+  }
+  if(flag==="WIND_IN"){
+    const mph = Math.abs(g.wind_component).toFixed(1);
+    return {text:`${temp} | Wind ${mph} mph blowing IN (suppresses scoring)${precip}`, color:"#90caf9", icon:"🌬️"};
+  }
+  if(flag==="COLD"){
+    return {text:`${temp} — Cold conditions suppress scoring${precip}`, color:"#90caf9", icon:"🥶"};
+  }
+  if(flag==="PRECIP"){
+    return {text:`${temp} | ${g.precip_prob}% chance of rain`, color:"#ffcc80", icon:"🌧️"};
+  }
+  // NORMAL
+  if(g.wind_speed > 5){
+    const dir = g.wind_label || "";
+    return {text:`${temp} | Wind ${g.wind_speed} mph ${dir}`, color:"var(--sub)", icon:"⛅"};
+  }
+  return {text:`${temp} | Clear conditions`, color:"var(--sub)", icon:"☀️"};
+}
+
 function renderGames(){
   const grid = document.getElementById("gamesGrid");
   grid.innerHTML = "";
   DATA_GAMES.forEach(g=>{
-    const homeW = g.home_wp, awayW = g.away_wp;
+    const homeW    = g.home_wp, awayW = g.away_wp;
     const totalDir = g.exp_total > g.total_line ? "↑ OVER" : "↓ UNDER";
     const totalCol = g.exp_total > g.total_line ? "color:var(--red)" : "color:var(--blue)";
+    const wx       = weatherDisplay(g);
+
+    // Lineup OPS display
+    const lineupRow = g.lineup_confirmed
+      ? `<div class="game-row"><span class="row-label">Lineup OPS</span>
+           <span class="row-val" style="color:var(--green)">
+             ${g.away} <b>${g.away_lineup_ops||"—"}</b> &nbsp;|&nbsp;
+             ${g.home} <b>${g.home_lineup_ops||"—"}</b>
+             <span style="color:var(--sub);font-size:.68rem"> (confirmed)</span>
+           </span></div>`
+      : "";
+
     grid.innerHTML += `
       <div class="game-card">
         <div class="game-header">
@@ -470,6 +580,10 @@ function renderGames(){
             </span>
           </div>
           <div class="game-row">
+            <span class="row-label">Weather</span>
+            <span class="row-val" style="color:${wx.color}">${wx.icon} ${wx.text}</span>
+          </div>
+          <div class="game-row">
             <span class="row-label">Away SP</span>
             <span class="row-val">${g.away_sp} &bull; ERA ${g.away_era} / FIP ${g.away_fip}</span>
           </div>
@@ -478,9 +592,14 @@ function renderGames(){
             <span class="row-val">${g.home_sp} &bull; ERA ${g.home_era} / FIP ${g.home_fip}</span>
           </div>
           <div class="game-row">
+            <span class="row-label">Bullpen</span>
+            <span class="row-val">${g.away} BP ERA ${g.away_bp_era} &nbsp;|&nbsp; ${g.home} BP ERA ${g.home_bp_era}</span>
+          </div>
+          <div class="game-row">
             <span class="row-label">Offense</span>
             <span class="row-val">${g.away} ${g.away_rpg} RPG &nbsp;|&nbsp; ${g.home} ${g.home_rpg} RPG</span>
           </div>
+          ${lineupRow}
           <div class="game-row">
             <span class="row-label">Projected</span>
             <span class="row-val">${g.away} <b>${g.exp_away}</b> &nbsp;|&nbsp; ${g.home} <b>${g.exp_home}</b></span>
@@ -512,8 +631,95 @@ function renderGames(){
   });
 }
 
+// ── Section Nav ───────────────────────────────────────────────────────────────
+document.querySelectorAll(".section-nav-btn").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    document.querySelectorAll(".section-nav-btn").forEach(b=>b.classList.remove("active"));
+    document.querySelectorAll(".section-panel").forEach(p=>p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById(btn.dataset.panel).classList.add("active");
+  });
+});
+
+// ── Render Props ──────────────────────────────────────────────────────────────
+let propFilterType = "all", propFilterTier = "all";
+
+function propIcon(t){ return t==="HR"?"⚡":t==="HITS"?"🎯":"🔥"; }
+function propLabel(t,line){
+  if(t==="HR")   return `HR Over ${line}`;
+  if(t==="HITS") return `Hits Over ${line}`;
+  if(t==="K")    return `Ks Over ${line}`;
+  return `Over ${line}`;
+}
+
+function renderProps(){
+  const grid = document.getElementById("propsGrid");
+  grid.innerHTML = "";
+  let visible = 0;
+  DATA_PROPS.forEach(p=>{
+    const show = (propFilterType==="all" || p.prop_type===propFilterType)
+              && (propFilterTier==="all" || p.tier===propFilterTier);
+    if(!show) return;
+    visible++;
+    const label    = propLabel(p.prop_type, p.line);
+    const overUnder= p.proj >= p.line ? "OVER" : "UNDER";
+    const projColor= overUnder==="OVER" ? "var(--green)" : "var(--blue)";
+    const orderStr = p.batting_order ? ` &bull; Bats ${p.batting_order}` : "";
+    const sideStr  = p.side==="pitcher" ? " (SP)" : (p.side ? ` (${p.side})` : "");
+    grid.innerHTML += `
+      <div class="prop-card tier-${p.tier}">
+        <div class="prop-top">
+          <span class="prop-type-badge badge-${p.prop_type}">${propIcon(p.prop_type)} ${p.prop_type}</span>
+          <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
+        </div>
+        <div class="prop-player">${p.player_name}${sideStr}</div>
+        <div class="prop-game">${p.game}${orderStr}</div>
+        <div class="prop-line-row">
+          <div>
+            <div class="prop-line-label">Line</div>
+            <div class="prop-line-val">${label}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="prop-line-label">Projection</div>
+            <div class="prop-proj-val" style="color:${projColor}">${p.proj} (${overUnder})</div>
+          </div>
+        </div>
+        <div class="conf-row">
+          <div class="conf-bar-wrap">
+            <div class="conf-bar bar-${p.tier}" style="width:${p.conf}%"></div>
+          </div>
+          <span class="conf-pct pct-${p.tier}">${p.conf}%</span>
+        </div>
+        <div class="prop-reasoning">${p.reasoning}</div>
+      </div>`;
+  });
+  document.getElementById("propResults").innerHTML =
+    `Showing <b>${visible}</b> of <b>${DATA_PROPS.length}</b> props`;
+  if(!visible){
+    const msg = DATA_PROPS.length===0
+      ? "Player props require confirmed lineups — check back closer to game time."
+      : "No props match the current filters.";
+    grid.innerHTML = `<div class="empty">${msg}</div>`;
+  }
+}
+
 // ── Filter Handlers ───────────────────────────────────────────────────────────
-document.querySelectorAll(".filter-btn").forEach(btn=>{
+document.querySelectorAll(".filter-btn[data-pgroup]").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    const group = btn.dataset.pgroup, val = btn.dataset.pval;
+    document.querySelectorAll(`.filter-btn[data-pgroup="${group}"]`).forEach(b=>{
+      b.classList.remove("active","active-gold","active-blue");
+    });
+    if(val==="LOCK") btn.classList.add("active-gold");
+    else if(val==="STRONG") btn.classList.add("active-blue");
+    else btn.classList.add("active");
+    if(group==="ptype") propFilterType = val;
+    else                propFilterTier = val;
+    renderProps();
+  });
+});
+
+document.querySelectorAll(".filter-btn[data-group]").forEach(btn=>{
   btn.addEventListener("click",()=>{
     const group = btn.dataset.group, val = btn.dataset.val;
     document.querySelectorAll(`.filter-btn[data-group="${group}"]`).forEach(b=>{
@@ -533,7 +739,7 @@ document.getElementById("teamSearch").addEventListener("input", e=>{
   renderPicks();
 });
 
-document.querySelectorAll(".section-tab").forEach(tab=>{
+document.querySelectorAll(".section-tab[data-parlay]").forEach(tab=>{
   tab.addEventListener("click",()=>{
     document.querySelectorAll(".section-tab").forEach(t=>t.classList.remove("active"));
     tab.classList.add("active");
@@ -615,6 +821,7 @@ renderTicker();
 renderPicks();
 renderParlays();
 renderGames();
+renderProps();
 </script>
 </body>
 </html>

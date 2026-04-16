@@ -92,6 +92,8 @@ class MLBModel:
         self.line_movement   = {}   # (away, home) -> movement dict
         self.scores          = []   # all historical game rows
         self.schedule        = []   # upcoming schedule rows
+        self.bullpen         = {}   # team_name -> stats_dict (current season)
+        self.lineups         = {}   # game_id -> {away_lineup, home_lineup, confirmed}
         self._loaded         = False
 
     # ── Data Loading ──────────────────────────────────────────────────────────
@@ -196,6 +198,37 @@ class MLBModel:
                 self.line_movement[k] = row
             log.info(f"Line movement loaded: {len(self.line_movement)} records")
 
+        # Bullpen stats: team_name -> row (current season preferred)
+        bullpen_master = os.path.join(CLEAN_DIR, "mlb_bullpen_master.csv")
+        if os.path.exists(bullpen_master):
+            season_str = str(datetime.now().year)
+            all_bp     = read_csv(bullpen_master)
+            # Prefer current season, fall back to most recent
+            for row in all_bp:
+                tname = row.get("team_name", "").strip()
+                if not tname:
+                    continue
+                if row.get("season") == season_str:
+                    self.bullpen[tname] = row
+                elif tname not in self.bullpen:
+                    self.bullpen[tname] = row
+            log.info(f"Bullpen data loaded: {len(self.bullpen)} teams")
+
+        # Confirmed lineups for today
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        raw_dir   = os.path.join(BASE_DIR, "data", "raw")
+        lineup_file = os.path.join(raw_dir, f"mlb_lineups_{today_str}.json")
+        if os.path.exists(lineup_file):
+            import json
+            with open(lineup_file, encoding="utf-8") as f:
+                lineup_data = json.load(f)
+            for game in lineup_data:
+                gid = str(game.get("game_id", ""))
+                if gid:
+                    self.lineups[gid] = game
+            log.info(f"Lineups loaded: {len(self.lineups)} games "
+                     f"({sum(1 for g in self.lineups.values() if g.get('lineup_confirmed'))} confirmed)")
+
         # Historical scores and upcoming schedule
         self.scores   = read_csv(os.path.join(CLEAN_DIR, "mlb_scores_master.csv"))
         self.schedule = read_csv(os.path.join(CLEAN_DIR, "mlb_schedule_master.csv"))
@@ -203,7 +236,8 @@ class MLBModel:
         self._loaded = True
         log.info(f"Loaded: {len(self.pitchers)} pitchers | {len(self.team_hitting)} teams | "
                  f"{len(self.park_factors)} parks | {len(self.scores)} historical games | "
-                 f"{len(self.weather)} weather records")
+                 f"{len(self.weather)} weather | {len(self.bullpen)} bullpens | "
+                 f"{len(self.lineups)} lineup files")
 
     # ── Pitcher Lookup ────────────────────────────────────────────────────────
     def get_pitcher(self, name: str, is_home: bool) -> dict:
@@ -375,6 +409,52 @@ class MLBModel:
 
         return ml_adj, total_adj
 
+    # ── Bullpen Lookup ────────────────────────────────────────────────────────
+    def get_bullpen(self, team: str) -> dict:
+        """Return bullpen ERA and WHIP for the team. Falls back to league avg."""
+        if team in self.bullpen:
+            row = self.bullpen[team]
+            return {
+                "era":      sf(row.get("bullpen_era"),  4.20),
+                "whip":     sf(row.get("bullpen_whip"), 1.30),
+                "k9":       sf(row.get("bullpen_k9"),   9.0),
+                "save_pct": sf(row.get("bullpen_save_pct"), 0.68),
+                "found":    True,
+            }
+        # Partial name match
+        tl = team.lower()
+        for k, row in self.bullpen.items():
+            if k.lower() in tl or tl in k.lower():
+                return {
+                    "era":      sf(row.get("bullpen_era"),  4.20),
+                    "whip":     sf(row.get("bullpen_whip"), 1.30),
+                    "k9":       sf(row.get("bullpen_k9"),   9.0),
+                    "save_pct": sf(row.get("bullpen_save_pct"), 0.68),
+                    "found":    True,
+                }
+        return {"era": 4.20, "whip": 1.30, "k9": 9.0, "save_pct": 0.68, "found": False}
+
+    # ── Lineup OPS ────────────────────────────────────────────────────────────
+    def get_lineup_ops(self, game_id: str, side: str) -> float | None:
+        """
+        If confirmed lineups exist, compute weighted OPS for the top 9 batters.
+        side: 'away' or 'home'
+        Returns None if lineup not confirmed.
+        """
+        gid = str(game_id)
+        if gid not in self.lineups:
+            return None
+        game = self.lineups[gid]
+        if not game.get("lineup_confirmed"):
+            return None
+        players = game.get(f"{side}_lineup", [])
+        if not players:
+            return None
+        ops_vals = [p.get("ops") for p in players if p.get("ops") and float(p.get("ops", 0)) > 0]
+        if not ops_vals:
+            return None
+        return round(sum(ops_vals) / len(ops_vals), 3)
+
     # ── Recent Form ───────────────────────────────────────────────────────────
     def recent_form(self, team: str, n: int = 10) -> dict:
         """Last N games avg runs scored/allowed and win pct."""
@@ -412,10 +492,16 @@ class MLBModel:
     # ── Expected Runs ─────────────────────────────────────────────────────────
     def exp_runs(self, team: str, opp_pitcher: dict,
                  park_run_factor: float, is_home: bool,
-                 weather: dict = None) -> float:
+                 weather: dict = None,
+                 game_id: str = None,
+                 opp_team: str = None) -> float:
         """
         Expected runs scored by `team` facing `opp_pitcher` at this park.
-        Formula: (blended RPG) * pitcher_suppression * park_adj * home_boost * weather_adj
+
+        Improvements:
+          - Bullpen blending: SP covers ~60% of game, bullpen ~40%
+          - Lineup OPS adjustment when confirmed lineups are available
+          - Weather adjustments as before
         """
         offense = self.get_offense(team)
         form    = self.recent_form(team)
@@ -424,38 +510,59 @@ class MLBModel:
         base_rpg = (SEASON_WEIGHT * offense["rpg"] +
                     RECENT_WEIGHT * form["rpg"])
 
-        # Blend season ERA with recent starts ERA
-        era_season = opp_pitcher.get("era_adj", LEAGUE["era"])
-        pitcher_name = opp_pitcher.get("name", "")
-        recent_sp = self.get_recent_form_pitcher(pitcher_name)
-        if recent_sp and recent_sp.get("recent_era"):
-            era_eff = (SEASON_ERA_VS_RECENT * era_season +
-                       RECENT_STARTS_WEIGHT * recent_sp["recent_era"])
-        else:
-            era_eff = era_season
+        # ── Lineup OPS adjustment ─────────────────────────────────────────────
+        # If confirmed lineup is available, scale RPG by lineup OPS vs team avg OPS
+        if game_id:
+            side = "home" if is_home else "away"
+            lineup_ops = self.get_lineup_ops(game_id, side)
+            if lineup_ops:
+                team_ops = offense.get("ops", LEAGUE["ops"]) or LEAGUE["ops"]
+                ops_adj  = lineup_ops / team_ops
+                # Dampen: lineup OPS can move RPG ±12% max
+                ops_adj  = max(0.88, min(1.12, ops_adj))
+                base_rpg  = base_rpg * ops_adj
 
-        suppression = era_eff / LEAGUE["era"]
+        # ── SP era blended with recent starts ────────────────────────────────
+        era_season   = opp_pitcher.get("era_adj", LEAGUE["era"])
+        pitcher_name = opp_pitcher.get("name", "")
+        recent_sp    = self.get_recent_form_pitcher(pitcher_name)
+        if recent_sp and recent_sp.get("recent_era"):
+            era_sp = (SEASON_ERA_VS_RECENT * era_season +
+                      RECENT_STARTS_WEIGHT * recent_sp["recent_era"])
+        else:
+            era_sp = era_season
+
+        # ── Bullpen ERA for the opponent team ────────────────────────────────
+        # opp_team is the team fielding (SP + bullpen); if not passed, skip bullpen
+        if opp_team:
+            bp = self.get_bullpen(opp_team)
+            bp_era = bp["era"]
+        else:
+            bp_era = LEAGUE["era"]
+
+        # Blend: SP pitches ~60% of outs, bullpen ~40%
+        SP_SHARE  = 0.60
+        BP_SHARE  = 0.40
+        blended_era = SP_SHARE * era_sp + BP_SHARE * bp_era
+        suppression = blended_era / LEAGUE["era"]
+
         park_adj    = park_run_factor / 100.0
         loc_boost   = 1.02 if is_home else 1.0
 
         expected = base_rpg * suppression * park_adj * loc_boost
 
-        # Weather adjustments (applied to each team's expected runs)
+        # ── Weather adjustments ───────────────────────────────────────────────
         if weather and not weather.get("roof"):
             wc      = sf(weather.get("wind_component"), 0)
             temp    = sf(weather.get("temp_f"), 70)
             precip  = sf(weather.get("precip_prob"), 0)
 
-            # Wind: each mph blowing out adds WIND_RUNS_PER_MPH to expected total
-            # We apply half per team
             wind_adj = 1.0 + (wc * WIND_RUNS_PER_MPH * 0.5 / max(base_rpg, 1))
 
-            # Cold: reduce expected runs when below 65°F
             cold_adj = 1.0
             if temp < 65:
                 cold_adj = max(0.85, 1.0 - (65 - temp) * COLD_PENALTY)
 
-            # Precipitation: slight suppression if rain likely
             precip_adj = max(0.95, 1.0 - precip * PRECIP_PENALTY)
 
             expected *= wind_adj * cold_adj * precip_adj
@@ -500,9 +607,16 @@ class MLBModel:
         # Weather
         weather = self.get_weather(game.get("game_id", ""))
 
-        # Expected runs
-        exp_away = self.exp_runs(away, home_sp, park_runs, is_home=False, weather=weather)
-        exp_home = self.exp_runs(home, away_sp, park_runs, is_home=True,  weather=weather)
+        # Bullpen data
+        away_bp = self.get_bullpen(away)
+        home_bp = self.get_bullpen(home)
+        game_id_str = str(game.get("game_id", ""))
+
+        # Expected runs (now includes bullpen blend + lineup OPS + weather)
+        exp_away = self.exp_runs(away, home_sp, park_runs, is_home=False,
+                                 weather=weather, game_id=game_id_str, opp_team=home)
+        exp_home = self.exp_runs(home, away_sp, park_runs, is_home=True,
+                                 weather=weather, game_id=game_id_str, opp_team=away)
         exp_total = round(exp_away + exp_home, 2)
 
         # Pythagorean win probability
@@ -630,6 +744,19 @@ class MLBModel:
             "total_move":     sf(movement.get("total_move")),
             "ml_adj":         ml_adj,
             "total_adj":      total_adj,
+
+            # Bullpen
+            "away_bp_era":    away_bp["era"],
+            "away_bp_whip":   away_bp["whip"],
+            "away_bp_found":  away_bp["found"],
+            "home_bp_era":    home_bp["era"],
+            "home_bp_whip":   home_bp["whip"],
+            "home_bp_found":  home_bp["found"],
+
+            # Lineup OPS (if confirmed)
+            "away_lineup_ops": self.get_lineup_ops(game_id_str, "away"),
+            "home_lineup_ops": self.get_lineup_ops(game_id_str, "home"),
+            "lineup_confirmed": bool(self.lineups.get(game_id_str, {}).get("lineup_confirmed")),
 
             # Picks
             "home_wp":        home_wp,

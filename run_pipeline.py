@@ -126,6 +126,33 @@ def main():
     except Exception as e:
         log.warning(f"Recent starts fetch failed (non-fatal): {e}")
 
+    # ── Step 5: Bullpen stats ──────────────────────────────────────────────────
+    try:
+        from scrapers.mlb_bullpen_scraper import run as run_bullpen
+        from normalize.mlb_bullpen_normalize import run as normalize_bullpen
+        bp_rows = run_bullpen()
+        normalize_bullpen()
+        log.info(f"Bullpen stats fetched and normalized: {len(bp_rows)} teams")
+    except Exception as e:
+        log.warning(f"Bullpen fetch failed (non-fatal): {e}")
+
+    # ── Step 6: Confirmed lineups + hitter stats for props ─────────────────────
+    try:
+        from scrapers.mlb_lineup_scraper import run as run_lineups
+        today = datetime.now().strftime("%Y-%m-%d")
+        lineups = run_lineups(target_date=today)
+        confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
+        log.info(f"Lineups: {len(lineups)} games, {confirmed} confirmed")
+
+        if confirmed > 0:
+            from scrapers.mlb_hitter_scraper import run as run_hitters
+            run_hitters(target_date=today)
+            log.info("Hitter stats for props fetched")
+        else:
+            log.info("No confirmed lineups yet — skipping hitter stats for props")
+    except Exception as e:
+        log.warning(f"Lineup/hitter fetch failed (non-fatal): {e}")
+
     log.info("=" * 60)
     log.info("PIPELINE COMPLETE")
     log.info("=" * 60)
