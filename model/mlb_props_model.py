@@ -341,39 +341,84 @@ def score_all_props(target_date: str = None) -> list[dict]:
     with open(raw_path, encoding="utf-8") as f:
         data = json.load(f)
 
-    games        = data.get("hitters", [])
-    pitcher_opps = {p["pitcher_id"]: p for p in data.get("pitcher_opp", [])
-                    if "pitcher_id" in p}
+    games = data.get("hitters", [])
 
-    # Load pitcher stats master for K/9, and team k_rate from team stats master
+    # ── Load pitcher stats master — keyed by name ─────────────────────────────
+    # We use this for both K props AND to build pitcher opponent stats
+    # (HR/9, H/9) since the schedule master stores names, not IDs.
     pitcher_stats: dict[str, dict] = {}
     ps_path = os.path.join(DATA_DIR, "clean", "mlb_pitcher_stats_master.csv")
     if os.path.exists(ps_path):
         with open(ps_path, encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 pname = row.get("player_name", "").strip()
+                season = row.get("season", "")
                 if pname:
-                    pitcher_stats[pname] = row
+                    # Keep most recent season
+                    if pname not in pitcher_stats or season > pitcher_stats[pname].get("season", ""):
+                        pitcher_stats[pname] = row
 
-    # Team K rate from team stats master
+    def pitcher_opp_from_name(sp_name: str) -> dict:
+        """
+        Build pitcher opponent stats dict from the pitcher stats master.
+        Returns HR/9, H/9, K/9, BB/9, opp_avg, era, whip by name lookup.
+        """
+        if not sp_name or sp_name == "TBD":
+            return {}
+        row = pitcher_stats.get(sp_name, {})
+        if not row:
+            return {}
+        def sf(v, d=0.0):
+            try: return float(v) if v else d
+            except: return d
+        ip  = sf(row.get("ip", row.get("innings_pitched", 0)))
+        hr  = sf(row.get("hr", row.get("home_runs", 0)))
+        h   = sf(row.get("h",  row.get("hits", 0)))
+        k   = sf(row.get("so", row.get("strikeouts", 0)))
+        bb  = sf(row.get("bb", row.get("walks", 0)))
+        era = sf(row.get("era", 4.20))
+        whip= sf(row.get("whip", 1.30))
+        k9  = sf(row.get("k9", row.get("k_per_9", 0)))
+        # Compute per-9 rates from raw counts when available
+        hr9 = round((hr / ip) * 9, 3) if ip > 5 else 1.20
+        h9  = round((h  / ip) * 9, 3) if ip > 5 else 8.50
+        bb9 = round((bb / ip) * 9, 3) if ip > 5 else 3.20
+        if k9 == 0 and ip > 5:
+            k9 = round((k / ip) * 9, 3)
+        return {
+            "era":     era,
+            "whip":    whip,
+            "hr_per_9": hr9,
+            "h_per_9":  h9,
+            "k_per_9":  k9,
+            "bb_per_9": bb9,
+        }
+
+    # ── Team K rate — from team hitting master (strikeouts / PA) ─────────────
     team_k_rate: dict[str, float] = {}
-    ts_path = os.path.join(DATA_DIR, "clean", "mlb_team_stats_master.csv")
-    if os.path.exists(ts_path):
-        with open(ts_path, encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                tname = row.get("team_name", "").strip()
-                try:
-                    # strikeout_rate column if available, else estimate from SO and PA
-                    kr = float(row.get("strikeout_rate", 0) or 0)
-                    if kr == 0:
-                        so = float(row.get("so", 0) or 0)
-                        pa = float(row.get("pa", 1) or 1)
-                        kr = so / pa if pa > 0 else 0.220
-                    team_k_rate[tname] = kr
-                except (ValueError, ZeroDivisionError):
-                    team_k_rate[tname] = 0.220
+    for fname in ("mlb_team_hitting_master.csv", "mlb_team_stats_master.csv"):
+        ts_path = os.path.join(DATA_DIR, "clean", fname)
+        if os.path.exists(ts_path):
+            with open(ts_path, encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    tname = row.get("team_name", "").strip()
+                    if not tname or tname in team_k_rate:
+                        continue
+                    try:
+                        kr = float(row.get("strikeout_rate", 0) or 0)
+                        if kr == 0:
+                            so = float(row.get("strikeouts", row.get("so", 0)) or 0)
+                            pa = float(row.get("plate_appearances", row.get("pa", 1)) or 1)
+                            ab = float(row.get("at_bats", row.get("ab", 1)) or 1)
+                            # Fall back to SO/AB if PA not available
+                            denom = pa if pa > ab else ab
+                            kr = so / denom if denom > 0 else 0.220
+                        team_k_rate[tname] = kr
+                    except (ValueError, ZeroDivisionError):
+                        team_k_rate[tname] = 0.220
+            break   # use first file found
 
-    # Load weather
+    # ── Weather ───────────────────────────────────────────────────────────────
     weather_data: dict[int, dict] = {}
     w_path = os.path.join(DATA_DIR, "clean", "mlb_weather_master.csv")
     if os.path.exists(w_path):
@@ -386,9 +431,9 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     except (ValueError, TypeError):
                         pass
 
-    # Load today's schedule for probable pitcher IDs
+    # ── Schedule: pitcher names by game_id ────────────────────────────────────
     sched_path = os.path.join(DATA_DIR, "clean", "mlb_schedule_master.csv")
-    game_pitchers: dict[int, dict] = {}   # game_id -> {away_pid, home_pid, away_sp, home_sp}
+    game_pitchers: dict[int, dict] = {}
     if os.path.exists(sched_path):
         with open(sched_path, encoding="utf-8") as f:
             for row in csv.DictReader(f):
@@ -396,10 +441,8 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     try:
                         gid = int(row.get("game_id", 0))
                         game_pitchers[gid] = {
-                            "away_sp":  row.get("away_probable_pitcher", "TBD"),
-                            "home_sp":  row.get("home_probable_pitcher", "TBD"),
-                            "away_pid": row.get("away_probable_pitcher_id", ""),
-                            "home_pid": row.get("home_probable_pitcher_id", ""),
+                            "away_sp": row.get("away_probable_pitcher", "TBD"),
+                            "home_sp": row.get("home_probable_pitcher", "TBD"),
                         }
                     except (ValueError, TypeError):
                         pass
@@ -416,20 +459,14 @@ def score_all_props(target_date: str = None) -> list[dict]:
         game_str  = f"{away_team} @ {home_team}"
         weather   = weather_data.get(game_id)
 
+        # Pull pitcher names from schedule master (fallback to lineup game data)
         gp = game_pitchers.get(game_id, {})
-        away_sp  = gp.get("away_sp",  "TBD")
-        home_sp  = gp.get("home_sp",  "TBD")
+        away_sp = gp.get("away_sp", game.get("away_sp", "TBD"))
+        home_sp = gp.get("home_sp", game.get("home_sp", "TBD"))
 
-        # Pitcher opp stats by pitcher_id
-        def get_pitcher_opp(pid_str):
-            try:
-                pid = int(pid_str)
-                return pitcher_opps.get(pid, {})
-            except (ValueError, TypeError):
-                return {}
-
-        away_pitcher_opp = get_pitcher_opp(gp.get("away_pid", ""))
-        home_pitcher_opp = get_pitcher_opp(gp.get("home_pid", ""))
+        # Build pitcher opponent stats from pitcher stats master by name
+        away_pitcher_opp = pitcher_opp_from_name(away_sp)
+        home_pitcher_opp = pitcher_opp_from_name(home_sp)
 
         # ── Hitter props (away batters face home SP, home batters face away SP)
         for player in game.get("away_lineup", []):
@@ -472,7 +509,7 @@ def score_all_props(target_date: str = None) -> list[dict]:
             opp_kr   = team_k_rate.get(opp_team, 0.220)
 
             # Determine a reasonable line — use projection to set market-like line
-            k9  = float(sp_row.get("k9", 0) or 0)
+            k9  = float(sp_row.get("k9", sp_row.get("k_per_9", 0)) or 0)
             exp = (k9 / 9.0) * 5.5
             # Round to nearest half for realistic line
             line = round(exp * 2) / 2

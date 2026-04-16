@@ -1115,9 +1115,25 @@ def main():
     parlays_2 = build_parlays(picks, legs=2, max_parlays=5)
     parlays_3 = build_parlays(picks, legs=3, max_parlays=5)
 
+    # ── Refresh lineups + hitter stats before props ───────────────────────────
+    # Run every time run_picks_html.py is called so props stay current.
+    # Lineups typically confirm 1-3 hours before first pitch — this ensures
+    # we always have the freshest data regardless of when the pipeline last ran.
+    try:
+        from scrapers.mlb_lineup_scraper import run as run_lineups
+        lineups = run_lineups(target_date=actual_date)
+        confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
+        log.info(f"Lineup refresh: {len(lineups)} games, {confirmed} confirmed")
+        if confirmed > 0:
+            from scrapers.mlb_hitter_scraper import run as run_hitters
+            run_hitters(target_date=actual_date)
+            log.info("Hitter stats refreshed for props")
+    except Exception as e:
+        log.warning(f"Lineup refresh failed (non-fatal): {e}")
+
     # Player props (non-fatal — works only when lineups confirmed)
     try:
-        props     = score_all_props(actual_date)
+        props      = score_all_props(actual_date)
         props_json = json.dumps(prep_props(props))
         log.info(f"Props generated: {len(props)} total")
     except Exception as e:
