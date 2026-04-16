@@ -169,20 +169,29 @@ def _fmt_era(val) -> str:
 def _ml_reasoning(g: dict) -> str:
     parts = []
 
-    # Pitcher matchup
+    # Pitcher matchup + recent form trend
     away_era = g.get("away_sp_era_adj")
     home_era = g.get("home_sp_era_adj")
     away_sp  = g.get("away_sp", "TBD")
     home_sp  = g.get("home_sp", "TBD")
+    away_trend = g.get("away_sp_trend", "")
+    home_trend = g.get("home_sp_trend", "")
+
+    away_label = f"{away_sp} ERA {_fmt_era(away_era)}"
+    if away_trend and away_trend != "N/A":
+        away_label += f" [{away_trend}]"
+    home_label = f"{home_sp} ERA {_fmt_era(home_era)}"
+    if home_trend and home_trend != "N/A":
+        home_label += f" [{home_trend}]"
 
     if not g.get("away_sp_missing") and not g.get("home_sp_missing"):
-        parts.append(f"{away_sp} ERA {_fmt_era(away_era)} vs {home_sp} ERA {_fmt_era(home_era)}")
+        parts.append(f"{away_label} vs {home_label}")
     elif not g.get("away_sp_missing"):
-        parts.append(f"{away_sp} ERA {_fmt_era(away_era)} (home SP TBD)")
+        parts.append(f"{away_label} (home SP TBD)")
     elif not g.get("home_sp_missing"):
-        parts.append(f"Away SP TBD vs {home_sp} ERA {_fmt_era(home_era)}")
+        parts.append(f"Away SP TBD vs {home_label}")
 
-    # Recent form
+    # Recent team form
     ar = g.get("away_form_rpg", 0)
     hr = g.get("home_form_rpg", 0)
     aw = g.get("away_form_wpct", 0)
@@ -192,12 +201,29 @@ def _ml_reasoning(g: dict) -> str:
         f"{g['home_team']} {hr:.1f} RPG ({hw*100:.0f}% W)"
     )
 
+    # Line movement signal
+    ml_sig   = g.get("ml_signal", "")
+    sharp    = g.get("sharp_side", "")
+    ml_adj   = g.get("ml_adj", 0)
+    if ml_sig in ("STEAM", "DRIFT") and sharp:
+        direction = "WITH model" if ml_adj > 0 else "AGAINST model"
+        parts.append(f"💰 {ml_sig}: Sharp $ on {sharp} ({direction})")
+
+    # Current odds
+    ml_away_odds = g.get("ml_away_odds")
+    ml_home_odds = g.get("ml_home_odds")
+    if ml_away_odds and ml_home_odds:
+        def fmt_ml(v):
+            v = int(v)
+            return f"+{v}" if v > 0 else str(v)
+        parts.append(f"Line: {g['away_team']} {fmt_ml(ml_away_odds)} | {g['home_team']} {fmt_ml(ml_home_odds)}")
+
     # Park note
     pf = g.get("park_runs", 100)
     if pf >= 108:
-        parts.append(f"Hitter park (factor {pf})")
+        parts.append(f"Hitter park ({pf})")
     elif pf <= 96:
-        parts.append(f"Pitcher park (factor {pf})")
+        parts.append(f"Pitcher park ({pf})")
 
     return " | ".join(parts)
 
@@ -205,9 +231,21 @@ def _ml_reasoning(g: dict) -> str:
 def _total_reasoning(g: dict) -> str:
     exp   = g.get("exp_total", 0)
     line  = g.get("total_line", 8.5)
-    pick  = g.get("total_pick", "")
     diff  = abs(exp - line)
-    parts = [f"Model projects {exp:.1f} runs vs {line} line ({diff:.1f} run edge)"]
+
+    # Use market line if available
+    market_line = g.get("total_odds_line")
+    display_line = market_line if market_line else line
+    parts = [f"Model projects {exp:.1f} runs vs {display_line} line ({diff:.1f} run edge)"]
+
+    # Line movement on totals
+    tot_sig    = g.get("total_signal", "")
+    total_move = g.get("total_move")
+    total_adj  = g.get("total_adj", 0)
+    if tot_sig in ("STEAM", "DRIFT") and total_move is not None:
+        direction  = "WITH model" if total_adj > 0 else "AGAINST model"
+        move_dir   = "UP" if total_move > 0 else "DOWN"
+        parts.append(f"💰 {tot_sig}: Total moved {move_dir} {abs(total_move):.1f} pts ({direction})")
 
     pf = g.get("park_runs", 100)
     if pf >= 112:

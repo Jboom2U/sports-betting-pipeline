@@ -88,6 +88,8 @@ class MLBModel:
         self.team_pitching   = {}   # name -> {season -> stats_dict}
         self.park_factors    = {}   # venue -> stats_dict
         self.weather         = {}   # game_id -> weather_dict
+        self.odds            = {}   # (away, home) -> latest odds snapshot
+        self.line_movement   = {}   # (away, home) -> movement dict
         self.scores          = []   # all historical game rows
         self.schedule        = []   # upcoming schedule rows
         self._loaded         = False
@@ -169,6 +171,30 @@ class MLBModel:
                 if gid:
                     self.weather[gid] = row
             log.info(f"Weather loaded: {len(self.weather)} games")
+
+        # Odds snapshots and line movement
+        odds_master = os.path.join(CLEAN_DIR, "mlb_odds_master.csv")
+        if os.path.exists(odds_master):
+            today = datetime.now().strftime("%Y-%m-%d")
+            latest_snap = {}
+            for row in read_csv(odds_master):
+                if row.get("game_date") != today:
+                    continue
+                k = (row.get("away_team",""), row.get("home_team",""))
+                if k not in latest_snap or row.get("snapshot_time","") > latest_snap[k].get("snapshot_time",""):
+                    latest_snap[k] = row
+            self.odds = latest_snap
+            log.info(f"Odds loaded: {len(self.odds)} games")
+
+        import glob
+        movement_files = sorted(
+            glob.glob(os.path.join(CLEAN_DIR, "mlb_line_movement_*.csv")), reverse=True
+        )
+        if movement_files:
+            for row in read_csv(movement_files[0]):
+                k = (row.get("away_team",""), row.get("home_team",""))
+                self.line_movement[k] = row
+            log.info(f"Line movement loaded: {len(self.line_movement)} records")
 
         # Historical scores and upcoming schedule
         self.scores   = read_csv(os.path.join(CLEAN_DIR, "mlb_scores_master.csv"))
@@ -302,6 +328,52 @@ class MLBModel:
     # ── Weather Lookup ────────────────────────────────────────────────────────
     def get_weather(self, game_id: str) -> dict:
         return self.weather.get(str(game_id), {})
+
+    # ── Odds and Line Movement Lookup ─────────────────────────────────────────
+    def get_odds(self, away: str, home: str) -> dict:
+        return self.odds.get((away, home), {})
+
+    def get_movement(self, away: str, home: str) -> dict:
+        return self.line_movement.get((away, home), {})
+
+    def line_movement_confidence_adj(self, away: str, home: str,
+                                      ml_pick: str, total_pick: str) -> tuple:
+        """
+        Returns (ml_adj, total_adj) confidence adjustments based on line movement.
+        Positive = boost, negative = reduce.
+        STEAM/DRIFT in same direction as model pick = +0.03 to +0.05 boost
+        STEAM/DRIFT against model pick = -0.04 to -0.07 reduction
+        """
+        mov = self.get_movement(away, home)
+        if not mov:
+            return 0.0, 0.0
+
+        ml_adj    = 0.0
+        total_adj = 0.0
+
+        ml_sig    = mov.get("ml_signal", "STABLE")
+        tot_sig   = mov.get("total_signal", "STABLE")
+        sharp     = mov.get("sharp_side", "")
+
+        # ML adjustment
+        if ml_sig in ("STEAM", "DRIFT") and sharp:
+            magnitude = 0.05 if ml_sig == "STEAM" else 0.03
+            if sharp == ml_pick:
+                ml_adj = +magnitude   # sharp money agrees with our pick
+            else:
+                ml_adj = -magnitude   # sharp money opposes our pick
+
+        # Totals adjustment
+        if tot_sig in ("STEAM", "DRIFT"):
+            total_move = sf(mov.get("total_move"), 0)
+            magnitude  = 0.04 if tot_sig == "STEAM" else 0.02
+            if (total_move > 0 and total_pick == "OVER") or \
+               (total_move < 0 and total_pick == "UNDER"):
+                total_adj = +magnitude  # line moved same direction as our pick
+            else:
+                total_adj = -magnitude  # line moved against our pick
+
+        return ml_adj, total_adj
 
     # ── Recent Form ───────────────────────────────────────────────────────────
     def recent_form(self, team: str, n: int = 10) -> dict:
@@ -441,16 +513,25 @@ class MLBModel:
 
         # Moneyline
         if home_wp >= away_wp:
-            ml_team, ml_side, ml_conf = home, "home", home_wp
+            ml_team, ml_side, ml_conf_base = home, "home", home_wp
         else:
-            ml_team, ml_side, ml_conf = away, "away", away_wp
+            ml_team, ml_side, ml_conf_base = away, "away", away_wp
 
         # Totals
         line = 8.5
         diff = exp_total - line
-        total_pick = "OVER" if diff > 0 else "UNDER"
-        # Confidence scales with deviation from line; capped at 0.74
-        total_conf = round(min(0.74, 0.50 + abs(diff) / 7.0), 4)
+        total_pick      = "OVER" if diff > 0 else "UNDER"
+        total_conf_base = min(0.74, 0.50 + abs(diff) / 7.0)
+
+        # Line movement confidence adjustments
+        odds_snap   = self.get_odds(away, home)
+        movement    = self.get_movement(away, home)
+        ml_adj, total_adj = self.line_movement_confidence_adj(
+            away, home, ml_team, total_pick
+        )
+
+        ml_conf    = round(min(0.90, max(0.10, ml_conf_base + ml_adj)), 4)
+        total_conf = round(min(0.80, max(0.10, total_conf_base + total_adj)), 4)
 
         # Run line: only offer when one side has 60%+ ML confidence
         rl_threshold = 0.60
@@ -536,6 +617,19 @@ class MLBModel:
             "temp_f":         sf(weather.get("temp_f"), 70),
             "precip_prob":    sf(weather.get("precip_prob"), 0),
             "has_roof":       weather.get("roof", False),
+
+            # Odds and line movement
+            "ml_away_odds":   sf(odds_snap.get("ml_away")),
+            "ml_home_odds":   sf(odds_snap.get("ml_home")),
+            "total_odds_line":sf(odds_snap.get("total_line")),
+            "ml_signal":      movement.get("ml_signal", "NO_DATA"),
+            "total_signal":   movement.get("total_signal", "NO_DATA"),
+            "sharp_side":     movement.get("sharp_side", ""),
+            "ml_move_away":   sf(movement.get("ml_away_move")),
+            "ml_move_home":   sf(movement.get("ml_home_move")),
+            "total_move":     sf(movement.get("total_move")),
+            "ml_adj":         ml_adj,
+            "total_adj":      total_adj,
 
             # Picks
             "home_wp":        home_wp,

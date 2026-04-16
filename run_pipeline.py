@@ -70,7 +70,15 @@ def main():
         log.error(f"NORMALIZE FAILED: {e}", exc_info=True)
         sys.exit(1)
 
-    # ── Step 3: Weather for today's games ─────────────────────────────────────
+    # ── Step 3: Odds snapshot + line movement ─────────────────────────────────
+    try:
+        from scrapers.mlb_odds_scraper import run as run_odds
+        odds_result = run_odds()
+        log.info(f"Odds scrape: {odds_result}")
+    except Exception as e:
+        log.warning(f"Odds scrape failed (non-fatal): {e}")
+
+    # ── Step 4: Weather for today's games ─────────────────────────────────────
     try:
         from scrapers.mlb_weather_scraper import run as run_weather
         today = datetime.now().strftime("%Y-%m-%d")
