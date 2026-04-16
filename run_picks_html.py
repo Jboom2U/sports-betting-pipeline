@@ -8,7 +8,7 @@ Usage:
     python run_picks_html.py --no-open        # Don't auto-open browser
 """
 
-import sys, os, json, logging, argparse, webbrowser
+import sys, os, json, logging, argparse, webbrowser, requests
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -23,30 +23,94 @@ PICKS_DIR = os.path.join(os.path.dirname(__file__), "picks")
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA PREP
 # ─────────────────────────────────────────────────────────────────────────────
+def fetch_live_scores(date: str) -> list:
+    """
+    Pull today's completed and in-progress scores directly from the MLB Stats API.
+    Returns fresh data regardless of when the pipeline last ran.
+    """
+    url = "https://statsapi.mlb.com/api/v1/schedule"
+    params = {
+        "sportId":  1,
+        "date":     date,
+        "hydrate":  "linescore,decisions",
+        "gameType": "R",
+    }
+    try:
+        resp = requests.get(url, params=params,
+                            headers={"User-Agent": "mlb-betting-pipeline/1.0"},
+                            timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.warning(f"Live scores fetch failed: {e}")
+        return []
+
+    results = []
+    for date_entry in data.get("dates", []):
+        for game in date_entry.get("games", []):
+            status     = game.get("status", {})
+            abstract   = status.get("abstractGameState", "")
+            detailed   = status.get("detailedState", "")
+
+            # Only include Final or In Progress
+            if abstract not in ("Final", "Live"):
+                continue
+
+            away       = game["teams"]["away"]
+            home       = game["teams"]["home"]
+            linescore  = game.get("linescore", {})
+            inning     = linescore.get("currentInning", 9)
+            inning_half= linescore.get("inningHalf", "")
+
+            away_score = away.get("score", 0) or 0
+            home_score = home.get("score", 0) or 0
+
+            results.append({
+                "away_team":   away["team"]["name"],
+                "home_team":   home["team"]["name"],
+                "away_score":  away_score,
+                "home_score":  home_score,
+                "status":      abstract,
+                "detailed":    detailed,
+                "inning":      inning,
+                "inning_half": inning_half,
+            })
+
+    log.info(f"Live scores fetched: {len(results)} games")
+    return results
+
+
 def prep_scores_ticker(scores: list) -> list:
-    """Prepare completed game scores for the ticker."""
+    """Prepare live/completed game scores for the ticker."""
+    def city(name):
+        parts = name.split()
+        return parts[0] if parts else name
+
     out = []
     for s in scores:
-        away  = s.get("away_team", "")
-        home  = s.get("home_team", "")
-        ascore = s.get("away_score", "")
-        hscore = s.get("home_score", "")
+        away   = s.get("away_team", "")
+        home   = s.get("home_team", "")
+        ascore = s.get("away_score", 0)
+        hscore = s.get("home_score", 0)
         if not away or not home:
             continue
-        # Shorten team names to city only
-        def city(name):
-            parts = name.split()
-            return parts[0] if parts else name
-        winner = s.get("winner", "")
+
+        is_live   = s.get("status") == "Live"
+        inning    = s.get("inning", 9)
+        inh       = s.get("inning_half", "")
+        label     = f"{inh[:3]} {inning}" if is_live else "Final"
+        if inning and int(inning) > 9 and not is_live:
+            label = f"F/{inning}"
+
         out.append({
-            "away":      away,
-            "home":      home,
-            "away_city": city(away),
-            "home_city": city(home),
-            "away_score":str(ascore),
-            "home_score":str(hscore),
-            "winner":    winner,
-            "innings":   s.get("innings", "9"),
+            "away":       away,
+            "home":       home,
+            "away_city":  city(away),
+            "home_city":  city(home),
+            "away_score": str(ascore),
+            "home_score": str(hscore),
+            "is_live":    is_live,
+            "label":      label,
         })
     return out
 
@@ -402,7 +466,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .ticker-score.win{color:var(--green)}
 .ticker-score.loss{color:var(--sub)}
 .ticker-final{font-size:.65rem;color:var(--sub);text-transform:uppercase;letter-spacing:.5px}
+.ticker-live{font-size:.65rem;color:#ff6b35;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
 .ticker-empty{color:var(--sub);font-size:.78rem;padding:0 20px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:6px;height:6px}
@@ -723,14 +789,15 @@ function renderTicker(){
   let html = "";
   for(let pass=0; pass<2; pass++){
     DATA_SCORES.forEach(s=>{
-      const awayWon = parseInt(s.away_score) > parseInt(s.home_score);
-      const inn     = s.innings && s.innings != "9" ? ` (${s.innings})` : "";
+      const awayWon  = parseInt(s.away_score) > parseInt(s.home_score);
+      const liveStyle= s.is_live ? "color:#ff6b35;animation:pulse 1.5s infinite" : "";
+      const liveClass= s.is_live ? "ticker-live" : "ticker-final";
       html += `
         <div class="ticker-item">
           <span class="${awayWon?'ticker-score win':'ticker-score loss'}">${s.away_city} ${s.away_score}</span>
           <span style="color:var(--sub)">@</span>
           <span class="${!awayWon?'ticker-score win':'ticker-score loss'}">${s.home_city} ${s.home_score}</span>
-          <span class="ticker-final">Final${inn}</span>
+          <span class="${liveClass}" style="${liveStyle}">${s.label}</span>
         </div>`;
     });
   }
@@ -776,8 +843,11 @@ def main():
     parlays_2 = build_parlays(picks, legs=2, max_parlays=5)
     parlays_3 = build_parlays(picks, legs=3, max_parlays=5)
 
-    # Today's completed scores for the ticker
-    today_scores = model.get_today_scores(actual_date)
+    # Today's live/completed scores — fetch directly from MLB API for freshness
+    today_scores = fetch_live_scores(actual_date)
+    if not today_scores:
+        # Fall back to master CSV if API unavailable
+        today_scores = model.get_today_scores(actual_date)
 
     # Serialize
     picks_json  = json.dumps(prep_picks(picks))

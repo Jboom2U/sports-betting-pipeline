@@ -261,7 +261,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .ticker-score.win{color:var(--green)}
 .ticker-score.loss{color:var(--sub)}
 .ticker-final{font-size:.65rem;color:var(--sub);text-transform:uppercase;letter-spacing:.5px}
+.ticker-live{font-size:.65rem;color:#ff6b35;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
 .ticker-empty{color:var(--sub);font-size:.78rem;padding:0 20px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:6px;height:6px}
@@ -582,14 +584,15 @@ function renderTicker(){
   let html = "";
   for(let pass=0; pass<2; pass++){
     DATA_SCORES.forEach(s=>{
-      const awayWon = parseInt(s.away_score) > parseInt(s.home_score);
-      const inn     = s.innings && s.innings != "9" ? ` (${s.innings})` : "";
+      const awayWon  = parseInt(s.away_score) > parseInt(s.home_score);
+      const liveStyle= s.is_live ? "color:#ff6b35;animation:pulse 1.5s infinite" : "";
+      const liveClass= s.is_live ? "ticker-live" : "ticker-final";
       html += `
         <div class="ticker-item">
           <span class="${awayWon?'ticker-score win':'ticker-score loss'}">${s.away_city} ${s.away_score}</span>
           <span style="color:var(--sub)">@</span>
           <span class="${!awayWon?'ticker-score win':'ticker-score loss'}">${s.home_city} ${s.home_score}</span>
-          <span class="ticker-final">Final${inn}</span>
+          <span class="${liveClass}" style="${liveStyle}">${s.label}</span>
         </div>`;
     });
   }
