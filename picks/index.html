@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<title>Sports Betting Parlay Genius</title>
+<script>
+  // Redirect to today's picks file automatically
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, '0');
+  const d = String(today.getDate()).padStart(2, '0');
+  const file = `mlb_picks_${y}-${m}-${d}.html`;
+  window.location.href = file;
+</script>
+</head>
+<body style="background:#07090f;color:#e2e8f0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+  <div style="text-align:center">
+    <div style="font-size:2rem;margin-bottom:12px">⚾</div>
+    <div style="font-weight:700;font-size:1.1rem">Sports Betting Parlay Genius</div>
+    <div style="color:#7a8899;margin-top:8px;font-size:.85rem">Loading today's picks...</div>
+  </div>
+</body>
+</html>
