@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sports Betting Parlay Genius</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --bg:        #07090f;
+  --bg2:       #0d1117;
+  --card:      #111827;
+  --card2:     #161f2e;
+  --border:    #1e2d44;
+  --green:     #00e676;
+  --gold:      #ffc107;
+  --blue:      #42a5f5;
+  --purple:    #ab47bc;
+  --red:       #ef5350;
+  --text:      #e2e8f0;
+  --sub:       #7a8899;
+  --lock-c:    #ffc107;
+  --strong-c:  #42a5f5;
+  --lean-c:    #00e676;
+  --radius:    12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh;padding-bottom:60px}
+
+/* ── HEADER ── */
+.header{
+  background:linear-gradient(135deg,#0d1b2e 0%,#0a1628 50%,#0d1b2e 100%);
+  border-bottom:1px solid var(--border);
+  padding:28px 24px 20px;
+  text-align:center;
+  position:relative;
+  overflow:hidden;
+}
+.header::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse at 50% 0%,rgba(0,230,118,.08) 0%,transparent 70%);
+  pointer-events:none;
+}
+.header h1{
+  font-size:clamp(1.6rem,4vw,2.6rem);font-weight:800;letter-spacing:-0.5px;
+  background:linear-gradient(90deg,#00e676,#42a5f5,#ffc107);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.header-sub{color:var(--sub);margin-top:6px;font-size:.9rem;font-weight:500}
+.header-stats{
+  display:flex;justify-content:center;gap:28px;margin-top:16px;flex-wrap:wrap;align-items:center;
+}
+.stat-pill{
+  background:rgba(255,255,255,.05);border:1px solid var(--border);
+  border-radius:20px;padding:5px 14px;font-size:.82rem;font-weight:600;color:var(--text);
+}
+.stat-pill span{color:var(--green)}
+/* ── REFRESH BUTTON ── */
+#refreshBtn{
+  display:none;align-items:center;gap:8px;
+  background:linear-gradient(135deg,#00e676,#00b248);
+  border:none;border-radius:24px;padding:9px 22px;
+  font-size:.88rem;font-weight:700;color:#000;cursor:pointer;
+  font-family:'Inter',sans-serif;transition:opacity .2s,transform .15s;
+  box-shadow:0 0 20px rgba(0,230,118,.3);
+}
+#refreshBtn:hover{opacity:.88;transform:scale(1.03)}
+#refreshBtn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+#refreshBtn svg{width:15px;height:15px;flex-shrink:0}
+.spin{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#refreshStatus{
+  font-size:.75rem;color:var(--sub);margin-top:6px;
+  min-height:16px;text-align:center;
+}
+
+/* ── FILTERS ── */
+.filters{
+  position:sticky;top:0;z-index:100;
+  background:rgba(7,9,15,.92);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+  padding:12px 24px;display:flex;gap:16px;flex-wrap:wrap;align-items:center;
+}
+.filter-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.filter-label{color:var(--sub);font-size:.78rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.filter-btn{
+  background:transparent;border:1px solid var(--border);color:var(--sub);
+  padding:5px 13px;border-radius:20px;font-size:.8rem;font-weight:600;cursor:pointer;
+  transition:all .2s;font-family:inherit;
+}
+.filter-btn:hover{border-color:var(--green);color:var(--text)}
+.filter-btn.active{background:var(--green);border-color:var(--green);color:#000}
+.filter-btn.active-gold{background:var(--gold);border-color:var(--gold);color:#000}
+.filter-btn.active-blue{background:var(--blue);border-color:var(--blue);color:#000}
+.search-wrap{margin-left:auto}
+.search-input{
+  background:var(--card);border:1px solid var(--border);color:var(--text);
+  padding:6px 14px;border-radius:20px;font-size:.82rem;font-family:inherit;
+  outline:none;width:180px;transition:border-color .2s;
+}
+.search-input:focus{border-color:var(--green)}
+.search-input::placeholder{color:var(--sub)}
+
+/* ── MAIN LAYOUT ── */
+.main{max-width:1400px;margin:0 auto;padding:28px 20px}
+.section-title{
+  font-size:1rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+  color:var(--sub);margin-bottom:16px;display:flex;align-items:center;gap:8px;
+}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* ── PICKS GRID ── */
+.picks-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
+  gap:14px;margin-bottom:36px;
+}
+.pick-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;cursor:default;transition:transform .15s,border-color .15s;
+  position:relative;overflow:hidden;
+}
+.pick-card:hover{transform:translateY(-2px)}
+.pick-card.tier-LOCK  {border-top:3px solid var(--gold)}
+.pick-card.tier-STRONG{border-top:3px solid var(--blue)}
+.pick-card.tier-LEAN  {border-top:3px solid var(--green)}
+.pick-card.hidden{display:none}
+
+.pick-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+.pick-type-badge{
+  font-size:.68rem;font-weight:700;letter-spacing:.8px;padding:3px 9px;border-radius:4px;
+  text-transform:uppercase;
+}
+.badge-ML   {background:rgba(66,165,245,.15);color:#42a5f5;border:1px solid rgba(66,165,245,.3)}
+.badge-RL   {background:rgba(171,71,188,.15);color:#ce93d8;border:1px solid rgba(171,71,188,.3)}
+.badge-TOTAL{background:rgba(0,230,118,.15);color:#00e676;border:1px solid rgba(0,230,118,.3)}
+.tier-badge{
+  font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:4px;
+}
+.tb-LOCK  {background:rgba(255,193,7,.15);color:var(--gold);border:1px solid rgba(255,193,7,.3)}
+.tb-STRONG{background:rgba(66,165,245,.15);color:var(--blue);border:1px solid rgba(66,165,245,.3)}
+.tb-LEAN  {background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.3)}
+
+.pick-label{font-size:1.08rem;font-weight:700;color:var(--text);margin-bottom:4px}
+.pick-game{font-size:.78rem;color:var(--sub);margin-bottom:12px}
+
+.conf-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.conf-bar-wrap{flex:1;height:7px;background:rgba(255,255,255,.07);border-radius:4px;overflow:hidden}
+.conf-bar{height:100%;border-radius:4px;transition:width .4s ease}
+.bar-LOCK  {background:linear-gradient(90deg,#e65100,var(--gold))}
+.bar-STRONG{background:linear-gradient(90deg,#0d47a1,var(--blue))}
+.bar-LEAN  {background:linear-gradient(90deg,#1b5e20,var(--green))}
+.conf-pct{font-size:.95rem;font-weight:700;white-space:nowrap}
+.pct-LOCK  {color:var(--gold)}
+.pct-STRONG{color:var(--blue)}
+.pct-LEAN  {color:var(--green)}
+
+.pick-reasoning{
+  font-size:.74rem;color:var(--sub);line-height:1.5;
+  border-top:1px solid var(--border);padding-top:8px;margin-top:4px;
+}
+
+/* ── PARLAY CARDS ── */
+.parlay-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:36px}
+.parlay-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;position:relative;overflow:hidden;
+}
+.parlay-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--green),var(--blue),var(--gold));
+}
+.parlay-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.parlay-tag{font-size:.7rem;font-weight:700;letter-spacing:.6px;color:var(--sub);text-transform:uppercase}
+.parlay-payout{
+  font-size:.95rem;font-weight:800;color:var(--green);
+  background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.25);
+  padding:3px 10px;border-radius:6px;
+}
+.parlay-conf{font-size:1.5rem;font-weight:800;color:var(--text);margin-bottom:12px}
+.parlay-conf span{font-size:.85rem;font-weight:500;color:var(--sub);margin-left:4px}
+.parlay-legs{display:flex;flex-direction:column;gap:8px}
+.parlay-leg{
+  background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;
+  display:flex;align-items:center;gap:10px;
+}
+.leg-conf{
+  font-size:.78rem;font-weight:700;white-space:nowrap;padding:2px 8px;border-radius:4px;
+}
+.leg-LOCK  {background:rgba(255,193,7,.15);color:var(--gold)}
+.leg-STRONG{background:rgba(66,165,245,.15);color:var(--blue)}
+.leg-LEAN  {background:rgba(0,230,118,.15);color:var(--green)}
+.leg-info{flex:1}
+.leg-label{font-size:.85rem;font-weight:600;color:var(--text)}
+.leg-game {font-size:.72rem;color:var(--sub);margin-top:1px}
+
+/* ── GAME BREAKDOWN ── */
+.games-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:14px}
+.game-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.game-header{
+  background:var(--card2);padding:12px 16px;display:flex;justify-content:space-between;align-items:center;
+  border-bottom:1px solid var(--border);
+}
+.matchup{font-size:.95rem;font-weight:700}
+.game-time{font-size:.75rem;color:var(--sub)}
+.game-body{padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.game-row{display:flex;justify-content:space-between;align-items:center;font-size:.8rem}
+.row-label{color:var(--sub);font-weight:600;min-width:48px}
+.row-val{color:var(--text);font-weight:500;text-align:right}
+.park-badge{
+  display:inline-block;font-size:.68rem;font-weight:700;padding:2px 7px;border-radius:4px;margin-left:6px;
+}
+.park-hitter {background:rgba(239,83,80,.15);color:#ef9a9a}
+.park-pitcher{background:rgba(66,165,245,.15);color:#90caf9}
+.park-neutral{background:rgba(255,255,255,.06);color:var(--sub)}
+.wp-row{display:flex;gap:6px;margin-top:4px}
+.wp-bar-outer{flex:1;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden;height:6px;margin-top:2px}
+.wp-bar-inner{height:100%;background:var(--green);border-radius:4px}
+.wp-team{font-size:.78rem;font-weight:600}
+.wp-pct {font-size:.85rem;font-weight:700;color:var(--green)}
+
+/* ── EMPTY STATE ── */
+.empty{text-align:center;color:var(--sub);padding:48px;font-size:.95rem}
+
+/* ── TABS ── */
+.section-tabs{display:flex;gap:0;margin-bottom:16px;border:1px solid var(--border);border-radius:8px;overflow:hidden;width:fit-content}
+.section-tab{
+  padding:7px 18px;font-size:.82rem;font-weight:600;cursor:pointer;
+  background:transparent;border:none;color:var(--sub);font-family:inherit;
+  transition:all .15s;
+}
+.section-tab.active{background:var(--green);color:#000}
+.section-tab:hover:not(.active){background:rgba(255,255,255,.05);color:var(--text)}
+
+/* ── RESULTS COUNT ── */
+.results-count{font-size:.8rem;color:var(--sub);margin-bottom:10px}
+.results-count b{color:var(--text)}
+
+/* ── SCORES TICKER ── */
+.ticker-wrap{
+  background:#080c14;border-bottom:1px solid var(--border);
+  padding:0;height:34px;display:flex;align-items:center;
+}
+.ticker-label{
+  background:var(--green);color:#000;font-weight:800;font-size:.72rem;
+  letter-spacing:.8px;padding:0 12px;height:100%;display:flex;
+  align-items:center;white-space:nowrap;flex-shrink:0;text-transform:uppercase;
+}
+.ticker-outer{
+  flex:1;overflow:hidden;height:100%;display:flex;align-items:center;
+}
+.ticker-track{
+  display:inline-flex;white-space:nowrap;
+  animation:ticker 35s linear infinite;
+  will-change:transform;
+}
+.ticker-track:hover{animation-play-state:paused}
+@keyframes ticker{
+  0%  {transform:translateX(0)}
+  100%{transform:translateX(-50%)}
+}
+.ticker-item{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:0 24px;font-size:.78rem;font-weight:600;color:var(--text);
+  border-right:1px solid var(--border);
+}
+.ticker-score{font-weight:800;font-size:.85rem}
+.ticker-score.win{color:var(--green)}
+.ticker-score.loss{color:var(--sub)}
+.ticker-final{font-size:.65rem;color:var(--sub);text-transform:uppercase;letter-spacing:.5px}
+.ticker-live{font-size:.65rem;color:#ff6b35;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.ticker-empty{color:var(--sub);font-size:.78rem;padding:0 20px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── PROPS SECTION ── */
+.props-filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.props-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px;margin-bottom:36px}
+.prop-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;transition:transform .15s,border-color .15s;position:relative;overflow:hidden;
+}
+.prop-card:hover{transform:translateY(-2px)}
+.prop-card.tier-LOCK  {border-top:3px solid var(--gold)}
+.prop-card.tier-STRONG{border-top:3px solid var(--blue)}
+.prop-card.tier-LEAN  {border-top:3px solid var(--green)}
+.prop-card.hidden{display:none}
+.prop-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+.prop-type-badge{
+  font-size:.7rem;font-weight:700;letter-spacing:.8px;padding:3px 9px;border-radius:4px;text-transform:uppercase;
+}
+.badge-HR   {background:rgba(239,83,80,.15);color:#ef9a9a;border:1px solid rgba(239,83,80,.3)}
+.badge-HITS {background:rgba(66,165,245,.15);color:#90caf9;border:1px solid rgba(66,165,245,.3)}
+.badge-K    {background:rgba(171,71,188,.15);color:#ce93d8;border:1px solid rgba(171,71,188,.3)}
+.prop-player{font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:2px}
+.prop-game  {font-size:.75rem;color:var(--sub);margin-bottom:10px}
+.prop-line-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;
+  background:rgba(255,255,255,.04);border-radius:6px;padding:6px 10px}
+.prop-line-label{font-size:.72rem;color:var(--sub);font-weight:600}
+.prop-line-val{font-size:.92rem;font-weight:700;color:var(--text)}
+.prop-proj-val{font-size:.8rem;font-weight:600;color:var(--green)}
+.prop-reasoning{
+  font-size:.73rem;color:var(--sub);line-height:1.5;
+  border-top:1px solid var(--border);padding-top:8px;margin-top:4px;
+}
+.section-nav{
+  display:flex;gap:0;margin-bottom:24px;border-bottom:2px solid var(--border);
+}
+.section-nav-btn{
+  padding:10px 22px;font-size:.88rem;font-weight:700;cursor:pointer;
+  background:transparent;border:none;border-bottom:2px solid transparent;
+  color:var(--sub);font-family:inherit;transition:all .15s;margin-bottom:-2px;
+}
+.section-nav-btn.active{color:var(--green);border-bottom-color:var(--green)}
+.section-nav-btn:hover:not(.active){color:var(--text)}
+.section-panel{display:none}
+.section-panel.active{display:block}
+
+/* ── TODAY'S GAMES ── */
+.schedule-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:36px}
+.sched-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.sched-status-bar{
+  padding:5px 14px;font-size:.7rem;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
+  display:flex;align-items:center;gap:6px;
+}
+.status-upcoming{background:rgba(66,165,245,.12);color:var(--blue)}
+.status-live    {background:rgba(255,107,53,.15);color:#ff6b35}
+.status-final   {background:rgba(255,255,255,.06);color:var(--sub)}
+.live-dot{width:7px;height:7px;border-radius:50%;background:#ff6b35;animation:pulse 1.5s infinite;flex-shrink:0}
+.sched-matchup{padding:14px 16px 10px}
+.sched-team-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.sched-team-info{display:flex;flex-direction:column;gap:2px}
+.sched-team-name{font-size:1rem;font-weight:700;color:var(--text)}
+.sched-team-record{font-size:.78rem;font-weight:600;color:var(--sub)}
+.sched-team-streak{font-size:.68rem;color:var(--sub)}
+.sched-score-block{text-align:center;min-width:54px}
+.sched-score{font-size:1.5rem;font-weight:800;color:var(--text)}
+.sched-score.winner{color:var(--green)}
+.sched-vs{font-size:.85rem;color:var(--sub);font-weight:600}
+.sched-at-label{font-size:.62rem;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+.sched-divider{height:1px;background:var(--border);margin:0 16px}
+.sched-footer{padding:8px 16px;display:flex;justify-content:space-between;align-items:center;font-size:.75rem}
+.sched-time{font-weight:700;color:var(--text)}
+.sched-venue{color:var(--sub);text-align:right;max-width:55%}
+.sched-pitchers{padding:4px 16px 10px;font-size:.72rem;color:var(--sub);
+  display:flex;justify-content:space-between}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#2e4060}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>⚾ Sports Betting Parlay Genius</h1>
+  <div class="header-sub" id="dateStr"></div>
+  <div class="header-stats">
+    <div class="stat-pill">Games <span id="gameCount">—</span></div>
+    <div class="stat-pill">Picks <span id="pickCount">—</span></div>
+    <div class="stat-pill">Locks <span id="lockCount">—</span></div>
+    <div class="stat-pill">Top Pick <span id="topPick">—</span></div>
+    <button id="refreshBtn" onclick="doRefresh()">
+      <svg id="refreshIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+      Refresh Picks
+    </button>
+  </div>
+  <div id="refreshStatus"></div>
+</div>
+
+<div class="ticker-wrap" id="scoreTicker">
+  <div class="ticker-label">⚾ Scores</div>
+  <div class="ticker-outer">
+    <div class="ticker-track" id="tickerTrack">
+      <span class="ticker-empty">No completed games yet today</span>
+    </div>
+  </div>
+</div>
+
+<div class="filters">
+  <div class="filter-group">
+    <span class="filter-label">Bet Type</span>
+    <button class="filter-btn active" data-group="type" data-val="all">All</button>
+    <button class="filter-btn" data-group="type" data-val="ML">Moneyline</button>
+    <button class="filter-btn" data-group="type" data-val="RL">Run Line</button>
+    <button class="filter-btn" data-group="type" data-val="TOTAL">Over/Under</button>
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Confidence</span>
+    <button class="filter-btn active" data-group="tier" data-val="all">All</button>
+    <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock</button>
+    <button class="filter-btn" data-group="tier" data-val="STRONG">⭐⭐ Strong</button>
+    <button class="filter-btn" data-group="tier" data-val="LEAN">⭐ Lean</button>
+  </div>
+  <div class="search-wrap">
+    <input class="search-input" id="teamSearch" placeholder="Search team…" type="text"/>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- SECTION NAV -->
+  <div class="section-nav">
+    <button class="section-nav-btn active" data-panel="panel-picks">🎯 Game Picks</button>
+    <button class="section-nav-btn" data-panel="panel-schedule">📅 Today's Games</button>
+    <button class="section-nav-btn" data-panel="panel-props">👤 Player Props</button>
+    <button class="section-nav-btn" data-panel="panel-games">📊 Game Breakdown</button>
+  </div>
+
+  <!-- PANEL: GAME PICKS -->
+  <div class="section-panel active" id="panel-picks">
+    <div class="section-title">🎯 Individual Picks</div>
+    <div class="results-count" id="pickResults"></div>
+    <div class="picks-grid" id="picksGrid"></div>
+    <div class="section-title">🔥 Parlay Recommendations</div>
+    <div class="section-tabs">
+      <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
+      <button class="section-tab" data-parlay="3">3-Leg (+595)</button>
+    </div>
+    <div class="parlay-grid" id="parlayGrid"></div>
+  </div>
+
+  <!-- PANEL: TODAY'S GAMES -->
+  <div class="section-panel" id="panel-schedule">
+    <div class="schedule-grid" id="scheduleGrid"></div>
+  </div>
+
+  <!-- PANEL: PLAYER PROPS -->
+  <div class="section-panel" id="panel-props">
+    <div class="props-filter-row">
+      <span class="filter-label">Prop Type</span>
+      <button class="filter-btn active" data-pgroup="ptype" data-pval="all">All</button>
+      <button class="filter-btn" data-pgroup="ptype" data-pval="HR">⚡ Home Runs</button>
+      <button class="filter-btn" data-pgroup="ptype" data-pval="HITS">🎯 Hits</button>
+      <button class="filter-btn" data-pgroup="ptype" data-pval="K">🔥 Strikeouts</button>
+      <span class="filter-label" style="margin-left:12px">Confidence</span>
+      <button class="filter-btn active" data-pgroup="ptier" data-pval="all">All</button>
+      <button class="filter-btn" data-pgroup="ptier" data-pval="LOCK">🔒 Lock</button>
+      <button class="filter-btn" data-pgroup="ptier" data-pval="STRONG">⭐⭐ Strong</button>
+      <button class="filter-btn" data-pgroup="ptier" data-pval="LEAN">⭐ Lean</button>
+    </div>
+    <div class="results-count" id="propResults"></div>
+    <div class="props-grid" id="propsGrid"></div>
+  </div>
+
+  <!-- PANEL: GAME BREAKDOWN -->
+  <div class="section-panel" id="panel-games">
+    <div class="section-title">📊 Game Breakdown</div>
+    <div class="games-grid" id="gamesGrid"></div>
+  </div>
+
+</div>
+
+<script>
+// ── Embedded Data ────────────────────────────────────────────────────────────
+const DATA_DATE    = "2026-04-17";
+const DATA_PICKS   = [{"type": "ML", "label": "Chicago Cubs ML", "team": "Chicago Cubs", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs", "game_id": "824693", "venue": "Wrigley Field", "reasoning": "Kodai Senga ERA 2.91 [NEUTRAL] (home SP TBD) | Recent: New York Mets 1.0 RPG (0% W) | Chicago Cubs 9.3 RPG (67% W) | Line: New York Mets +119 | Chicago Cubs -140", "exp_total": 10.02, "away": "New York Mets", "home": "Chicago Cubs"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 74.0, "tier": "LOCK", "game": "Atlanta Braves @ Philadelphia Phillies", "game_id": "823476", "venue": "Citizens Bank Park", "reasoning": "Model projects 10.9 runs vs 10.0 line (2.4 run edge)", "exp_total": 10.87, "away": "Atlanta Braves", "home": "Philadelphia Phillies"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 71.7, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs", "game_id": "824693", "venue": "Wrigley Field", "reasoning": "Model projects 10.0 runs vs 10.0 line (1.5 run edge)", "exp_total": 10.02, "away": "New York Mets", "home": "Chicago Cubs"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 70.6, "tier": "LOCK", "game": "Toronto Blue Jays @ Arizona Diamondbacks", "game_id": "825101", "venue": "Chase Field", "reasoning": "Model projects 9.9 runs vs 8.5 line (1.4 run edge)", "exp_total": 9.94, "away": "Toronto Blue Jays", "home": "Arizona Diamondbacks"}, {"type": "ML", "label": "New York Yankees ML", "team": "New York Yankees", "conf": 68.2, "tier": "LOCK", "game": "Kansas City Royals @ New York Yankees", "game_id": "823559", "venue": "Yankee Stadium", "reasoning": "Recent: Kansas City Royals 3.7 RPG (0% W) | New York Yankees 5.2 RPG (50% W) | Line: Kansas City Royals +154 | New York Yankees -184", "exp_total": 9.44, "away": "Kansas City Royals", "home": "New York Yankees"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 67.3, "tier": "STRONG", "game": "Tampa Bay Rays @ Pittsburgh Pirates", "game_id": "823397", "venue": "PNC Park", "reasoning": "Model projects 9.7 runs vs 8.0 line (1.2 run edge)", "exp_total": 9.71, "away": "Tampa Bay Rays", "home": "Pittsburgh Pirates"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 67.3, "tier": "STRONG", "game": "Detroit Tigers @ Boston Red Sox", "game_id": "824778", "venue": "Fenway Park", "reasoning": "Model projects 9.7 runs vs 8.0 line (1.2 run edge)", "exp_total": 9.71, "away": "Detroit Tigers", "home": "Boston Red Sox"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 66.9, "tier": "STRONG", "game": "San Diego Padres @ Los Angeles Angels", "game_id": "824048", "venue": "Angel Stadium", "reasoning": "Model projects 9.7 runs vs 8.5 line (1.2 run edge)", "exp_total": 9.68, "away": "San Diego Padres", "home": "Los Angeles Angels"}, {"type": "ML", "label": "Arizona Diamondbacks ML", "team": "Arizona Diamondbacks", "conf": 65.7, "tier": "STRONG", "game": "Toronto Blue Jays @ Arizona Diamondbacks", "game_id": "825101", "venue": "Chase Field", "reasoning": "Away SP TBD vs Michael Soroka ERA 4.42 [NEUTRAL] | Recent: Toronto Blue Jays 3.7 RPG (33% W) | Arizona Diamondbacks 6.3 RPG (67% W)", "exp_total": 9.94, "away": "Toronto Blue Jays", "home": "Arizona Diamondbacks"}, {"type": "RL", "label": "Chicago Cubs -1.5", "team": "Chicago Cubs", "conf": 65.5, "tier": "STRONG", "game": "New York Mets @ Chicago Cubs", "game_id": "824693", "venue": "Wrigley Field", "reasoning": "ML conf 79% | Projected margin 3.2 runs | Chicago Cubs 67% W last 10", "exp_total": 10.02, "away": "New York Mets", "home": "Chicago Cubs"}, {"type": "ML", "label": "Minnesota Twins ML", "team": "Minnesota Twins", "conf": 65.4, "tier": "STRONG", "game": "Cincinnati Reds @ Minnesota Twins", "game_id": "823720", "venue": "Target Field", "reasoning": "Brandon Williamson ERA 3.77 [NEUTRAL] (home SP TBD) | Recent: Cincinnati Reds 3.3 RPG (67% W) | Minnesota Twins 8.0 RPG (67% W)", "exp_total": 9.29, "away": "Cincinnati Reds", "home": "Minnesota Twins"}, {"type": "ML", "label": "Los Angeles Dodgers ML", "team": "Los Angeles Dodgers", "conf": 64.6, "tier": "STRONG", "game": "Los Angeles Dodgers @ Colorado Rockies", "game_id": "824373", "venue": "Coors Field", "reasoning": "Recent: Los Angeles Dodgers 4.7 RPG (100% W) | Colorado Rockies 3.3 RPG (33% W) | Hitter park (117.0)", "exp_total": 9.52, "away": "Los Angeles Dodgers", "home": "Colorado Rockies"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 64.6, "tier": "STRONG", "game": "Los Angeles Dodgers @ Colorado Rockies", "game_id": "824373", "venue": "Coors Field", "reasoning": "Model projects 9.5 runs vs 8.5 line (1.0 run edge) | Coors-level hitter park (factor 117.0)", "exp_total": 9.52, "away": "Los Angeles Dodgers", "home": "Colorado Rockies"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 64.3, "tier": "STRONG", "game": "St. Louis Cardinals @ Houston Astros", "game_id": "824207", "venue": "Daikin Park", "reasoning": "Model projects 9.5 runs vs 8.5 line (1.0 run edge)", "exp_total": 9.5, "away": "St. Louis Cardinals", "home": "Houston Astros"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 63.4, "tier": "STRONG", "game": "Kansas City Royals @ New York Yankees", "game_id": "823559", "venue": "Yankee Stadium", "reasoning": "Model projects 9.4 runs vs 8.0 line (0.9 run edge)", "exp_total": 9.44, "away": "Kansas City Royals", "home": "New York Yankees"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 61.3, "tier": "LEAN", "game": "Cincinnati Reds @ Minnesota Twins", "game_id": "823720", "venue": "Target Field", "reasoning": "Model projects 9.3 runs vs 8.5 line (0.8 run edge)", "exp_total": 9.29, "away": "Cincinnati Reds", "home": "Minnesota Twins"}, {"type": "TOTAL", "label": "OVER 8.5", "team": "OVER", "conf": 60.4, "tier": "LEAN", "game": "Milwaukee Brewers @ Miami Marlins", "game_id": "823883", "venue": "loanDepot park", "reasoning": "Model projects 9.2 runs vs 8.0 line (0.7 run edge) | Pitcher-friendly park (factor 96.0)", "exp_total": 9.23, "away": "Milwaukee Brewers", "home": "Miami Marlins"}, {"type": "ML", "label": "Athletics ML", "team": "Athletics", "conf": 59.8, "tier": "LEAN", "game": "Chicago White Sox @ Athletics", "game_id": "825019", "venue": "Sutter Health Park", "reasoning": "Recent: Chicago White Sox 3.7 RPG (0% W) | Athletics 3.8 RPG (50% W)", "exp_total": 8.4, "away": "Chicago White Sox", "home": "Athletics"}, {"type": "RL", "label": "New York Yankees -1.5", "team": "New York Yankees", "conf": 56.6, "tier": "LEAN", "game": "Kansas City Royals @ New York Yankees", "game_id": "823559", "venue": "Yankee Stadium", "reasoning": "ML conf 68% | Projected margin 1.7 runs", "exp_total": 9.44, "away": "Kansas City Royals", "home": "New York Yankees"}, {"type": "ML", "label": "Los Angeles Angels ML", "team": "Los Angeles Angels", "conf": 56.5, "tier": "LEAN", "game": "San Diego Padres @ Los Angeles Angels", "game_id": "824048", "venue": "Angel Stadium", "reasoning": "Recent: San Diego Padres 5.3 RPG (100% W) | Los Angeles Angels 8.0 RPG (50% W)", "exp_total": 9.68, "away": "San Diego Padres", "home": "Los Angeles Angels"}, {"type": "ML", "label": "Atlanta Braves ML", "team": "Atlanta Braves", "conf": 56.0, "tier": "LEAN", "game": "Atlanta Braves @ Philadelphia Phillies", "game_id": "823476", "venue": "Citizens Bank Park", "reasoning": "Away SP TBD vs Taijuan Walker ERA 4.14 [COLD] | Recent: Atlanta Braves 5.3 RPG (67% W) | Philadelphia Phillies 6.3 RPG (33% W) | Line: Atlanta Braves -114 | Philadelphia Phillies -63", "exp_total": 10.87, "away": "Atlanta Braves", "home": "Philadelphia Phillies"}, {"type": "ML", "label": "St. Louis Cardinals ML", "team": "St. Louis Cardinals", "conf": 55.3, "tier": "LEAN", "game": "St. Louis Cardinals @ Houston Astros", "game_id": "824207", "venue": "Daikin Park", "reasoning": "Recent: St. Louis Cardinals 4.7 RPG (67% W) | Houston Astros 3.5 RPG (50% W)", "exp_total": 9.5, "away": "St. Louis Cardinals", "home": "Houston Astros"}, {"type": "ML", "label": "Miami Marlins ML", "team": "Miami Marlins", "conf": 55.1, "tier": "LEAN", "game": "Milwaukee Brewers @ Miami Marlins", "game_id": "823883", "venue": "loanDepot park", "reasoning": "Away SP TBD vs Janson Junk ERA 4.49 [NEUTRAL] | Recent: Milwaukee Brewers 3.7 RPG (67% W) | Miami Marlins 6.0 RPG (33% W) | Line: Milwaukee Brewers -106 | Miami Marlins -113 | Pitcher park (96.0)", "exp_total": 9.23, "away": "Milwaukee Brewers", "home": "Miami Marlins"}];
+const DATA_GAMES   = [{"game_id": "824693", "away": "New York Mets", "home": "Chicago Cubs", "venue": "Wrigley Field", "time": "18:20 UTC", "park_runs": 103.0, "park_tag": "Neutral", "away_sp": "Kodai Senga", "home_sp": "TBD", "away_era": "2.91", "home_era": "4.20", "away_fip": "4.12", "home_fip": "4.20", "away_rpg": 4.73, "home_rpg": 4.89, "away_ops": 0.753, "home_ops": 0.75, "away_form": 1.0, "home_form": 9.3, "exp_away": 3.418, "exp_home": 6.602, "exp_total": 10.02, "away_wp": 20.6, "home_wp": 79.4, "total_pick": "OVER", "total_line": 8.5, "total_conf": 71.7, "rl_pick": "Chicago Cubs -1.5", "rl_team": "Chicago Cubs", "rl_conf": 65.5, "weather_flag": "WIND_OUT", "wind_label": "OUT to CF", "wind_speed": 10.4, "wind_component": 8.0, "temp_f": 73.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 3.83, "home_bp_era": 3.88, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824454", "away": "Baltimore Orioles", "home": "Cleveland Guardians", "venue": "Progressive Field", "time": "22:10 UTC", "park_runs": 99.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.18, "home_rpg": 3.97, "away_ops": 0.699, "home_ops": 0.669, "away_form": 4.8, "home_form": 5.2, "exp_away": 4.232, "exp_home": 4.38, "exp_total": 8.61, "away_wp": 45.9, "home_wp": 54.1, "total_pick": "OVER", "total_line": 8.5, "total_conf": 51.6, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "NORMAL", "wind_label": "IN from CF", "wind_speed": 4.9, "wind_component": -4.0, "temp_f": 56.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 4.01, "home_bp_era": 3.95, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "823476", "away": "Atlanta Braves", "home": "Philadelphia Phillies", "venue": "Citizens Bank Park", "time": "22:40 UTC", "park_runs": 103.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "Taijuan Walker", "away_era": "4.20", "home_era": "4.14", "away_fip": "4.20", "home_fip": "4.98", "away_rpg": 4.47, "home_rpg": 4.8, "away_ops": 0.719, "home_ops": 0.759, "away_form": 5.3, "home_form": 6.3, "exp_away": 5.942, "exp_home": 4.93, "exp_total": 10.87, "away_wp": 56.0, "home_wp": 44.0, "total_pick": "OVER", "total_line": 8.5, "total_conf": 74.0, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "NORMAL", "wind_label": "IN from CF", "wind_speed": 8.5, "wind_component": -3.3, "temp_f": 77.0, "precip_prob": 5.0, "has_roof": true, "away_bp_era": 2.93, "home_bp_era": 4.92, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "822752", "away": "San Francisco Giants", "home": "Washington Nationals", "venue": "Nationals Park", "time": "22:45 UTC", "park_runs": 100.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.35, "home_rpg": 4.24, "away_ops": 0.697, "home_ops": 0.693, "away_form": 2.3, "home_form": 4.5, "exp_away": 4.239, "exp_home": 4.406, "exp_total": 8.64, "away_wp": 45.7, "home_wp": 54.3, "total_pick": "OVER", "total_line": 8.5, "total_conf": 52.0, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "WIND_IN", "wind_label": "IN from CF", "wind_speed": 7.8, "wind_component": -6.3, "temp_f": 81.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 4.17, "home_bp_era": 5.91, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "823397", "away": "Tampa Bay Rays", "home": "Pittsburgh Pirates", "venue": "PNC Park", "time": "22:45 UTC", "park_runs": 98.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.41, "home_rpg": 3.6, "away_ops": 0.714, "home_ops": 0.655, "away_form": 7.0, "home_form": 7.2, "exp_away": 4.747, "exp_home": 4.958, "exp_total": 9.71, "away_wp": 45.5, "home_wp": 54.5, "total_pick": "OVER", "total_line": 8.5, "total_conf": 67.3, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "NORMAL", "wind_label": "IN from CF", "wind_speed": 2.2, "wind_component": -1.6, "temp_f": 75.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 4.38, "home_bp_era": 3.27, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "823559", "away": "Kansas City Royals", "home": "New York Yankees", "venue": "Yankee Stadium", "time": "23:05 UTC", "park_runs": 105.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.02, "home_rpg": 5.24, "away_ops": 0.706, "home_ops": 0.787, "away_form": 3.7, "home_form": 5.2, "exp_away": 3.888, "exp_home": 5.552, "exp_total": 9.44, "away_wp": 31.8, "home_wp": 68.2, "total_pick": "OVER", "total_line": 8.5, "total_conf": 63.4, "rl_pick": "New York Yankees -1.5", "rl_team": "New York Yankees", "rl_conf": 56.6, "weather_flag": "WIND_IN", "wind_label": "IN from CF", "wind_speed": 13.8, "wind_component": -12.3, "temp_f": 68.0, "precip_prob": 9.0, "has_roof": true, "away_bp_era": 4.08, "home_bp_era": 3.68, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "823883", "away": "Milwaukee Brewers", "home": "Miami Marlins", "venue": "loanDepot park", "time": "23:10 UTC", "park_runs": 96.0, "park_tag": "Pitcher-Friendly", "away_sp": "TBD", "home_sp": "Janson Junk", "away_era": "4.20", "home_era": "4.49", "away_fip": "4.20", "home_fip": "3.01", "away_rpg": 4.97, "home_rpg": 4.38, "away_ops": 0.735, "home_ops": 0.707, "away_form": 3.7, "home_form": 6.0, "exp_away": 4.484, "exp_home": 4.745, "exp_total": 9.23, "away_wp": 44.9, "home_wp": 55.1, "total_pick": "OVER", "total_line": 8.5, "total_conf": 60.4, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "ROOF", "wind_label": "N/A", "wind_speed": 0, "wind_component": 0, "temp_f": 70.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 3.99, "home_bp_era": 4.15, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824778", "away": "Detroit Tigers", "home": "Boston Red Sox", "venue": "Fenway Park", "time": "23:15 UTC", "park_runs": 104.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "Ranger Suarez", "away_era": "4.20", "home_era": "3.30", "away_fip": "4.20", "home_fip": "2.97", "away_rpg": 4.68, "home_rpg": 4.85, "away_ops": 0.729, "home_ops": 0.745, "away_form": 4.7, "home_form": 5.0, "exp_away": 4.777, "exp_home": 4.934, "exp_total": 9.71, "away_wp": 46.0, "home_wp": 54.0, "total_pick": "OVER", "total_line": 8.5, "total_conf": 67.3, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "NORMAL", "wind_label": "IN from CF", "wind_speed": 3.0, "wind_component": -2.6, "temp_f": 52.0, "precip_prob": 6.0, "has_roof": true, "away_bp_era": 3.66, "home_bp_era": 4.55, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824207", "away": "St. Louis Cardinals", "home": "Houston Astros", "venue": "Daikin Park", "time": "00:10 UTC", "park_runs": 100.0, "park_tag": "Neutral", "away_sp": "Kyle Leahy", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.25, "home_rpg": 4.24, "away_ops": 0.693, "home_ops": 0.714, "away_form": 4.7, "home_form": 3.5, "exp_away": 5.156, "exp_home": 4.343, "exp_total": 9.5, "away_wp": 55.3, "home_wp": 44.7, "total_pick": "OVER", "total_line": 8.5, "total_conf": 64.3, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "ROOF", "wind_label": "N/A", "wind_speed": 0, "wind_component": 0, "temp_f": 70.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 4.94, "home_bp_era": 6.01, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "823720", "away": "Cincinnati Reds", "home": "Minnesota Twins", "venue": "Target Field", "time": "00:10 UTC", "park_runs": 98.0, "park_tag": "Neutral", "away_sp": "Brandon Williamson", "home_sp": "TBD", "away_era": "3.77", "home_era": "4.20", "away_fip": "6.15", "home_fip": "4.20", "away_rpg": 4.42, "home_rpg": 4.18, "away_ops": 0.706, "home_ops": 0.707, "away_form": 3.3, "home_form": 8.0, "exp_away": 3.981, "exp_home": 5.307, "exp_total": 9.29, "away_wp": 34.6, "home_wp": 65.4, "total_pick": "OVER", "total_line": 8.5, "total_conf": 61.3, "rl_pick": "Minnesota Twins -1.5", "rl_team": "Minnesota Twins", "rl_conf": 54.3, "weather_flag": "COLD", "wind_label": "IN from CF", "wind_speed": 13.9, "wind_component": -11.8, "temp_f": 40.0, "precip_prob": 3.0, "has_roof": true, "away_bp_era": 3.61, "home_bp_era": 4.26, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824373", "away": "Los Angeles Dodgers", "home": "Colorado Rockies", "venue": "Coors Field", "time": "00:40 UTC", "park_runs": 117.0, "park_tag": "Extreme Hitter Park", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 5.09, "home_rpg": 3.69, "away_ops": 0.768, "home_ops": 0.679, "away_form": 4.7, "home_form": 3.3, "exp_away": 5.674, "exp_home": 3.842, "exp_total": 9.52, "away_wp": 64.6, "home_wp": 35.4, "total_pick": "OVER", "total_line": 8.5, "total_conf": 64.6, "rl_pick": "Los Angeles Dodgers -1.5", "rl_team": "Los Angeles Dodgers", "rl_conf": 53.7, "weather_flag": "COLD", "wind_label": "IN from CF", "wind_speed": 10.5, "wind_component": -7.5, "temp_f": 37.0, "precip_prob": 7.0, "has_roof": true, "away_bp_era": 3.19, "home_bp_era": 4.0, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "824048", "away": "San Diego Padres", "home": "Los Angeles Angels", "venue": "Angel Stadium", "time": "01:38 UTC", "park_runs": 98.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.33, "home_rpg": 4.15, "away_ops": 0.711, "home_ops": 0.695, "away_form": 5.3, "home_form": 8.0, "exp_away": 4.629, "exp_home": 5.053, "exp_total": 9.68, "away_wp": 43.5, "home_wp": 56.5, "total_pick": "OVER", "total_line": 8.5, "total_conf": 66.9, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "NORMAL", "wind_label": "OUT to CF", "wind_speed": 9.3, "wind_component": 2.2, "temp_f": 74.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 3.35, "home_bp_era": 4.29, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "823152", "away": "Texas Rangers", "home": "Seattle Mariners", "venue": "T-Mobile Park", "time": "01:40 UTC", "park_runs": 99.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 4.22, "home_rpg": 4.73, "away_ops": 0.683, "home_ops": 0.74, "away_form": 5.8, "home_form": 3.8, "exp_away": 4.261, "exp_home": 4.159, "exp_total": 8.42, "away_wp": 48.6, "home_wp": 51.4, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 51.1, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "ROOF", "wind_label": "N/A", "wind_speed": 0, "wind_component": 0, "temp_f": 70.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 3.56, "home_bp_era": 3.2, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "825101", "away": "Toronto Blue Jays", "home": "Arizona Diamondbacks", "venue": "Chase Field", "time": "01:40 UTC", "park_runs": 101.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "Michael Soroka", "away_era": "4.20", "home_era": "4.42", "away_fip": "4.20", "home_fip": "3.55", "away_rpg": 4.93, "home_rpg": 4.88, "away_ops": 0.76, "home_ops": 0.758, "away_form": 3.7, "home_form": 6.3, "exp_away": 4.239, "exp_home": 5.701, "exp_total": 9.94, "away_wp": 34.3, "home_wp": 65.7, "total_pick": "OVER", "total_line": 8.5, "total_conf": 70.6, "rl_pick": "Arizona Diamondbacks -1.5", "rl_team": "Arizona Diamondbacks", "rl_conf": 54.6, "weather_flag": "ROOF", "wind_label": "N/A", "wind_speed": 0, "wind_component": 0, "temp_f": 70.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 4.48, "home_bp_era": 3.85, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}, {"game_id": "825019", "away": "Chicago White Sox", "home": "Athletics", "venue": "Sutter Health Park", "time": "01:40 UTC", "park_runs": 97.0, "park_tag": "Neutral", "away_sp": "TBD", "home_sp": "TBD", "away_era": "4.20", "home_era": "4.20", "away_fip": "4.20", "home_fip": "4.20", "away_rpg": 3.99, "home_rpg": 4.53, "away_ops": 0.675, "home_ops": 0.749, "away_form": 3.7, "home_form": 3.8, "exp_away": 3.86, "exp_home": 4.537, "exp_total": 8.4, "away_wp": 40.2, "home_wp": 59.8, "total_pick": "UNDER", "total_line": 8.5, "total_conf": 51.4, "rl_pick": "No strong run line play", "rl_team": null, "rl_conf": 0.0, "weather_flag": "NORMAL", "wind_label": "IN from CF", "wind_speed": 3.3, "wind_component": -3.1, "temp_f": 74.0, "precip_prob": 0, "has_roof": true, "away_bp_era": 5.02, "home_bp_era": 4.47, "lineup_confirmed": false, "away_lineup_ops": null, "home_lineup_ops": null}];
+const DATA_P2      = [{"n_legs": 2, "combined": 58.8, "payout": "+260", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Atlanta Braves @ Philadelphia Phillies"}]}, {"n_legs": 2, "combined": 56.1, "payout": "+260", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "OVER 8.5", "conf": 70.6, "tier": "LOCK", "game": "Toronto Blue Jays @ Arizona Diamondbacks"}]}, {"n_legs": 2, "combined": 54.2, "payout": "+260", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "New York Yankees ML", "conf": 68.2, "tier": "LOCK", "game": "Kansas City Royals @ New York Yankees"}]}, {"n_legs": 2, "combined": 53.5, "payout": "+260", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "OVER 8.5", "conf": 67.3, "tier": "STRONG", "game": "Tampa Bay Rays @ Pittsburgh Pirates"}]}, {"n_legs": 2, "combined": 53.5, "payout": "+260", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "OVER 8.5", "conf": 67.3, "tier": "STRONG", "game": "Detroit Tigers @ Boston Red Sox"}]}];
+const DATA_P3      = [{"n_legs": 3, "combined": 41.5, "payout": "+595", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Atlanta Braves @ Philadelphia Phillies"}, {"label": "OVER 8.5", "conf": 70.6, "tier": "LOCK", "game": "Toronto Blue Jays @ Arizona Diamondbacks"}]}, {"n_legs": 3, "combined": 40.1, "payout": "+595", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Atlanta Braves @ Philadelphia Phillies"}, {"label": "New York Yankees ML", "conf": 68.2, "tier": "LOCK", "game": "Kansas City Royals @ New York Yankees"}]}, {"n_legs": 3, "combined": 39.6, "payout": "+595", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Atlanta Braves @ Philadelphia Phillies"}, {"label": "OVER 8.5", "conf": 67.3, "tier": "STRONG", "game": "Tampa Bay Rays @ Pittsburgh Pirates"}]}, {"n_legs": 3, "combined": 39.6, "payout": "+595", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Atlanta Braves @ Philadelphia Phillies"}, {"label": "OVER 8.5", "conf": 67.3, "tier": "STRONG", "game": "Detroit Tigers @ Boston Red Sox"}]}, {"n_legs": 3, "combined": 39.3, "payout": "+595", "legs": [{"label": "Chicago Cubs ML", "conf": 79.4, "tier": "LOCK", "game": "New York Mets @ Chicago Cubs"}, {"label": "OVER 8.5", "conf": 74.0, "tier": "LOCK", "game": "Atlanta Braves @ Philadelphia Phillies"}, {"label": "OVER 8.5", "conf": 66.9, "tier": "STRONG", "game": "San Diego Padres @ Los Angeles Angels"}]}];
+const DATA_SCORES  = [];
+const DATA_PROPS    = [];
+const DATA_SCHEDULE = [{"game_id": "824693", "away_team": "New York Mets", "home_team": "Chicago Cubs", "away_record": "7-12", "away_streak": "L8", "away_last10": "2", "home_record": "9-9", "home_streak": "W2", "home_last10": "5", "venue": "Wrigley Field", "game_time_utc": "2026-04-17T18:20:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "824454", "away_team": "Baltimore Orioles", "home_team": "Cleveland Guardians", "away_record": "9-10", "away_streak": "L3", "away_last10": "6", "home_record": "11-9", "home_streak": "W1", "home_last10": "5", "venue": "Progressive Field", "game_time_utc": "2026-04-17T22:10:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "823476", "away_team": "Atlanta Braves", "home_team": "Philadelphia Phillies", "away_record": "12-7", "away_streak": "W2", "away_last10": "6", "home_record": "8-10", "home_streak": "L2", "home_last10": "3", "venue": "Citizens Bank Park", "game_time_utc": "2026-04-17T22:40:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "822752", "away_team": "San Francisco Giants", "home_team": "Washington Nationals", "away_record": "7-12", "away_streak": "W1", "away_last10": "4", "home_record": "9-10", "home_streak": "W1", "home_last10": "6", "venue": "Nationals Park", "game_time_utc": "2026-04-17T22:45:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "823397", "away_team": "Tampa Bay Rays", "home_team": "Pittsburgh Pirates", "away_record": "11-7", "away_streak": "W6", "away_last10": "8", "home_record": "11-8", "home_streak": "L1", "home_last10": "5", "venue": "PNC Park", "game_time_utc": "2026-04-17T22:45:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "823559", "away_team": "Kansas City Royals", "home_team": "New York Yankees", "away_record": "7-12", "away_streak": "L4", "away_last10": "3", "home_record": "10-9", "home_streak": "L1", "home_last10": "3", "venue": "Yankee Stadium", "game_time_utc": "2026-04-17T23:05:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "823883", "away_team": "Milwaukee Brewers", "home_team": "Miami Marlins", "away_record": "10-8", "away_streak": "W2", "away_last10": "4", "home_record": "9-10", "home_streak": "L2", "home_last10": "3", "venue": "loanDepot park", "game_time_utc": "2026-04-17T23:10:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "824778", "away_team": "Detroit Tigers", "home_team": "Boston Red Sox", "away_record": "10-9", "away_streak": "W6", "away_last10": "6", "home_record": "7-11", "home_streak": "W1", "home_last10": "5", "venue": "Fenway Park", "game_time_utc": "2026-04-17T23:15:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "824207", "away_team": "St. Louis Cardinals", "home_team": "Houston Astros", "away_record": "10-8", "away_streak": "W2", "away_last10": "6", "home_record": "8-12", "home_streak": "L1", "home_last10": "2", "venue": "Daikin Park", "game_time_utc": "2026-04-18T00:10:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "823720", "away_team": "Cincinnati Reds", "home_team": "Minnesota Twins", "away_record": "11-8", "away_streak": "L1", "away_last10": "5", "home_record": "11-8", "home_streak": "L1", "home_last10": "8", "venue": "Target Field", "game_time_utc": "2026-04-18T00:10:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "824373", "away_team": "Los Angeles Dodgers", "home_team": "Colorado Rockies", "away_record": "14-4", "away_streak": "W3", "away_last10": "8", "home_record": "7-12", "home_streak": "W1", "home_last10": "4", "venue": "Coors Field", "game_time_utc": "2026-04-18T00:40:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "824048", "away_team": "San Diego Padres", "home_team": "Los Angeles Angels", "away_record": "13-6", "away_streak": "W8", "away_last10": "9", "home_record": "10-10", "home_streak": "W1", "home_last10": "5", "venue": "Angel Stadium", "game_time_utc": "2026-04-18T01:38:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "823152", "away_team": "Texas Rangers", "home_team": "Seattle Mariners", "away_record": "10-9", "away_streak": "W1", "away_last10": "6", "home_record": "8-12", "home_streak": "L3", "home_last10": "4", "venue": "T-Mobile Park", "game_time_utc": "2026-04-18T01:40:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "825101", "away_team": "Toronto Blue Jays", "home_team": "Arizona Diamondbacks", "away_record": "7-11", "away_streak": "L2", "away_last10": "3", "home_record": "11-8", "home_streak": "W2", "home_last10": "7", "venue": "Chase Field", "game_time_utc": "2026-04-18T01:40:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}, {"game_id": "825019", "away_team": "Chicago White Sox", "home_team": "Athletics", "away_record": "6-13", "away_streak": "L3", "away_last10": "2", "home_record": "10-9", "home_streak": "L1", "home_last10": "7", "venue": "Sutter Health Park", "game_time_utc": "2026-04-18T01:40:00Z", "status": "Upcoming", "away_score": "", "home_score": "", "away_sp": "TBD", "home_sp": "TBD"}];
+
+// ── State ────────────────────────────────────────────────────────────────────
+let filterType = "all", filterTier = "all", filterTeam = "";
+let showParlay = 2;
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+document.getElementById("dateStr").textContent =
+  new Date(DATA_DATE + "T12:00:00").toLocaleDateString("en-US",
+    {weekday:"long",year:"numeric",month:"long",day:"numeric"});
+
+document.getElementById("gameCount").textContent = DATA_GAMES.length;
+document.getElementById("pickCount").textContent = DATA_PICKS.length;
+document.getElementById("lockCount").textContent = DATA_PICKS.filter(p=>p.tier==="LOCK").length;
+if(DATA_PICKS.length){
+  document.getElementById("topPick").textContent =
+    DATA_PICKS[0].label + " (" + DATA_PICKS[0].conf + "%)";
+}
+
+// ── Render Picks ─────────────────────────────────────────────────────────────
+function renderPicks(){
+  const grid = document.getElementById("picksGrid");
+  grid.innerHTML = "";
+  let visible = 0;
+  DATA_PICKS.forEach(p=>{
+    const show = (filterType==="all" || p.type===filterType)
+              && (filterTier==="all" || p.tier===filterTier)
+              && (!filterTeam || p.away.toLowerCase().includes(filterTeam)
+                             || p.home.toLowerCase().includes(filterTeam)
+                             || p.team.toLowerCase().includes(filterTeam));
+    if(!show) return;
+    visible++;
+    const w = p.conf; // already %
+    grid.innerHTML += `
+      <div class="pick-card tier-${p.tier}" data-type="${p.type}" data-tier="${p.tier}">
+        <div class="pick-top">
+          <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"O/U":p.type}</span>
+          <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
+        </div>
+        <div class="pick-label">${p.label}</div>
+        <div class="pick-game">${p.game}</div>
+        <div class="conf-row">
+          <div class="conf-bar-wrap">
+            <div class="conf-bar bar-${p.tier}" style="width:${w}%"></div>
+          </div>
+          <span class="conf-pct pct-${p.tier}">${w}%</span>
+        </div>
+        <div class="pick-reasoning">${p.reasoning}</div>
+      </div>`;
+  });
+  document.getElementById("pickResults").innerHTML =
+    `Showing <b>${visible}</b> of <b>${DATA_PICKS.length}</b> picks`;
+  if(visible===0) grid.innerHTML = `<div class="empty">No picks match the current filters.</div>`;
+}
+
+function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":"⭐"; }
+
+// ── Render Parlays ────────────────────────────────────────────────────────────
+function renderParlays(){
+  const data = showParlay===2 ? DATA_P2 : DATA_P3;
+  const grid = document.getElementById("parlayGrid");
+  grid.innerHTML = "";
+  if(!data.length){
+    grid.innerHTML=`<div class="empty">Not enough qualified legs for ${showParlay}-leg parlays today.</div>`;
+    return;
+  }
+  data.forEach((par,i)=>{
+    const legsHtml = par.legs.map(l=>`
+      <div class="parlay-leg">
+        <span class="leg-conf leg-${l.tier}">${l.conf}%</span>
+        <div class="leg-info">
+          <div class="leg-label">${l.label}</div>
+          <div class="leg-game">${l.game}</div>
+        </div>
+      </div>`).join("");
+    grid.innerHTML += `
+      <div class="parlay-card">
+        <div class="parlay-header">
+          <span class="parlay-tag">Parlay ${i+1} &bull; ${par.n_legs} Legs</span>
+          <span class="parlay-payout">${par.payout}</span>
+        </div>
+        <div class="parlay-conf">${par.combined}%<span>combined confidence</span></div>
+        <div class="parlay-legs">${legsHtml}</div>
+      </div>`;
+  });
+}
+
+// ── Render Games ─────────────────────────────────────────────────────────────
+function parkClass(tag){
+  if(tag.includes("Hitter")) return "park-hitter";
+  if(tag.includes("Pitcher")) return "park-pitcher";
+  return "park-neutral";
+}
+
+function weatherDisplay(g){
+  if(g.has_roof) return {text:"Retractable Roof / Dome", color:"var(--sub)", icon:"🏟️"};
+  const flag = g.weather_flag;
+  const temp = g.temp_f + "°F";
+  const precip = g.precip_prob > 10 ? ` | ${g.precip_prob}% precip` : "";
+  if(flag==="WIND_OUT"){
+    const mph = Math.abs(g.wind_component).toFixed(1);
+    return {text:`${temp} | Wind ${mph} mph blowing OUT (+${(g.wind_component*0.04*0.5).toFixed(2)} runs)${precip}`, color:"#ef9a9a", icon:"💨"};
+  }
+  if(flag==="WIND_IN"){
+    const mph = Math.abs(g.wind_component).toFixed(1);
+    return {text:`${temp} | Wind ${mph} mph blowing IN (suppresses scoring)${precip}`, color:"#90caf9", icon:"🌬️"};
+  }
+  if(flag==="COLD"){
+    return {text:`${temp} — Cold conditions suppress scoring${precip}`, color:"#90caf9", icon:"🥶"};
+  }
+  if(flag==="PRECIP"){
+    return {text:`${temp} | ${g.precip_prob}% chance of rain`, color:"#ffcc80", icon:"🌧️"};
+  }
+  // NORMAL
+  if(g.wind_speed > 5){
+    const dir = g.wind_label || "";
+    return {text:`${temp} | Wind ${g.wind_speed} mph ${dir}`, color:"var(--sub)", icon:"⛅"};
+  }
+  return {text:`${temp} | Clear conditions`, color:"var(--sub)", icon:"☀️"};
+}
+
+function renderGames(){
+  const grid = document.getElementById("gamesGrid");
+  grid.innerHTML = "";
+  DATA_GAMES.forEach(g=>{
+    const homeW    = g.home_wp, awayW = g.away_wp;
+    const totalDir = g.exp_total > g.total_line ? "↑ OVER" : "↓ UNDER";
+    const totalCol = g.exp_total > g.total_line ? "color:var(--red)" : "color:var(--blue)";
+    const wx       = weatherDisplay(g);
+
+    // Lineup OPS display
+    const lineupRow = g.lineup_confirmed
+      ? `<div class="game-row"><span class="row-label">Lineup OPS</span>
+           <span class="row-val" style="color:var(--green)">
+             ${g.away} <b>${g.away_lineup_ops||"—"}</b> &nbsp;|&nbsp;
+             ${g.home} <b>${g.home_lineup_ops||"—"}</b>
+             <span style="color:var(--sub);font-size:.68rem"> (confirmed)</span>
+           </span></div>`
+      : "";
+
+    grid.innerHTML += `
+      <div class="game-card">
+        <div class="game-header">
+          <span class="matchup">${g.away} @ ${g.home}</span>
+          <span class="game-time">${g.time}</span>
+        </div>
+        <div class="game-body">
+          <div class="game-row">
+            <span class="row-label">Park</span>
+            <span class="row-val">${g.venue.length>30?g.venue.slice(0,28)+"…":g.venue}
+              <span class="park-badge ${parkClass(g.park_tag)}">${g.park_tag} (${g.park_runs})</span>
+            </span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Weather</span>
+            <span class="row-val" style="color:${wx.color}">${wx.icon} ${wx.text}</span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Away SP</span>
+            <span class="row-val">${g.away_sp} &bull; ERA ${g.away_era} / FIP ${g.away_fip}</span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Home SP</span>
+            <span class="row-val">${g.home_sp} &bull; ERA ${g.home_era} / FIP ${g.home_fip}</span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Bullpen</span>
+            <span class="row-val">${g.away} BP ERA ${g.away_bp_era} &nbsp;|&nbsp; ${g.home} BP ERA ${g.home_bp_era}</span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Offense</span>
+            <span class="row-val">${g.away} ${g.away_rpg} RPG &nbsp;|&nbsp; ${g.home} ${g.home_rpg} RPG</span>
+          </div>
+          ${lineupRow}
+          <div class="game-row">
+            <span class="row-label">Projected</span>
+            <span class="row-val">${g.away} <b>${g.exp_away}</b> &nbsp;|&nbsp; ${g.home} <b>${g.exp_home}</b></span>
+          </div>
+          <div class="game-row">
+            <span class="row-label">Total</span>
+            <span class="row-val">
+              <b style="${totalCol}">${totalDir}</b> &nbsp;
+              Model ${g.exp_total} vs ${g.total_line} line &nbsp;
+              <span style="color:var(--sub)">(${g.total_conf}% conf)</span>
+            </span>
+          </div>
+          ${g.rl_team ? `<div class="game-row"><span class="row-label">Run Line</span>
+            <span class="row-val">${g.rl_pick} &nbsp;<span style="color:var(--sub)">(${g.rl_conf}% conf)</span></span></div>` : ""}
+          <div style="margin-top:6px">
+            <div style="display:flex;justify-content:space-between;font-size:.76rem;color:var(--sub);margin-bottom:4px">
+              <span>${g.away} ${g.away_wp}%</span><span>${g.home} ${g.home_wp}%</span>
+            </div>
+            <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.06)">
+              <div style="width:${g.away_wp}%;background:var(--blue)"></div>
+              <div style="width:${g.home_wp}%;background:var(--green)"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--sub);margin-top:3px">
+              <span>Away</span><span>Home</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  });
+}
+
+// ── Section Nav ───────────────────────────────────────────────────────────────
+document.querySelectorAll(".section-nav-btn").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    document.querySelectorAll(".section-nav-btn").forEach(b=>b.classList.remove("active"));
+    document.querySelectorAll(".section-panel").forEach(p=>p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById(btn.dataset.panel).classList.add("active");
+  });
+});
+
+// ── Render Today's Games ──────────────────────────────────────────────────────
+function localGameTime(utcStr){
+  if(!utcStr) return "TBD";
+  try{
+    const d = new Date(utcStr.endsWith("Z") ? utcStr : utcStr + "Z");
+    return d.toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit", timeZoneName:"short"});
+  } catch(e){ return utcStr; }
+}
+
+function renderSchedule(){
+  const grid = document.getElementById("scheduleGrid");
+  grid.innerHTML = "";
+  if(!DATA_SCHEDULE || DATA_SCHEDULE.length === 0){
+    grid.innerHTML = `<div class="empty">No games found for today.</div>`;
+    return;
+  }
+  DATA_SCHEDULE.forEach(g=>{
+    const isLive    = g.status.startsWith("Live");
+    const isFinal   = g.status === "Final";
+    const isUpcoming= g.status === "Upcoming";
+
+    const statusClass = isLive ? "status-live" : isFinal ? "status-final" : "status-upcoming";
+    const statusLabel = isLive
+      ? `<span class="live-dot"></span> LIVE &bull; ${g.status.replace("Live — ","")}`
+      : isFinal ? "⚾ Final" : `⏰ ${localGameTime(g.game_time_utc)}`;
+
+    // Score display
+    let awayScoreHtml = "", homeScoreHtml = "", vsHtml = "";
+    if(isFinal || isLive){
+      const awayW = parseInt(g.away_score) > parseInt(g.home_score);
+      const homeW = parseInt(g.home_score) > parseInt(g.away_score);
+      awayScoreHtml = `<div class="sched-score${awayW?' winner':''}">${g.away_score}</div>`;
+      homeScoreHtml = `<div class="sched-score${homeW?' winner':''}">${g.home_score}</div>`;
+      vsHtml        = `<div class="sched-vs">-</div>`;
+    } else {
+      vsHtml = `<div><div class="sched-vs">@</div><div class="sched-time">${localGameTime(g.game_time_utc)}</div></div>`;
+    }
+
+    const awayStreak = g.away_streak ? ` &bull; ${g.away_streak}` : "";
+    const homeStreak = g.home_streak ? ` &bull; ${g.home_streak}` : "";
+    const awayL10    = g.away_last10 ? ` (L10: ${g.away_last10})` : "";
+    const homeL10    = g.home_last10 ? ` (L10: ${g.home_last10})` : "";
+
+    const venueTrunc = g.venue.length > 28 ? g.venue.slice(0,26)+"…" : g.venue;
+
+    grid.innerHTML += `
+      <div class="sched-card">
+        <div class="sched-status-bar ${statusClass}">${statusLabel}</div>
+        <div class="sched-matchup">
+          <div class="sched-team-row">
+            <div class="sched-team-info">
+              <div class="sched-team-name">${g.away_team}</div>
+              <div class="sched-team-record">${g.away_record}${awayStreak}</div>
+              ${awayL10 ? `<div class="sched-team-streak">${awayL10}</div>` : ""}
+              <div class="sched-at-label">Away</div>
+            </div>
+            <div class="sched-score-block">
+              ${awayScoreHtml}
+              ${vsHtml}
+              ${homeScoreHtml}
+            </div>
+            <div class="sched-team-info" style="text-align:right;align-items:flex-end">
+              <div class="sched-team-name">${g.home_team}</div>
+              <div class="sched-team-record">${g.home_record}${homeStreak}</div>
+              ${homeL10 ? `<div class="sched-team-streak">${homeL10}</div>` : ""}
+              <div class="sched-at-label">Home</div>
+            </div>
+          </div>
+        </div>
+        <div class="sched-divider"></div>
+        <div class="sched-pitchers">
+          <span>SP: ${g.away_sp||"TBD"}</span>
+          <span>SP: ${g.home_sp||"TBD"}</span>
+        </div>
+        <div class="sched-divider"></div>
+        <div class="sched-footer">
+          <span class="sched-time">${isFinal||isLive ? g.status : localGameTime(g.game_time_utc)}</span>
+          <span class="sched-venue">${venueTrunc}</span>
+        </div>
+      </div>`;
+  });
+}
+
+// ── Render Props ──────────────────────────────────────────────────────────────
+let propFilterType = "all", propFilterTier = "all";
+
+function propIcon(t){ return t==="HR"?"⚡":t==="HITS"?"🎯":"🔥"; }
+function propLabel(t,line){
+  if(t==="HR")   return `HR Over ${line}`;
+  if(t==="HITS") return `Hits Over ${line}`;
+  if(t==="K")    return `Ks Over ${line}`;
+  return `Over ${line}`;
+}
+
+function renderProps(){
+  const grid = document.getElementById("propsGrid");
+  grid.innerHTML = "";
+  let visible = 0;
+  DATA_PROPS.forEach(p=>{
+    const show = (propFilterType==="all" || p.prop_type===propFilterType)
+              && (propFilterTier==="all" || p.tier===propFilterTier);
+    if(!show) return;
+    visible++;
+    const label    = propLabel(p.prop_type, p.line);
+    const overUnder= p.proj >= p.line ? "OVER" : "UNDER";
+    const projColor= overUnder==="OVER" ? "var(--green)" : "var(--blue)";
+    const orderStr = p.batting_order ? ` &bull; Bats ${p.batting_order}` : "";
+    const sideStr  = p.side==="pitcher" ? " (SP)" : (p.side ? ` (${p.side})` : "");
+    grid.innerHTML += `
+      <div class="prop-card tier-${p.tier}">
+        <div class="prop-top">
+          <span class="prop-type-badge badge-${p.prop_type}">${propIcon(p.prop_type)} ${p.prop_type}</span>
+          <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
+        </div>
+        <div class="prop-player">${p.player_name}${sideStr}</div>
+        <div class="prop-game">${p.game}${orderStr}</div>
+        <div class="prop-line-row">
+          <div>
+            <div class="prop-line-label">Line</div>
+            <div class="prop-line-val">${label}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="prop-line-label">Projection</div>
+            <div class="prop-proj-val" style="color:${projColor}">${p.proj} (${overUnder})</div>
+          </div>
+        </div>
+        <div class="conf-row">
+          <div class="conf-bar-wrap">
+            <div class="conf-bar bar-${p.tier}" style="width:${p.conf}%"></div>
+          </div>
+          <span class="conf-pct pct-${p.tier}">${p.conf}%</span>
+        </div>
+        <div class="prop-reasoning">${p.reasoning}</div>
+      </div>`;
+  });
+  document.getElementById("propResults").innerHTML =
+    `Showing <b>${visible}</b> of <b>${DATA_PROPS.length}</b> props`;
+  if(!visible){
+    const msg = DATA_PROPS.length===0
+      ? "Player props require confirmed lineups — check back closer to game time."
+      : "No props match the current filters.";
+    grid.innerHTML = `<div class="empty">${msg}</div>`;
+  }
+}
+
+// ── Filter Handlers ───────────────────────────────────────────────────────────
+document.querySelectorAll(".filter-btn[data-pgroup]").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    const group = btn.dataset.pgroup, val = btn.dataset.pval;
+    document.querySelectorAll(`.filter-btn[data-pgroup="${group}"]`).forEach(b=>{
+      b.classList.remove("active","active-gold","active-blue");
+    });
+    if(val==="LOCK") btn.classList.add("active-gold");
+    else if(val==="STRONG") btn.classList.add("active-blue");
+    else btn.classList.add("active");
+    if(group==="ptype") propFilterType = val;
+    else                propFilterTier = val;
+    renderProps();
+  });
+});
+
+document.querySelectorAll(".filter-btn[data-group]").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    const group = btn.dataset.group, val = btn.dataset.val;
+    document.querySelectorAll(`.filter-btn[data-group="${group}"]`).forEach(b=>{
+      b.classList.remove("active","active-gold","active-blue");
+    });
+    if(val==="LOCK") btn.classList.add("active-gold");
+    else if(val==="STRONG") btn.classList.add("active-blue");
+    else btn.classList.add("active");
+    if(group==="type") filterType = val;
+    else               filterTier = val;
+    renderPicks();
+  });
+});
+
+document.getElementById("teamSearch").addEventListener("input", e=>{
+  filterTeam = e.target.value.trim().toLowerCase();
+  renderPicks();
+});
+
+document.querySelectorAll(".section-tab[data-parlay]").forEach(tab=>{
+  tab.addEventListener("click",()=>{
+    document.querySelectorAll(".section-tab").forEach(t=>t.classList.remove("active"));
+    tab.classList.add("active");
+    showParlay = parseInt(tab.dataset.parlay);
+    renderParlays();
+  });
+});
+
+// ── Refresh Button (only shown when served locally) ───────────────────────────
+const LOCAL_API = "http://localhost:8765";
+const isLocal   = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+
+if(isLocal){
+  document.getElementById("refreshBtn").style.display = "inline-flex";
+}
+
+async function doRefresh(){
+  const btn    = document.getElementById("refreshBtn");
+  const icon   = document.getElementById("refreshIcon");
+  const status = document.getElementById("refreshStatus");
+
+  btn.disabled = true;
+  icon.classList.add("spin");
+  status.style.color = "var(--sub)";
+  status.textContent = "Running pipeline… this takes about 30 seconds";
+
+  try{
+    const res = await fetch(LOCAL_API + "/refresh", {method:"GET"});
+    if(res.ok){
+      status.style.color = "var(--green)";
+      status.textContent = "✓ Done! Reloading picks...";
+      setTimeout(()=> location.reload(), 1200);
+    } else {
+      const msg = await res.text();
+      status.style.color = "var(--red)";
+      status.textContent = "Error: " + msg.slice(0,120);
+      btn.disabled = false;
+      icon.classList.remove("spin");
+    }
+  } catch(e){
+    status.style.color = "#ef9a9a";
+    status.textContent = "Could not reach local server. Is serve_picks.py running?";
+    btn.disabled = false;
+    icon.classList.remove("spin");
+  }
+}
+
+// ── Scores Ticker ─────────────────────────────────────────────────────────────
+function renderTicker(){
+  const track = document.getElementById("tickerTrack");
+  if(!DATA_SCORES || DATA_SCORES.length === 0){
+    track.innerHTML = `<span class="ticker-empty">No completed games yet today — check back later</span>`;
+    return;
+  }
+  // Build items twice so the loop is seamless
+  let html = "";
+  for(let pass=0; pass<2; pass++){
+    DATA_SCORES.forEach(s=>{
+      const awayWon  = parseInt(s.away_score) > parseInt(s.home_score);
+      const liveStyle= s.is_live ? "color:#ff6b35;animation:pulse 1.5s infinite" : "";
+      const liveClass= s.is_live ? "ticker-live" : "ticker-final";
+      html += `
+        <div class="ticker-item">
+          <span class="${awayWon?'ticker-score win':'ticker-score loss'}">${s.away_city} ${s.away_score}</span>
+          <span style="color:var(--sub)">@</span>
+          <span class="${!awayWon?'ticker-score win':'ticker-score loss'}">${s.home_city} ${s.home_score}</span>
+          <span class="${liveClass}" style="${liveStyle}">${s.label}</span>
+        </div>`;
+    });
+  }
+  track.innerHTML = html;
+  // Adjust animation speed based on number of items
+  const duration = Math.max(20, DATA_SCORES.length * 5);
+  track.style.animationDuration = duration + "s";
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+renderTicker();
+renderPicks();
+renderParlays();
+renderSchedule();
+renderGames();
+renderProps();
+</script>
+</body>
+</html>
