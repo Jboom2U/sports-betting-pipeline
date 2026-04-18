@@ -115,23 +115,107 @@ def prep_scores_ticker(scores: list) -> list:
     return out
 
 
-def prep_picks(picks):
+def prep_picks(picks, kalshi_data: dict = None):
+    """
+    Serialize picks for HTML embedding.
+    Adds warning flags and Kalshi consensus signals when available.
+
+    Warning flags:
+      tbd_sp        — either starting pitcher is TBD
+      thin_edge     — TOTAL pick with <0.8 run edge
+      heavy_fav     — ML pick where model conf implies >67% (~-200 or worse)
+      unconfirmed   — lineup not confirmed at time of HTML generation
+
+    Kalshi fields:
+      kalshi_prob   — Kalshi implied win probability for picked team (0-100)
+      kalshi_signal — AGREE / DISAGREE / NEUTRAL
+    """
+    import re as _re
     out = []
     for p in picks:
-        gd = p.get("game_data", {})
+        gd      = p.get("game_data", {})
+        ptype   = p["type"]
+        conf    = round(p["conf"] * 100, 1)
+        reasoning = p["reasoning"]
+
+        # ── Warning flags ─────────────────────────────────────────────────
+        away_sp = gd.get("away_sp", "TBD") or "TBD"
+        home_sp = gd.get("home_sp", "TBD") or "TBD"
+        tbd_sp  = (away_sp.strip().upper() == "TBD" or
+                   home_sp.strip().upper() == "TBD")
+
+        # Thin edge: TOTAL picks where run edge < 0.8
+        thin_edge = False
+        if ptype == "TOTAL":
+            m = _re.search(r'\(([\d.]+)\s*run\s*edge\)', reasoning, _re.IGNORECASE)
+            if m:
+                edge = float(m.group(1))
+                thin_edge = edge < 0.8
+
+        # Heavy favorite: ML conf implies worse than -200 odds (>67% implied)
+        heavy_fav = (ptype == "ML" and p["conf"] >= 0.70)
+
+        # Unconfirmed lineup
+        unconfirmed = not bool(gd.get("lineup_confirmed", False))
+
+        # ── Kalshi signal ─────────────────────────────────────────────────
+        kalshi_prob   = None
+        kalshi_signal = None
+        if kalshi_data:
+            away_team = gd.get("away_team", "")
+            home_team = gd.get("home_team", "")
+            key = tuple(sorted([away_team, home_team]))
+            kd  = kalshi_data.get(key)
+            if kd:
+                # Determine Kalshi prob for the PICKED team
+                if ptype in ("ML", "RL"):
+                    team_picked = p["team"].lower()
+                    if team_picked in kd["away_team"].lower() or \
+                       kd["away_team"].lower() in team_picked:
+                        kp = kd["kalshi_away_prob"]
+                    else:
+                        kp = kd["kalshi_home_prob"]
+                elif ptype == "TOTAL":
+                    # For totals: if model says OVER and Kalshi total_prob > 0.5 → AGREE
+                    # Use home team win prob as a proxy (imperfect but informative)
+                    kp = kd["kalshi_home_prob"]  # placeholder
+                else:
+                    kp = None
+
+                if kp is not None:
+                    kalshi_prob = round(kp * 100, 1)
+                    # Signal
+                    model_wp  = p["conf"]
+                    diff      = abs(model_wp - kp)
+                    same_side = (model_wp > 0.50) == (kp > 0.50)
+                    if diff <= 0.04:
+                        kalshi_signal = "NEUTRAL"
+                    elif same_side:
+                        kalshi_signal = "AGREE"
+                    else:
+                        kalshi_signal = "DISAGREE"
+
         out.append({
-            "type":      p["type"],
-            "label":     p["label"],
-            "team":      p["team"],
-            "conf":      round(p["conf"] * 100, 1),
-            "tier":      p["tier"],
-            "game":      p["game"],
-            "game_id":   p["game_id"],
-            "venue":     p["venue"],
-            "reasoning": p["reasoning"],
-            "exp_total": p["exp_total"],
-            "away":      gd.get("away_team", ""),
-            "home":      gd.get("home_team", ""),
+            "type":           ptype,
+            "label":          p["label"],
+            "team":           p["team"],
+            "conf":           conf,
+            "tier":           p["tier"],
+            "game":           p["game"],
+            "game_id":        p["game_id"],
+            "venue":          p["venue"],
+            "reasoning":      reasoning,
+            "exp_total":      p["exp_total"],
+            "away":           gd.get("away_team", ""),
+            "home":           gd.get("home_team", ""),
+            # Warning flags
+            "tbd_sp":         tbd_sp,
+            "thin_edge":      thin_edge,
+            "heavy_fav":      heavy_fav,
+            "unconfirmed":    unconfirmed,
+            # Kalshi
+            "kalshi_prob":    kalshi_prob,
+            "kalshi_signal":  kalshi_signal,
         })
     return out
 
@@ -331,6 +415,48 @@ def prep_parlays(parlays):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# KALSHI + ANALYSIS LOADERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def load_kalshi(date: str) -> dict:
+    """
+    Load Kalshi market data for date. Returns dict keyed by sorted team tuple.
+    Returns empty dict if Kalshi scraper hasn't been configured/run yet.
+    """
+    try:
+        from scrapers.mlb_kalshi_scraper import load_kalshi_for_date
+        data = load_kalshi_for_date(date)
+        if data:
+            log.info(f"Kalshi data loaded: {len(data)} markets")
+        return data
+    except Exception:
+        return {}
+
+
+def load_yesterday_analysis(date: str) -> dict:
+    """
+    Load the most recent analysis JSON (for yesterday's picks) to show in
+    the 'Yesterday' panel.  Returns empty dict if not yet generated.
+    """
+    import glob as _glob
+    from datetime import datetime as _dt, timedelta as _td
+
+    # Try yesterday first, then walk back up to 3 days
+    for days_back in range(1, 4):
+        check = (_dt.strptime(date, "%Y-%m-%d") - _td(days=days_back)).strftime("%Y-%m-%d")
+        path = os.path.join(PICKS_DIR, f"mlb_analysis_{check}.json")
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                log.info(f"Yesterday's analysis loaded: {path}")
+                return data
+            except Exception:
+                pass
+    return {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HTML TEMPLATE
 # ─────────────────────────────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
@@ -443,6 +569,51 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   color:var(--sub);margin-bottom:16px;display:flex;align-items:center;gap:8px;
 }
 .section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* ── WARNING FLAGS ── */
+.warn-row{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
+.warn-badge{
+  font-size:.62rem;font-weight:700;padding:2px 7px;border-radius:4px;
+  letter-spacing:.4px;text-transform:uppercase;
+}
+.warn-tbd    {background:rgba(255,152,0,.15);color:#ffb74d;border:1px solid rgba(255,152,0,.3)}
+.warn-thin   {background:rgba(239,83,80,.12);color:#ef9a9a;border:1px solid rgba(239,83,80,.25)}
+.warn-heavy  {background:rgba(171,71,188,.15);color:#ce93d8;border:1px solid rgba(171,71,188,.3)}
+.warn-lineup {background:rgba(255,255,255,.06);color:var(--sub);border:1px solid var(--border)}
+
+/* ── KALSHI SIGNAL ── */
+.kalshi-row{
+  display:flex;align-items:center;gap:8px;
+  margin-top:8px;padding:5px 8px;border-radius:6px;
+  background:rgba(255,255,255,.03);border:1px solid var(--border);
+  font-size:.72rem;
+}
+.kalshi-label{color:var(--sub);font-weight:600}
+.kalshi-prob {font-weight:700;color:var(--text)}
+.signal-AGREE    {color:#00e676;font-weight:700}
+.signal-DISAGREE {color:#ef5350;font-weight:700}
+.signal-NEUTRAL  {color:var(--sub);font-weight:600}
+
+/* ── YESTERDAY PANEL ── */
+.yesterday-banner{
+  background:linear-gradient(135deg,rgba(13,23,46,.9),rgba(13,27,46,.9));
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:18px 22px;margin-bottom:28px;
+}
+.yesterday-title{
+  font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+  color:var(--sub);margin-bottom:12px;display:flex;align-items:center;gap:8px;
+}
+.yesterday-stats{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px}
+.yday-stat{text-align:center}
+.yday-num{font-size:1.5rem;font-weight:800;color:var(--text)}
+.yday-lbl{font-size:.7rem;color:var(--sub);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.yday-wins   .yday-num{color:var(--green)}
+.yday-losses .yday-num{color:var(--red)}
+.yday-roi    .yday-num{color:var(--gold)}
+.yday-findings{display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--border);padding-top:10px;margin-top:4px}
+.yday-finding{font-size:.74rem;color:var(--sub);line-height:1.5}
+.yday-finding.warn{color:#ffb74d}
 
 /* ── PICKS GRID ── */
 .picks-grid{
@@ -742,10 +913,12 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <button class="section-nav-btn" data-panel="panel-schedule">📅 Today's Games</button>
     <button class="section-nav-btn" data-panel="panel-props">👤 Player Props</button>
     <button class="section-nav-btn" data-panel="panel-games">📊 Game Breakdown</button>
+    <button class="section-nav-btn" data-panel="panel-yesterday" id="yesterdayTab" style="display:none">📈 Yesterday</button>
   </div>
 
   <!-- PANEL: GAME PICKS -->
   <div class="section-panel active" id="panel-picks">
+    <div id="yesterdayBanner"></div>
     <div class="section-title">🎯 Individual Picks</div>
     <div class="results-count" id="pickResults"></div>
     <div class="picks-grid" id="picksGrid"></div>
@@ -786,18 +959,24 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="games-grid" id="gamesGrid"></div>
   </div>
 
+  <!-- PANEL: YESTERDAY'S RESULTS -->
+  <div class="section-panel" id="panel-yesterday">
+    <div id="yesterdayFull"></div>
+  </div>
+
 </div>
 
 <script>
 // ── Embedded Data ────────────────────────────────────────────────────────────
-const DATA_DATE    = "__DATE__";
-const DATA_PICKS   = __PICKS__;
-const DATA_GAMES   = __GAMES__;
-const DATA_P2      = __P2__;
-const DATA_P3      = __P3__;
-const DATA_SCORES  = __SCORES__;
-const DATA_PROPS    = __PROPS__;
-const DATA_SCHEDULE = __SCHEDULE__;
+const DATA_DATE      = "__DATE__";
+const DATA_PICKS     = __PICKS__;
+const DATA_GAMES     = __GAMES__;
+const DATA_P2        = __P2__;
+const DATA_P3        = __P3__;
+const DATA_SCORES    = __SCORES__;
+const DATA_PROPS     = __PROPS__;
+const DATA_SCHEDULE  = __SCHEDULE__;
+const DATA_YESTERDAY = __YESTERDAY__;
 
 // ── State ────────────────────────────────────────────────────────────────────
 let filterType = "all", filterTier = "all", filterTeam = "";
@@ -829,7 +1008,34 @@ function renderPicks(){
                              || p.team.toLowerCase().includes(filterTeam));
     if(!show) return;
     visible++;
-    const w = p.conf; // already %
+
+    // Confidence bar — scaled from 50% baseline so visual = edge above coin flip
+    const barPct = Math.min(100, Math.max(0, (p.conf - 50) * 2));
+
+    // Warning badges
+    let warnHtml = "";
+    const warns = [];
+    if(p.tbd_sp)      warns.push(`<span class="warn-badge warn-tbd">⚠ TBD Starter</span>`);
+    if(p.thin_edge)   warns.push(`<span class="warn-badge warn-thin">Thin Edge</span>`);
+    if(p.heavy_fav)   warns.push(`<span class="warn-badge warn-heavy">Heavy Fav</span>`);
+    if(p.unconfirmed) warns.push(`<span class="warn-badge warn-lineup">Lineups TBD</span>`);
+    if(warns.length)  warnHtml = `<div class="warn-row">${warns.join("")}</div>`;
+
+    // Kalshi signal
+    let kalshiHtml = "";
+    if(p.kalshi_prob !== null && p.kalshi_prob !== undefined){
+      const sigClass = `signal-${p.kalshi_signal||"NEUTRAL"}`;
+      const sigLabel = p.kalshi_signal === "AGREE"    ? "✓ Market Agrees"
+                     : p.kalshi_signal === "DISAGREE" ? "⚠ Market Disagrees"
+                     : "Market Neutral";
+      kalshiHtml = `
+        <div class="kalshi-row">
+          <span class="kalshi-label">Kalshi</span>
+          <span class="kalshi-prob">${p.kalshi_prob}%</span>
+          <span class="${sigClass}">${sigLabel}</span>
+        </div>`;
+    }
+
     grid.innerHTML += `
       <div class="pick-card tier-${p.tier}" data-type="${p.type}" data-tier="${p.tier}">
         <div class="pick-top">
@@ -840,10 +1046,12 @@ function renderPicks(){
         <div class="pick-game">${p.game}</div>
         <div class="conf-row">
           <div class="conf-bar-wrap">
-            <div class="conf-bar bar-${p.tier}" style="width:${w}%"></div>
+            <div class="conf-bar bar-${p.tier}" style="width:${barPct}%"></div>
           </div>
-          <span class="conf-pct pct-${p.tier}">${w}%</span>
+          <span class="conf-pct pct-${p.tier}">${p.conf}%</span>
         </div>
+        ${warnHtml}
+        ${kalshiHtml}
         <div class="pick-reasoning">${p.reasoning}</div>
       </div>`;
   });
@@ -853,6 +1061,120 @@ function renderPicks(){
 }
 
 function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":"⭐"; }
+
+// ── Yesterday's Results Banner ────────────────────────────────────────────────
+function renderYesterday(){
+  if(!DATA_YESTERDAY || !DATA_YESTERDAY.date) return;
+
+  const d   = DATA_YESTERDAY;
+  const m   = d.metrics && d.metrics.overall;
+  if(!m) return;
+
+  const wr  = m.win_rate ? (m.win_rate * 100).toFixed(1) : "—";
+  const roi = m.roi      ? (m.roi * 100).toFixed(1)      : "—";
+  const roiColor = (m.roi || 0) >= 0 ? "var(--green)" : "var(--red)";
+  const roiSign  = (m.roi || 0) >= 0 ? "+" : "";
+
+  // Top 3 findings
+  const topFindings = (d.findings || []).slice(0, 4).map(f => {
+    const isWarn = f.includes("⚠");
+    return `<div class="yday-finding${isWarn ? " warn" : ""}">${f}</div>`;
+  }).join("");
+
+  // Mini banner on picks panel
+  document.getElementById("yesterdayBanner").innerHTML = `
+    <div class="yesterday-banner">
+      <div class="yesterday-title">📈 Yesterday (${d.date})</div>
+      <div class="yesterday-stats">
+        <div class="yday-stat yday-wins">
+          <div class="yday-num">${m.wins}</div><div class="yday-lbl">Wins</div>
+        </div>
+        <div class="yday-stat yday-losses">
+          <div class="yday-num">${m.losses}</div><div class="yday-lbl">Losses</div>
+        </div>
+        <div class="yday-stat">
+          <div class="yday-num">${wr}%</div><div class="yday-lbl">Win Rate</div>
+        </div>
+        <div class="yday-stat yday-roi">
+          <div class="yday-num" style="color:${roiColor}">${roiSign}${roi}%</div>
+          <div class="yday-lbl">ROI</div>
+        </div>
+        <div class="yday-stat">
+          <div class="yday-num">${(m.profit || 0) >= 0 ? "+" : ""}${(m.profit || 0).toFixed(2)}u</div>
+          <div class="yday-lbl">Profit</div>
+        </div>
+      </div>
+      <div class="yday-findings">${topFindings}</div>
+    </div>`;
+
+  // Show Yesterday tab
+  document.getElementById("yesterdayTab").style.display = "";
+
+  // Full yesterday panel
+  const tierRows = Object.entries((d.metrics && d.metrics.by_tier) || {}).map(([t, b]) => {
+    if(!b.total) return "";
+    const twr = b.win_rate ? (b.win_rate*100).toFixed(1)+"%" : "—";
+    return `<tr>
+      <td>${t}</td><td>${b.wins}-${b.losses}</td><td>${twr}</td>
+      <td>${b.roi ? (b.roi*100).toFixed(1)+"%" : "—"}</td>
+      <td>${(b.profit||0) >= 0 ? "+":""  }${(b.profit||0).toFixed(2)}u</td>
+    </tr>`;
+  }).join("");
+
+  const typeRows = Object.entries((d.metrics && d.metrics.by_type) || {}).map(([t, b]) => {
+    if(!b.total) return "";
+    const twr = b.win_rate ? (b.win_rate*100).toFixed(1)+"%" : "—";
+    return `<tr>
+      <td>${t}</td><td>${b.wins}-${b.losses}</td><td>${twr}</td>
+      <td>${b.roi ? (b.roi*100).toFixed(1)+"%" : "—"}</td>
+      <td>${(b.profit||0) >= 0 ? "+" : ""}${(b.profit||0).toFixed(2)}u</td>
+    </tr>`;
+  }).join("");
+
+  const tblStyle = "width:100%;border-collapse:collapse;font-size:.8rem;margin-bottom:20px";
+  const thStyle  = "text-align:left;padding:6px 10px;color:var(--sub);font-size:.72rem;font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)";
+  const tdStyle  = "padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.04)";
+
+  const allFindings = (d.findings || []).map(f => {
+    const isWarn = f.includes("⚠");
+    return `<div class="yday-finding${isWarn ? " warn" : ""}" style="padding:4px 0">${f}</div>`;
+  }).join("");
+
+  const allRecs = (d.recommendations || []).map(r => `
+    <div style="margin-bottom:12px;padding:10px 14px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:.72rem;font-weight:700;color:${r.priority==='HIGH'?'var(--red)':r.priority==='MED'?'var(--gold)':'var(--sub)'};text-transform:uppercase;margin-bottom:4px">[${r.priority}] ${r.area}</div>
+      <div style="font-size:.78rem;color:var(--sub)">${r.action}</div>
+    </div>`).join("");
+
+  document.getElementById("yesterdayFull").innerHTML = `
+    <div class="section-title">📈 Yesterday's Performance — ${d.date}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">
+      <div>
+        <div class="section-title" style="font-size:.78rem">By Tier</div>
+        <table style="${tblStyle}">
+          <thead><tr>
+            <th style="${thStyle}">Tier</th><th style="${thStyle}">Record</th>
+            <th style="${thStyle}">Win%</th><th style="${thStyle}">ROI</th><th style="${thStyle}">P/L</th>
+          </tr></thead>
+          <tbody style="">${tierRows.replace(/<td>/g, `<td style="${tdStyle}">`).replace(/<th>/g, `<th style="${thStyle}">`)}</tbody>
+        </table>
+      </div>
+      <div>
+        <div class="section-title" style="font-size:.78rem">By Type</div>
+        <table style="${tblStyle}">
+          <thead><tr>
+            <th style="${thStyle}">Type</th><th style="${thStyle}">Record</th>
+            <th style="${thStyle}">Win%</th><th style="${thStyle}">ROI</th><th style="${thStyle}">P/L</th>
+          </tr></thead>
+          <tbody>${typeRows.replace(/<td>/g, `<td style="${tdStyle}">`).replace(/<th>/g, `<th style="${thStyle}">`)}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="section-title" style="font-size:.78rem">Findings</div>
+    <div style="margin-bottom:20px">${allFindings}</div>
+    <div class="section-title" style="font-size:.78rem">Recommendations</div>
+    ${allRecs}`;
+}
 
 // ── Render Parlays ────────────────────────────────────────────────────────────
 function renderParlays(){
@@ -1272,6 +1594,7 @@ function renderTicker(){
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 renderTicker();
+renderYesterday();
 renderPicks();
 renderParlays();
 renderSchedule();
@@ -1366,22 +1689,38 @@ def main():
         log.warning(f"Props generation failed (non-fatal): {e}")
         props_json = "[]"
 
+    # Kalshi market data (optional — works only when API key configured)
+    kalshi_data = load_kalshi(actual_date)
+    if not kalshi_data:
+        # Try to run Kalshi scraper on-the-fly if key is available
+        try:
+            from scrapers.mlb_kalshi_scraper import run as run_kalshi
+            run_kalshi(target_date=actual_date)
+            kalshi_data = load_kalshi(actual_date)
+        except Exception:
+            pass  # Kalshi not configured — skip silently
+
+    # Yesterday's analysis (for dashboard panel)
+    yesterday_data = load_yesterday_analysis(actual_date)
+    yesterday_json = json.dumps(yesterday_data)
+
     # Serialize
-    picks_json  = json.dumps(prep_picks(picks))
+    picks_json  = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
     games_json  = json.dumps(prep_games(scored))
     p2_json     = json.dumps(prep_parlays(parlays_2))
     p3_json     = json.dumps(prep_parlays(parlays_3))
     scores_json = json.dumps(prep_scores_ticker(today_scores))
 
     html = (HTML
-            .replace("__DATE__",     actual_date)
-            .replace("__PICKS__",    picks_json)
-            .replace("__GAMES__",    games_json)
-            .replace("__P2__",       p2_json)
-            .replace("__P3__",       p3_json)
-            .replace("__SCORES__",   scores_json)
-            .replace("__PROPS__",    props_json)
-            .replace("__SCHEDULE__", schedule_json))
+            .replace("__DATE__",      actual_date)
+            .replace("__PICKS__",     picks_json)
+            .replace("__GAMES__",     games_json)
+            .replace("__P2__",        p2_json)
+            .replace("__P3__",        p3_json)
+            .replace("__SCORES__",    scores_json)
+            .replace("__PROPS__",     props_json)
+            .replace("__SCHEDULE__",  schedule_json)
+            .replace("__YESTERDAY__", yesterday_json))
 
     os.makedirs(PICKS_DIR, exist_ok=True)
     out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")
