@@ -400,6 +400,84 @@ def prep_schedule_view(all_games: list, live_scores: list, standings: dict) -> l
     return out
 
 
+def prep_team_schedule(today: str) -> dict:
+    """
+    Build a team → next_game lookup covering today + next 7 days.
+    Used by the Teams tab to always show each team's upcoming game
+    even when they don't play today.
+    Returns dict keyed by team name with game details.
+    """
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    import csv as _csv
+
+    _EDT = _tz(_td(hours=-4))
+    today_dt  = _dt.fromisoformat(today)
+    cutoff_dt = today_dt + _td(days=8)
+
+    sched_path = os.path.join(os.path.dirname(__file__), "data", "clean",
+                              "mlb_schedule_master.csv")
+    if not os.path.exists(sched_path):
+        return {}
+
+    # Collect all upcoming games in the window, sorted by date
+    games = []
+    with open(sched_path, encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            gdate = row.get("game_date", "")
+            if not gdate:
+                continue
+            try:
+                gdt = _dt.fromisoformat(gdate)
+            except ValueError:
+                continue
+            if today_dt <= gdt < cutoff_dt:
+                # Convert UTC time to ET for display
+                utc_str = row.get("game_time_utc", "")
+                time_str = ""
+                day_label = ""
+                try:
+                    utc_dt = _dt.fromisoformat(utc_str.replace("Z", "+00:00"))
+                    et_dt  = utc_dt.astimezone(_EDT)
+                    hr     = et_dt.hour % 12 or 12
+                    ampm   = "AM" if et_dt.hour < 12 else "PM"
+                    time_str = f"{hr}:{et_dt.minute:02d} {ampm} ET"
+                    delta = (gdt.date() - today_dt.date()).days
+                    if delta == 0:
+                        day_label = "Today"
+                    elif delta == 1:
+                        day_label = "Tomorrow"
+                    else:
+                        day_label = et_dt.strftime("%A, %b %-d")
+                except Exception:
+                    delta = (gdt.date() - today_dt.date()).days
+                    day_label = "Today" if delta == 0 else ("Tomorrow" if delta == 1 else gdate)
+
+                games.append({
+                    "game_date":  gdate,
+                    "game_id":    row.get("game_id", ""),
+                    "away_team":  row.get("away_team", ""),
+                    "home_team":  row.get("home_team", ""),
+                    "away_sp":    row.get("away_probable_pitcher", "TBD") or "TBD",
+                    "home_sp":    row.get("home_probable_pitcher", "TBD") or "TBD",
+                    "venue":      row.get("venue", ""),
+                    "time_str":   time_str,
+                    "day_label":  day_label,
+                    "is_today":   gdate == today,
+                })
+
+    # Sort by date then time
+    games.sort(key=lambda x: x["game_date"])
+
+    # Build team → first upcoming game lookup
+    team_next: dict[str, dict] = {}
+    for g in games:
+        for team in (g["away_team"], g["home_team"]):
+            if team and team not in team_next:
+                team_next[team] = g
+
+    return team_next
+
+
 def prep_props(props: list) -> list:
     """Serialize player props for HTML embedding."""
     out = []
@@ -871,6 +949,50 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .badge-RBI  {background:rgba(38,166,154,.15);color:#80cbc4;border:1px solid rgba(38,166,154,.3)}
 .badge-R    {background:rgba(102,187,106,.15);color:#a5d6a7;border:1px solid rgba(102,187,106,.3)}
 .badge-SB   {background:rgba(41,182,246,.15);color:#81d4fa;border:1px solid rgba(41,182,246,.3)}
+
+/* ── TEAMS TAB ── */
+.team-btn{padding:7px 13px;border-radius:6px;border:1px solid var(--border);background:var(--card);
+  color:var(--sub);font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
+.team-btn:hover{border-color:var(--green);color:var(--text)}
+.team-btn.active{background:var(--green);color:#000;border-color:var(--green)}
+.team-btn.playing{border-color:rgba(0,230,118,.4);color:var(--green)}
+
+.team-game-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:20px}
+.team-matchup-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px}
+.team-matchup-teams{display:flex;align-items:center;gap:16px;flex:1}
+.team-name-block{text-align:center;min-width:140px}
+.team-name-big{font-size:1.15rem;font-weight:800;color:var(--text)}
+.team-name-sp{font-size:.75rem;color:var(--sub);margin-top:3px}
+.team-vs{font-size:1.4rem;color:var(--sub);font-weight:300;padding:0 8px}
+.team-game-meta{text-align:right;font-size:.8rem;color:var(--sub);line-height:1.7}
+.team-day-label{font-size:1rem;font-weight:700;color:var(--green);display:block}
+
+.team-pred-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
+.team-pred-box{background:var(--bg);border-radius:8px;padding:14px;text-align:center}
+.team-pred-label{font-size:.72rem;color:var(--sub);margin-bottom:6px;letter-spacing:.5px;text-transform:uppercase}
+.team-pred-conf{font-size:1.6rem;font-weight:800}
+.team-pred-bar{height:6px;background:rgba(255,255,255,.08);border-radius:3px;margin:8px 0 4px}
+.team-pred-fill{height:6px;border-radius:3px;transition:width .4s}
+.team-pred-pick{font-size:.75rem;font-weight:700;margin-top:4px}
+
+.team-props-section{margin-top:18px}
+.team-props-header{font-size:.85rem;font-weight:700;color:var(--sub);margin-bottom:10px;
+  text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.team-props-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.team-prop-mini{background:var(--bg);border-radius:8px;padding:11px 14px;border:1px solid var(--border)}
+.team-prop-mini-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.team-prop-mini-name{font-size:.9rem;font-weight:700;color:var(--text)}
+.team-prop-mini-type{font-size:.7rem;padding:2px 7px;border-radius:4px;font-weight:700}
+.team-prop-mini-line{font-size:.78rem;color:var(--sub);margin-bottom:6px}
+.team-prop-mini-conf{font-size:.85rem;font-weight:700}
+.team-no-props{color:var(--sub);font-size:.85rem;padding:12px 0;font-style:italic}
+
+.prop-type-filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.ptype-btn{padding:4px 11px;border-radius:20px;border:1px solid var(--border);background:transparent;
+  color:var(--sub);font-size:.75rem;font-weight:600;cursor:pointer;transition:all .15s}
+.ptype-btn:hover{border-color:var(--green);color:var(--text)}
+.ptype-btn.active{background:rgba(0,230,118,.15);border-color:var(--green);color:var(--green)}
+
 .prop-player{font-size:1.05rem;font-weight:700;color:var(--text);margin-bottom:2px}
 .prop-game  {font-size:.75rem;color:var(--sub);margin-bottom:10px}
 .prop-line-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;
@@ -987,6 +1109,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <button class="section-nav-btn active" data-panel="panel-picks">🎯 Game Picks</button>
     <button class="section-nav-btn" data-panel="panel-schedule">📅 Today's Games</button>
     <button class="section-nav-btn" data-panel="panel-props">👤 Player Props</button>
+    <button class="section-nav-btn" data-panel="panel-teams">⚾ Teams</button>
     <button class="section-nav-btn" data-panel="panel-games">📊 Game Breakdown</button>
     <button class="section-nav-btn" data-panel="panel-yesterday" id="yesterdayTab" style="display:none">📈 Yesterday</button>
   </div>
@@ -1032,6 +1155,13 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="props-grid" id="propsGrid"></div>
   </div>
 
+  <!-- PANEL: TEAMS -->
+  <div class="section-panel" id="panel-teams">
+    <div class="section-title">⚾ Team Lookup</div>
+    <div id="teamButtonGrid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px"></div>
+    <div id="teamGameView"></div>
+  </div>
+
   <!-- PANEL: GAME BREAKDOWN -->
   <div class="section-panel" id="panel-games">
     <div class="section-title">📊 Game Breakdown</div>
@@ -1050,6 +1180,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 const DATA_DATE      = "__DATE__";
 const DATA_PICKS     = __PICKS__;
 const DATA_GAMES     = __GAMES__;
+const DATA_TEAM_SCHED = __TEAM_SCHED__;
 const DATA_P2        = __P2__;
 const DATA_P3        = __P3__;
 const DATA_SCORES    = __SCORES__;
@@ -1436,6 +1567,229 @@ function localGameTime(utcStr){
   } catch(e){ return utcStr; }
 }
 
+// ── TEAMS TAB ─────────────────────────────────────────────────────────────────
+const ALL_TEAMS = [
+  "Arizona Diamondbacks","Atlanta Braves","Baltimore Orioles","Boston Red Sox",
+  "Chicago Cubs","Chicago White Sox","Cincinnati Reds","Cleveland Guardians",
+  "Colorado Rockies","Detroit Tigers","Houston Astros","Kansas City Royals",
+  "Los Angeles Angels","Los Angeles Dodgers","Miami Marlins","Milwaukee Brewers",
+  "Minnesota Twins","New York Mets","New York Yankees","Athletics",
+  "Philadelphia Phillies","Pittsburgh Pirates","San Diego Padres","San Francisco Giants",
+  "Seattle Mariners","St. Louis Cardinals","Tampa Bay Rays","Texas Rangers",
+  "Toronto Blue Jays","Washington Nationals"
+];
+
+let activeTeam = null;
+let teamPropTypeFilter = "all";
+
+function initTeamsTab(){
+  const grid = document.getElementById("teamButtonGrid");
+  ALL_TEAMS.forEach(team => {
+    const hasGame = !!DATA_TEAM_SCHED[team];
+    const isToday = hasGame && DATA_TEAM_SCHED[team].is_today;
+    const btn = document.createElement("button");
+    btn.className = "team-btn" + (isToday ? " playing" : "");
+    btn.textContent = teamShort(team);
+    btn.title = team + (hasGame ? " — " + DATA_TEAM_SCHED[team].day_label : " — No upcoming game found");
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".team-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      activeTeam = team;
+      teamPropTypeFilter = "all";
+      renderTeamView(team);
+    });
+    grid.appendChild(btn);
+  });
+}
+
+function teamShort(full){
+  const parts = full.split(" ");
+  // Return last word (nickname) — e.g. "Yankees", "Dodgers"
+  return parts[parts.length - 1];
+}
+
+function renderTeamView(team){
+  const view = document.getElementById("teamGameView");
+  const game = DATA_TEAM_SCHED[team];
+
+  if(!game){
+    view.innerHTML = `<div class="team-game-card" style="text-align:center;color:var(--sub);padding:40px">
+      No upcoming game found for ${team} in the next 7 days.</div>`;
+    return;
+  }
+
+  const away = game.away_team;
+  const home = game.home_team;
+  const isAway = away === team;
+  const opp   = isAway ? home : away;
+
+  // Find pick for this game
+  const gamePicks = DATA_PICKS.filter(p =>
+    (p.away === away && p.home === home) ||
+    (p.game && p.game.includes(away) && p.game.includes(home))
+  );
+  const mlPick = gamePicks.find(p => p.type === "ML");
+  const totalPick = gamePicks.find(p => p.type === "TOTAL");
+
+  // Prediction bars
+  let awayConf = 50, homeConf = 50;
+  let awayPick = "", homePick = "";
+  if(mlPick){
+    const pickedHome = mlPick.home && mlPick.label && mlPick.label.includes(home.split(" ").pop());
+    if(pickedHome){
+      homeConf = mlPick.conf; awayConf = Math.round((100 - mlPick.conf) * 10) / 10;
+      homePick = `✓ Model Pick (${mlPick.tier})`;
+    } else {
+      awayConf = mlPick.conf; homeConf = Math.round((100 - mlPick.conf) * 10) / 10;
+      awayPick = `✓ Model Pick (${mlPick.tier})`;
+    }
+  }
+
+  const favColor = c => c >= 68 ? "var(--red)" : c >= 58 ? "#ffb74d" : "var(--green)";
+  const isToday = game.is_today;
+
+  // Props for this game — both teams
+  const gameProps = DATA_PROPS.filter(p =>
+    (p.away_team === away && p.home_team === home) ||
+    (p.game && p.game.includes(away) && p.game.includes(home))
+  );
+  const awayProps = gameProps.filter(p => p.side === "away" || p.away_team === away);
+  const homeProps = gameProps.filter(p => p.side === "home" || p.home_team === home);
+
+  const propTypes = [...new Set(gameProps.map(p => p.prop_type))].sort();
+  const typeFilterHtml = propTypes.length > 1 ? `
+    <div class="prop-type-filters" id="teamPropFilters">
+      <button class="ptype-btn active" data-ptype="all">All</button>
+      ${propTypes.map(t => `<button class="ptype-btn" data-ptype="${t}">${propIcon(t)} ${t}</button>`).join("")}
+    </div>` : "";
+
+  function miniProps(props){
+    const filtered = teamPropTypeFilter === "all" ? props : props.filter(p => p.prop_type === teamPropTypeFilter);
+    if(!filtered.length) return `<div class="team-no-props">No props available yet</div>`;
+    return filtered.map(p => {
+      const barPct = p.prop_type === "HR" ? Math.min(100, p.conf * 5)
+        : p.prop_type === "SB" ? Math.min(100, p.conf * 3.57)
+        : p.prop_type === "RBI" || p.prop_type === "R" ? Math.min(100, Math.max(0,(p.conf-30)*1.43))
+        : p.prop_type === "TB" ? Math.min(100, Math.max(0,(p.conf-40)*1.67))
+        : Math.min(100, Math.max(0,(p.conf-50)*2));
+      const tc = p.tier==="LOCK"?"var(--green)":p.tier==="STRONG"?"var(--blue)":"#ffb74d";
+      return `<div class="team-prop-mini">
+        <div class="team-prop-mini-top">
+          <span class="team-prop-mini-name">${p.player_name}</span>
+          <span class="team-prop-mini-type badge-${p.prop_type}">${propIcon(p.prop_type)} ${p.prop_type}</span>
+        </div>
+        <div class="team-prop-mini-line">${propLabel(p.prop_type, p.line)}</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:rgba(255,255,255,.08);border-radius:3px">
+            <div style="width:${barPct}%;height:5px;border-radius:3px;background:${tc}"></div>
+          </div>
+          <span class="team-prop-mini-conf" style="color:${tc}">${p.conf}%</span>
+          <span style="font-size:.68rem;color:var(--sub)">${p.tier}</span>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  const noLineupMsg = !isToday ? `
+    <div style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.2);border-radius:8px;
+      padding:12px 16px;font-size:.82rem;color:#ffb74d;margin-bottom:14px">
+      ⏳ Full prop analysis available on game day when lineups are confirmed.
+    </div>` :
+    (gameProps.length === 0 ? `
+    <div style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.2);border-radius:8px;
+      padding:12px 16px;font-size:.82rem;color:#ffb74d;margin-bottom:14px">
+      ⏳ Lineups not yet confirmed — props will appear once lineups are set (~2-3 hrs before first pitch).
+    </div>` : "");
+
+  view.innerHTML = `
+    <div class="team-game-card">
+      <!-- Matchup header -->
+      <div class="team-matchup-header">
+        <div class="team-matchup-teams">
+          <div class="team-name-block">
+            <div class="team-name-big">${away}</div>
+            <div class="team-name-sp">SP: ${game.away_sp}</div>
+          </div>
+          <div class="team-vs">@</div>
+          <div class="team-name-block">
+            <div class="team-name-big">${home}</div>
+            <div class="team-name-sp">SP: ${game.home_sp}</div>
+          </div>
+        </div>
+        <div class="team-game-meta">
+          <span class="team-day-label">${game.day_label}</span>
+          ${game.time_str}<br>
+          ${game.venue || ""}
+        </div>
+      </div>
+
+      <!-- Prediction bars (today's games only) -->
+      ${isToday && mlPick ? `
+      <div class="team-pred-row">
+        <div class="team-pred-box">
+          <div class="team-pred-label">${away}</div>
+          <div class="team-pred-conf" style="color:${favColor(awayConf)}">${awayConf}%</div>
+          <div class="team-pred-bar"><div class="team-pred-fill" style="width:${awayConf}%;background:${favColor(awayConf)}"></div></div>
+          <div class="team-pred-pick" style="color:${favColor(awayConf)}">${awayPick}</div>
+        </div>
+        <div class="team-pred-box">
+          <div class="team-pred-label">${home}</div>
+          <div class="team-pred-conf" style="color:${favColor(homeConf)}">${homeConf}%</div>
+          <div class="team-pred-bar"><div class="team-pred-fill" style="width:${homeConf}%;background:${favColor(homeConf)}"></div></div>
+          <div class="team-pred-pick" style="color:${favColor(homeConf)}">${homePick}</div>
+        </div>
+      </div>
+      ${totalPick ? `<div style="text-align:center;font-size:.82rem;color:var(--sub);margin:-4px 0 14px">
+        📊 Total: ${totalPick.label} — proj ${totalPick.exp_total || "?"} runs
+        <span class="tier-badge tb-${totalPick.tier}" style="margin-left:8px">${totalPick.tier}</span>
+      </div>` : ""}` :
+      (isToday ? `<div style="color:var(--sub);font-size:.85rem;padding:10px 0 14px;text-align:center">
+        Prediction not available for this game.</div>` :
+      `<div style="background:rgba(0,230,118,.05);border:1px solid rgba(0,230,118,.15);border-radius:8px;
+        padding:12px 16px;font-size:.82rem;color:var(--sub);margin-bottom:14px">
+        📅 Full model prediction runs on game day.</div>`)}
+
+      <!-- Props -->
+      <div class="team-props-section">
+        ${noLineupMsg}
+        ${typeFilterHtml}
+        <div id="teamPropsContent">
+          <div class="team-props-header">${away} — Player Props</div>
+          <div class="team-props-grid" id="awayPropsGrid">${miniProps(awayProps)}</div>
+          <div class="team-props-header" style="margin-top:16px">${home} — Player Props</div>
+          <div class="team-props-grid" id="homePropsGrid">${miniProps(homeProps)}</div>
+        </div>
+      </div>
+    </div>`;
+
+  // Prop type filter buttons
+  document.querySelectorAll("#teamPropFilters .ptype-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#teamPropFilters .ptype-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      teamPropTypeFilter = btn.dataset.ptype;
+      document.getElementById("awayPropsGrid").innerHTML = miniProps(awayProps);
+      document.getElementById("homePropsGrid").innerHTML = miniProps(homeProps);
+    });
+  });
+}
+
+// Auto-select a team playing today when tab is opened
+document.querySelectorAll(".section-nav-btn[data-panel='panel-teams']").forEach(btn => {
+  btn.addEventListener("click", () => {
+    if(!activeTeam){
+      // Pick first team with a game today
+      const todayTeam = ALL_TEAMS.find(t => DATA_TEAM_SCHED[t] && DATA_TEAM_SCHED[t].is_today);
+      if(todayTeam){
+        activeTeam = todayTeam;
+        const teamBtns = document.querySelectorAll(".team-btn");
+        teamBtns.forEach((b,i) => { if(ALL_TEAMS[i] === todayTeam) b.classList.add("active"); });
+        renderTeamView(todayTeam);
+      }
+    }
+  });
+});
+
 function renderSchedule(){
   const grid = document.getElementById("scheduleGrid");
   grid.innerHTML = "";
@@ -1734,6 +2088,7 @@ renderParlays();
 renderSchedule();
 renderGames();
 renderProps();
+initTeamsTab();
 </script>
 </body>
 </html>"""
@@ -1839,22 +2194,24 @@ def main():
     yesterday_json = json.dumps(yesterday_data)
 
     # Serialize
-    picks_json  = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
-    games_json  = json.dumps(prep_games(scored))
-    p2_json     = json.dumps(prep_parlays(parlays_2))
-    p3_json     = json.dumps(prep_parlays(parlays_3))
-    scores_json = json.dumps(prep_scores_ticker(today_scores))
+    picks_json       = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
+    games_json       = json.dumps(prep_games(scored))
+    p2_json          = json.dumps(prep_parlays(parlays_2))
+    p3_json          = json.dumps(prep_parlays(parlays_3))
+    scores_json      = json.dumps(prep_scores_ticker(today_scores))
+    team_sched_json  = json.dumps(prep_team_schedule(actual_date))
 
     html = (HTML
-            .replace("__DATE__",      actual_date)
-            .replace("__PICKS__",     picks_json)
-            .replace("__GAMES__",     games_json)
-            .replace("__P2__",        p2_json)
-            .replace("__P3__",        p3_json)
-            .replace("__SCORES__",    scores_json)
-            .replace("__PROPS__",     props_json)
-            .replace("__SCHEDULE__",  schedule_json)
-            .replace("__YESTERDAY__", yesterday_json))
+            .replace("__DATE__",        actual_date)
+            .replace("__PICKS__",       picks_json)
+            .replace("__GAMES__",       games_json)
+            .replace("__P2__",          p2_json)
+            .replace("__P3__",          p3_json)
+            .replace("__SCORES__",      scores_json)
+            .replace("__PROPS__",       props_json)
+            .replace("__SCHEDULE__",    schedule_json)
+            .replace("__YESTERDAY__",   yesterday_json)
+            .replace("__TEAM_SCHED__",  team_sched_json))
 
     os.makedirs(PICKS_DIR, exist_ok=True)
     out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")
@@ -1866,7 +2223,26 @@ def main():
     with open(latest_path, "w", encoding="utf-8") as f:
         f.write(html)
 
+    # Write CSV of picks so run_analysis.py can grade them tomorrow
+    import csv as _csv
+    csv_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.csv")
+    csv_fields = ["date", "game", "type", "label", "conf", "tier", "reasoning"]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = _csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
+        writer.writeheader()
+        for p in picks:
+            writer.writerow({
+                "date":      actual_date,
+                "game":      p.get("game", ""),
+                "type":      p.get("type", ""),
+                "label":     p.get("label", ""),
+                "conf":      p.get("conf", ""),
+                "tier":      p.get("tier", ""),
+                "reasoning": p.get("reasoning", ""),
+            })
+
     log.info(f"Dashboard saved: {out_path}")
+    log.info(f"Picks CSV: {csv_path} ({len(picks)} rows)")
     log.info(f"Latest copy: {latest_path}")
     log.info(f"{len(scored)} games | {len(picks)} picks | "
              f"{len(parlays_2)} 2-leg parlays | {len(parlays_3)} 3-leg parlays")
