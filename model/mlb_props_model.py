@@ -3,8 +3,12 @@ model/mlb_props_model.py
 Player prop probability engine for MLB betting.
 
 Prop types supported:
-  HR   — player hits 0.5+ home runs (standard DraftKings / FanDuel line)
-  HITS — player records 0.5+ hits  (standard line)
+  HR   — player hits 0.5+ home runs  (Hard Rock Bet line)
+  HITS — player records 0.5+ hits
+  TB   — total bases over 1.5
+  RBI  — RBIs over 0.5
+  R    — runs scored over 0.5
+  SB   — stolen bases over 0.5
   K    — starting pitcher strikeout total (over/under a given number)
 
 Confidence scoring:
@@ -12,11 +16,7 @@ Confidence scoring:
     player_name, prop_type, line, proj, confidence (0-1),
     tier (LOCK/STRONG/LEAN), reasoning
 
-Tier thresholds (same scale as game picks):
-  LOCK   ≥ 68%
-  STRONG 62-68%
-  LEAN   55-62%
-  SKIP   < 55%
+Tier thresholds vary by prop type — see constants below.
 """
 
 import os, json, math, logging, csv
@@ -30,15 +30,46 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 # League-average baselines (2024 MLB)
 LEAGUE_HR_PER_PA  = 0.034   # ~1 HR per 29 PA
 LEAGUE_H_PER_PA   = 0.270   # batting average proxy
+LEAGUE_TB_PER_PA  = 0.400   # total bases per PA
+LEAGUE_RBI_PER_PA = 0.110   # RBI per PA
+LEAGUE_R_PER_PA   = 0.130   # runs scored per PA
+LEAGUE_SB_PER_PA  = 0.020   # stolen bases per PA
 LEAGUE_K9_SP      = 9.1     # average SP K/9
 
 # Park HR factors from park_factors.csv (loaded on demand)
 _PARK_HR_FACTORS: dict[str, float] = {}
 
-# Tier cutoffs
+# Tier cutoffs — game picks
 LOCK_THRESH   = 0.68
 STRONG_THRESH = 0.62
 LEAN_THRESH   = 0.55
+
+# HR-specific tier cutoffs — calibrated to Poisson reality
+# Even elite sluggers max out at ~22% per-game probability,
+# so we rank relative to a league-average baseline (~11%).
+HR_LOCK_THRESH   = 0.20   # ~1.8x league avg — elite spot
+HR_STRONG_THRESH = 0.15   # ~1.35x league avg — solid edge
+HR_LEAN_THRESH   = 0.12   # ~1.1x league avg — slight lean
+
+# Total Bases Over 1.5 — typical hitter ~45-55%; elite spots reach 65%
+TB_LOCK_THRESH   = 0.62
+TB_STRONG_THRESH = 0.55
+TB_LEAN_THRESH   = 0.48
+
+# RBI Over 0.5 — league avg ~32%; strong spots ~45-52%
+RBI_LOCK_THRESH   = 0.50
+RBI_STRONG_THRESH = 0.42
+RBI_LEAN_THRESH   = 0.35
+
+# Runs Scored Over 0.5 — league avg ~38%; leadoff spots ~48%
+R_LOCK_THRESH   = 0.50
+R_STRONG_THRESH = 0.42
+R_LEAN_THRESH   = 0.35
+
+# Stolen Bases Over 0.5 — only speedsters crack 25%+
+SB_LOCK_THRESH   = 0.28
+SB_STRONG_THRESH = 0.20
+SB_LEAN_THRESH   = 0.13
 
 
 def _load_park_factors():
@@ -62,6 +93,14 @@ def _tier(conf: float) -> str:
     if conf >= LOCK_THRESH:   return "LOCK"
     if conf >= STRONG_THRESH: return "STRONG"
     if conf >= LEAN_THRESH:   return "LEAN"
+    return "SKIP"
+
+
+def _hr_tier(conf: float) -> str:
+    """HR-calibrated tier using lower absolute thresholds."""
+    if conf >= HR_LOCK_THRESH:   return "LOCK"
+    if conf >= HR_STRONG_THRESH: return "STRONG"
+    if conf >= HR_LEAN_THRESH:   return "LEAN"
     return "SKIP"
 
 
@@ -155,7 +194,7 @@ def score_hr_prop(player: dict, pitcher_opp: dict, home_team: str,
 
     reasoning = " | ".join(parts) if parts else f"{pa} PA, {base_rate:.3f} HR/PA"
 
-    tier = _tier(prob)
+    tier = _hr_tier(prob)   # HR-calibrated thresholds, not game-pick thresholds
     if tier == "SKIP":
         return None
 
@@ -242,6 +281,283 @@ def score_hits_prop(player: dict, pitcher_opp: dict,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TOTAL BASES PROPS  (Over 1.5)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _poisson_p_at_least_two(lam: float) -> float:
+    """P(X >= 2) for Poisson with mean lam."""
+    if lam <= 0:
+        return 0.0
+    return 1.0 - math.exp(-lam) - lam * math.exp(-lam)
+
+
+def score_tb_prop(player: dict, pitcher_opp: dict, is_home: bool) -> dict | None:
+    """
+    Score a Total Bases Over 1.5 prop.
+    Poisson model: lambda = PA_expected × adj_tb_per_pa
+    P(TB >= 2) = 1 - e^-λ - λe^-λ
+    """
+    pname = player.get("player_name", "Unknown")
+    pa    = player.get("pa", 0)
+    if pa < 20:
+        return None
+
+    base_rate = player.get("tb_per_pa", LEAGUE_TB_PER_PA)
+
+    # Pitcher factor: opponent SLG vs league avg SLG (~.410)
+    opp_slg       = pitcher_opp.get("opp_slg", 0.410)
+    pitcher_factor = opp_slg / 0.410
+    pitcher_factor = max(0.7, min(1.5, pitcher_factor))
+
+    batting_order = player.get("batting_order", 5)
+    exp_pa = max(3.3, 4.5 - (batting_order - 1) * 0.12)
+
+    adj_rate = base_rate * pitcher_factor
+    lam      = exp_pa * adj_rate
+    prob     = _poisson_p_at_least_two(lam)
+
+    # Build reasoning
+    parts = []
+    if base_rate >= 0.460:
+        parts.append(f"power hitter ({base_rate:.3f} TB/PA)")
+    elif base_rate <= 0.340:
+        parts.append(f"low power ({base_rate:.3f} TB/PA)")
+    if opp_slg:
+        if pitcher_factor >= 1.12:
+            parts.append(f"pitcher gives up extra-base hits (opp SLG .{int(opp_slg*1000):03d})")
+        elif pitcher_factor <= 0.88:
+            parts.append(f"pitcher limits damage (opp SLG .{int(opp_slg*1000):03d})")
+    if not parts:
+        parts.append(f"{pa} PA, {base_rate:.3f} TB/PA, proj {lam:.2f} TB")
+
+    reasoning = " | ".join(parts)
+
+    if base_rate >= TB_LOCK_THRESH:      tier = "LOCK"
+    elif base_rate >= TB_STRONG_THRESH:  tier = "STRONG"  # wrong — use prob
+    else: tier = None
+
+    if prob >= TB_LOCK_THRESH:   tier = "LOCK"
+    elif prob >= TB_STRONG_THRESH: tier = "STRONG"
+    elif prob >= TB_LEAN_THRESH:   tier = "LEAN"
+    else:
+        return None
+
+    return {
+        "prop_type":     "TB",
+        "line":          1.5,
+        "player_name":   pname,
+        "batting_order": batting_order,
+        "proj":          round(lam, 3),
+        "confidence":    round(prob, 4),
+        "tier":          tier,
+        "reasoning":     reasoning,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RBI PROPS  (Over 0.5)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def score_rbi_prop(player: dict, pitcher_opp: dict, is_home: bool) -> dict | None:
+    """
+    Score an RBI Over 0.5 prop.
+    Poisson model: lambda = PA_expected × adj_rbi_per_pa
+    Adjusted for batting order (cleanup hitters get more RBI chances).
+    """
+    pname = player.get("player_name", "Unknown")
+    pa    = player.get("pa", 0)
+    if pa < 20:
+        return None
+
+    base_rate = player.get("rbi_per_pa", LEAGUE_RBI_PER_PA)
+
+    # Batting order adjustment: 3-5 hitters have more RBI opps (runners on base)
+    batting_order = player.get("batting_order", 5)
+    order_factor  = 1.0
+    if batting_order in (3, 4, 5):
+        order_factor = 1.15
+    elif batting_order in (1, 2):
+        order_factor = 0.85
+    elif batting_order in (8, 9):
+        order_factor = 0.90
+
+    # Pitcher contact factor: higher opp AVG = more runners = more RBI chances
+    opp_avg       = pitcher_opp.get("opp_avg", 0.255)
+    pitcher_factor = opp_avg / 0.255 if opp_avg > 0 else 1.0
+    pitcher_factor = max(0.75, min(1.35, pitcher_factor))
+
+    exp_pa = max(3.3, 4.5 - (batting_order - 1) * 0.12)
+
+    adj_rate = base_rate * order_factor * pitcher_factor
+    lam      = exp_pa * adj_rate
+    prob     = _poisson_p_at_least_one(lam)
+
+    parts = []
+    if base_rate >= 0.140:
+        parts.append(f"strong RBI producer ({base_rate:.3f} RBI/PA)")
+    if batting_order in (3, 4, 5):
+        parts.append("cleanup spot, more runners on")
+    if pitcher_factor >= 1.10:
+        parts.append(f"pitcher lets runners reach (opp AVG .{int(opp_avg*1000):03d})")
+    if not parts:
+        parts.append(f"{pa} PA, {base_rate:.3f} RBI/PA, proj {lam:.2f}")
+
+    reasoning = " | ".join(parts)
+
+    if prob >= RBI_LOCK_THRESH:   tier = "LOCK"
+    elif prob >= RBI_STRONG_THRESH: tier = "STRONG"
+    elif prob >= RBI_LEAN_THRESH:   tier = "LEAN"
+    else:
+        return None
+
+    return {
+        "prop_type":     "RBI",
+        "line":          0.5,
+        "player_name":   pname,
+        "batting_order": batting_order,
+        "proj":          round(lam, 3),
+        "confidence":    round(prob, 4),
+        "tier":          tier,
+        "reasoning":     reasoning,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RUNS SCORED PROPS  (Over 0.5)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def score_runs_prop(player: dict, pitcher_opp: dict, is_home: bool) -> dict | None:
+    """
+    Score a Runs Scored Over 0.5 prop.
+    Poisson model: lambda = PA_expected × adj_r_per_pa
+    Leadoff hitters score more runs; pitcher WHIP/OBP affects how many runners score.
+    """
+    pname = player.get("player_name", "Unknown")
+    pa    = player.get("pa", 0)
+    if pa < 20:
+        return None
+
+    base_rate = player.get("r_per_pa", LEAGUE_R_PER_PA)
+
+    # Batting order: leadoff & 2-hole score runs at higher rates
+    batting_order = player.get("batting_order", 5)
+    order_factor  = 1.0
+    if batting_order == 1:
+        order_factor = 1.20
+    elif batting_order == 2:
+        order_factor = 1.10
+    elif batting_order in (7, 8, 9):
+        order_factor = 0.88
+
+    # Pitcher OBP allowed — higher = more runners, more runs
+    opp_obp       = pitcher_opp.get("opp_obp", 0.320)
+    pitcher_factor = opp_obp / 0.320 if opp_obp > 0 else 1.0
+    pitcher_factor = max(0.75, min(1.35, pitcher_factor))
+
+    exp_pa = max(3.3, 4.5 - (batting_order - 1) * 0.12)
+
+    adj_rate = base_rate * order_factor * pitcher_factor
+    lam      = exp_pa * adj_rate
+    prob     = _poisson_p_at_least_one(lam)
+
+    parts = []
+    if batting_order == 1:
+        parts.append("leadoff spot — most runs scored chances")
+    elif batting_order == 2:
+        parts.append("2-hole — solid run-scoring position")
+    if base_rate >= 0.160:
+        parts.append(f"high run scorer ({base_rate:.3f} R/PA)")
+    if pitcher_factor >= 1.10:
+        parts.append(f"pitcher walks/hits batters (OBP .{int(opp_obp*1000):03d})")
+    if not parts:
+        parts.append(f"{pa} PA, {base_rate:.3f} R/PA, proj {lam:.2f}")
+
+    reasoning = " | ".join(parts)
+
+    if prob >= R_LOCK_THRESH:   tier = "LOCK"
+    elif prob >= R_STRONG_THRESH: tier = "STRONG"
+    elif prob >= R_LEAN_THRESH:   tier = "LEAN"
+    else:
+        return None
+
+    return {
+        "prop_type":     "R",
+        "line":          0.5,
+        "player_name":   pname,
+        "batting_order": batting_order,
+        "proj":          round(lam, 3),
+        "confidence":    round(prob, 4),
+        "tier":          tier,
+        "reasoning":     reasoning,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STOLEN BASE PROPS  (Over 0.5)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def score_sb_prop(player: dict, pitcher_opp: dict, is_home: bool) -> dict | None:
+    """
+    Score a Stolen Bases Over 0.5 prop.
+    Poisson model: lambda = PA_expected × adj_sb_per_pa
+    Only speedsters (sb_per_pa > 0.04) typically qualify.
+    """
+    pname = player.get("player_name", "Unknown")
+    pa    = player.get("pa", 0)
+    if pa < 20:
+        return None
+
+    base_rate = player.get("sb_per_pa", LEAGUE_SB_PER_PA)
+
+    # Skip players who clearly don't run — at minimum ~0.04 SB/PA to bother
+    if base_rate < 0.030:
+        return None
+
+    # Pitcher WHIP factor — lower WHIP = fewer base runners = fewer SB attempts
+    whip          = pitcher_opp.get("whip", 1.30)
+    pitcher_factor = whip / 1.30 if whip > 0 else 1.0
+    pitcher_factor = max(0.75, min(1.40, pitcher_factor))
+
+    batting_order = player.get("batting_order", 5)
+    exp_pa = max(3.3, 4.5 - (batting_order - 1) * 0.12)
+
+    adj_rate = base_rate * pitcher_factor
+    lam      = exp_pa * adj_rate
+    prob     = _poisson_p_at_least_one(lam)
+
+    parts = []
+    if base_rate >= 0.080:
+        parts.append(f"elite base stealer ({base_rate:.3f} SB/PA)")
+    elif base_rate >= 0.050:
+        parts.append(f"active on bases ({base_rate:.3f} SB/PA)")
+    else:
+        parts.append(f"{base_rate:.3f} SB/PA this season")
+    if pitcher_factor >= 1.12:
+        parts.append(f"pitcher doesn't hold runners well (WHIP {whip:.2f})")
+    if not parts:
+        parts.append(f"{pa} PA, {base_rate:.3f} SB/PA, proj {lam:.2f}")
+
+    reasoning = " | ".join(parts)
+
+    if prob >= SB_LOCK_THRESH:   tier = "LOCK"
+    elif prob >= SB_STRONG_THRESH: tier = "STRONG"
+    elif prob >= SB_LEAN_THRESH:   tier = "LEAN"
+    else:
+        return None
+
+    return {
+        "prop_type":     "SB",
+        "line":          0.5,
+        "player_name":   pname,
+        "batting_order": batting_order,
+        "proj":          round(lam, 3),
+        "confidence":    round(prob, 4),
+        "tier":          tier,
+        "reasoning":     reasoning,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PITCHER STRIKEOUT PROPS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -263,7 +579,9 @@ def score_k_prop(pitcher_name: str, pitcher_stats: dict,
 
     Uses normal distribution around projection to compute P(K > line).
     """
-    k9 = float(pitcher_stats.get("k9", pitcher_stats.get("strikeoutsPer9Inn", 0)) or 0)
+    k9 = float(pitcher_stats.get("k9",
+              pitcher_stats.get("k_per_9",
+              pitcher_stats.get("strikeoutsPer9Inn", 0))) or 0)
     if k9 < 1.0:
         return None   # no data
 
@@ -473,7 +791,11 @@ def score_all_props(target_date: str = None) -> list[dict]:
             hr_prop   = score_hr_prop(player, home_pitcher_opp, home_team,
                                       is_home=False, weather=weather)
             hits_prop = score_hits_prop(player, home_pitcher_opp, is_home=False)
-            for prop in (hr_prop, hits_prop):
+            tb_prop   = score_tb_prop(player, home_pitcher_opp, is_home=False)
+            rbi_prop  = score_rbi_prop(player, home_pitcher_opp, is_home=False)
+            r_prop    = score_runs_prop(player, home_pitcher_opp, is_home=False)
+            sb_prop   = score_sb_prop(player, home_pitcher_opp, is_home=False)
+            for prop in (hr_prop, hits_prop, tb_prop, rbi_prop, r_prop, sb_prop):
                 if prop:
                     all_props.append({
                         "game":      game_str,
@@ -488,7 +810,11 @@ def score_all_props(target_date: str = None) -> list[dict]:
             hr_prop   = score_hr_prop(player, away_pitcher_opp, home_team,
                                       is_home=True, weather=weather)
             hits_prop = score_hits_prop(player, away_pitcher_opp, is_home=True)
-            for prop in (hr_prop, hits_prop):
+            tb_prop   = score_tb_prop(player, away_pitcher_opp, is_home=True)
+            rbi_prop  = score_rbi_prop(player, away_pitcher_opp, is_home=True)
+            r_prop    = score_runs_prop(player, away_pitcher_opp, is_home=True)
+            sb_prop   = score_sb_prop(player, away_pitcher_opp, is_home=True)
+            for prop in (hr_prop, hits_prop, tb_prop, rbi_prop, r_prop, sb_prop):
                 if prop:
                     all_props.append({
                         "game":      game_str,
@@ -534,7 +860,12 @@ def score_all_props(target_date: str = None) -> list[dict]:
 
     # Sort by confidence descending
     all_props.sort(key=lambda x: x["confidence"], reverse=True)
-    log.info(f"Props scored: {len(all_props)} total | "
+    by_type = {}
+    for p in all_props:
+        by_type.setdefault(p["prop_type"], 0)
+        by_type[p["prop_type"]] += 1
+    type_summary = " | ".join(f"{k}:{v}" for k, v in sorted(by_type.items()))
+    log.info(f"Props scored: {len(all_props)} total — {type_summary} | "
              f"{sum(1 for p in all_props if p['tier']=='LOCK')} LOCKs | "
              f"{sum(1 for p in all_props if p['tier']=='STRONG')} STRONGs")
     return all_props

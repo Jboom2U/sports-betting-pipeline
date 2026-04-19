@@ -62,19 +62,25 @@ def fetch_hitter_full(player_id: int) -> dict:
             h   = int(s.get("hits",              0) or 0)
             bb  = int(s.get("baseOnBalls",        0) or 0)
             so  = int(s.get("strikeOuts",         0) or 0)
-            tb  = int(s.get("totalBases",         0) or 0)
-            rbi = int(s.get("rbi",                0) or 0)
+            tb  = int(s.get("totalBases",   0) or 0)
+            rbi = int(s.get("rbi",          0) or 0)
+            runs= int(s.get("runs",         0) or 0)
+            sb  = int(s.get("stolenBases",  0) or 0)
             result.update({
-                "pa":    pa, "hr": hr, "hits": h, "bb": bb,
-                "so":    so, "tb": tb, "rbi": rbi,
+                "pa":    pa,  "hr": hr, "hits": h, "bb": bb,
+                "so":    so,  "tb": tb, "rbi":  rbi,
+                "runs":  runs, "sb": sb,
                 "avg":   float(s.get("avg", "0") or 0),
                 "ops":   float(s.get("ops", "0") or 0),
                 "slg":   float(s.get("slg", "0") or 0),
                 "obp":   float(s.get("obp", "0") or 0),
-                "hr_per_pa": round(hr / pa, 4) if pa >= 20 else 0.035,
-                "h_per_pa":  round(h  / pa, 4) if pa >= 20 else 0.270,
-                "tb_per_pa": round(tb / pa, 4) if pa >= 20 else 0.400,
-                "k_rate":    round(so / pa, 4) if pa >= 20 else 0.220,
+                "hr_per_pa":  round(hr   / pa, 4) if pa >= 20 else 0.035,
+                "h_per_pa":   round(h    / pa, 4) if pa >= 20 else 0.270,
+                "tb_per_pa":  round(tb   / pa, 4) if pa >= 20 else 0.400,
+                "rbi_per_pa": round(rbi  / pa, 4) if pa >= 20 else 0.110,
+                "r_per_pa":   round(runs / pa, 4) if pa >= 20 else 0.130,
+                "sb_per_pa":  round(sb   / pa, 4) if pa >= 20 else 0.020,
+                "k_rate":     round(so   / pa, 4) if pa >= 20 else 0.220,
             })
     except Exception as e:
         log.debug(f"Season stats failed for {player_id}: {e}")
