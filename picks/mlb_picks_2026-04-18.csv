@@ -1,0 +1,30 @@
+date,game,type,label,conf,tier,reasoning
+2026-04-18,Toronto Blue Jays @ Arizona Diamondbacks,ML,Arizona Diamondbacks ML,0.777,LOCK,Max Scherzer ERA 5.41 [NEUTRAL] vs Zac Gallen ERA 4.75 [NEUTRAL] | Recent: Toronto Blue Jays 3.5 RPG (25% W) | Arizona Diamondbacks 6.2 RPG (75% W)
+2026-04-18,Cincinnati Reds @ Minnesota Twins,ML,Minnesota Twins ML,0.746,LOCK,Andrew Abbott ERA 3.04 [COLD] vs Taj Bradley ERA 5.30 [NEUTRAL] | Recent: Cincinnati Reds 3.0 RPG (75% W) | Minnesota Twins 6.2 RPG (50% W) | Line: Cincinnati Reds +114 | Minnesota Twins -133
+2026-04-18,St. Louis Cardinals @ Houston Astros,TOTAL,OVER 8.5,0.74,LOCK,Model projects 10.5 runs vs 9.0 line (2.0 run edge)
+2026-04-18,Toronto Blue Jays @ Arizona Diamondbacks,TOTAL,OVER 8.5,0.74,LOCK,Model projects 11.8 runs vs 8.5 line (3.3 run edge) | Weak pitching matchup (avg ERA 5.08)
+2026-04-18,New York Mets @ Chicago Cubs,ML,Chicago Cubs ML,0.707,LOCK,Freddy Peralta ERA 3.00 [NEUTRAL] vs Jameson Taillon ERA 3.49 [NEUTRAL] | Recent: New York Mets 1.8 RPG (0% W) | Chicago Cubs 10.0 RPG (75% W) | 💰 STEAM: Sharp $ on New York Mets (AGAINST model) | Line: New York Mets -66 | Chicago Cubs -111
+2026-04-18,Kansas City Royals @ New York Yankees,ML,New York Yankees ML,0.704,LOCK,Away SP TBD vs Will Warren ERA 4.16 [NEUTRAL] | Recent: Kansas City Royals 3.2 RPG (0% W) | New York Yankees 5.0 RPG (60% W) | Line: Kansas City Royals +146 | New York Yankees -173
+2026-04-18,Chicago White Sox @ Athletics,TOTAL,OVER 8.5,0.697,LOCK,Model projects 9.9 runs vs 10.0 line (1.4 run edge) | Weak pitching matchup (avg ERA 5.20)
+2026-04-18,Los Angeles Dodgers @ Colorado Rockies,ML,Los Angeles Dodgers ML,0.687,LOCK,Emmet Sheehan ERA 3.25 [NEUTRAL] (home SP TBD) | Recent: Los Angeles Dodgers 5.2 RPG (100% W) | Colorado Rockies 2.8 RPG (25% W) | Hitter park (117.0)
+2026-04-18,Los Angeles Dodgers @ Colorado Rockies,TOTAL,OVER 8.5,0.666,STRONG,Model projects 9.7 runs vs 8.5 line (1.2 run edge) | Coors-level hitter park (factor 117.0)
+2026-04-18,San Francisco Giants @ Washington Nationals,TOTAL,OVER 8.5,0.653,STRONG,Model projects 9.6 runs vs 10.0 line (1.1 run edge)
+2026-04-18,Milwaukee Brewers @ Miami Marlins,TOTAL,OVER 8.5,0.646,STRONG,Model projects 9.5 runs vs 8.0 line (1.0 run edge) | Pitcher-friendly park (factor 96.0)
+2026-04-18,Toronto Blue Jays @ Arizona Diamondbacks,RL,Arizona Diamondbacks -1.5,0.642,STRONG,ML conf 78% | Projected margin 3.5 runs | Arizona Diamondbacks 75% W last 10
+2026-04-18,San Diego Padres @ Los Angeles Angels,ML,Los Angeles Angels ML,0.632,STRONG,Recent: San Diego Padres 4.0 RPG (75% W) | Los Angeles Angels 8.0 RPG (60% W)
+2026-04-18,Baltimore Orioles @ Cleveland Guardians,ML,Cleveland Guardians ML,0.631,STRONG,Dean Kremer ERA 4.52 [NEUTRAL] vs Gavin Williams ERA 3.04 [NEUTRAL] | Recent: Baltimore Orioles 5.0 RPG (40% W) | Cleveland Guardians 5.0 RPG (40% W) | Line: Baltimore Orioles +115 | Cleveland Guardians -136
+2026-04-18,Baltimore Orioles @ Cleveland Guardians,TOTAL,UNDER 8.5,0.63,STRONG,Model projects 7.6 runs vs 8.0 line (0.9 run edge)
+2026-04-18,New York Mets @ Chicago Cubs,RL,Chicago Cubs -1.5,0.625,STRONG,ML conf 71% | Projected margin 2.5 runs | Chicago Cubs 75% W last 10
+2026-04-18,Cincinnati Reds @ Minnesota Twins,RL,Minnesota Twins -1.5,0.617,LEAN,ML conf 75% | Projected margin 2.3 runs | Minnesota Twins 50% W last 10
+2026-04-18,San Diego Padres @ Los Angeles Angels,TOTAL,OVER 8.5,0.61,LEAN,Model projects 9.3 runs vs 8.5 line (0.8 run edge)
+2026-04-18,New York Mets @ Chicago Cubs,TOTAL,OVER 8.5,0.601,LEAN,Model projects 9.2 runs vs 8.0 line (0.7 run edge) | Elite pitching matchup (avg ERA 3.25)
+2026-04-18,Tampa Bay Rays @ Pittsburgh Pirates,ML,Pittsburgh Pirates ML,0.585,LEAN,Recent: Tampa Bay Rays 5.5 RPG (75% W) | Pittsburgh Pirates 6.8 RPG (60% W) | Line: Tampa Bay Rays +141 | Pittsburgh Pirates -166
+2026-04-18,Kansas City Royals @ New York Yankees,RL,New York Yankees -1.5,0.583,LEAN,ML conf 70% | Projected margin 1.6 runs
+2026-04-18,Detroit Tigers @ Boston Red Sox,TOTAL,OVER 8.5,0.581,LEAN,Model projects 9.1 runs vs 7.0 line (0.6 run edge)
+2026-04-18,Tampa Bay Rays @ Pittsburgh Pirates,TOTAL,OVER 8.5,0.579,LEAN,Model projects 9.1 runs vs 7.0 line (0.6 run edge)
+2026-04-18,Atlanta Braves @ Philadelphia Phillies,TOTAL,UNDER 8.5,0.574,LEAN,Model projects 8.0 runs vs 7.0 line (0.5 run edge) | Elite pitching matchup (avg ERA 2.42)
+2026-04-18,Atlanta Braves @ Philadelphia Phillies,ML,Atlanta Braves ML,0.573,LEAN,Chris Sale ERA 2.50 [NEUTRAL] vs Cristopher Sánchez ERA 2.33 [NEUTRAL] | Recent: Atlanta Braves 6.2 RPG (75% W) | Philadelphia Phillies 4.8 RPG (25% W) | Line: Atlanta Braves +109 | Philadelphia Phillies -127
+2026-04-18,Kansas City Royals @ New York Yankees,TOTAL,UNDER 8.5,0.57,LEAN,Model projects 8.0 runs vs 8.0 line (0.5 run edge)
+2026-04-18,Los Angeles Dodgers @ Colorado Rockies,RL,Los Angeles Dodgers -1.5,0.569,LEAN,ML conf 69% | Projected margin 2.3 runs | Los Angeles Dodgers 100% W last 10
+2026-04-18,Texas Rangers @ Seattle Mariners,TOTAL,UNDER 8.5,0.559,LEAN,Model projects 8.1 runs vs 7.0 line (0.4 run edge)
+2026-04-18,Cincinnati Reds @ Minnesota Twins,TOTAL,OVER 8.5,0.553,LEAN,Model projects 8.9 runs vs 8.0 line (0.4 run edge)

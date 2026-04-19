@@ -1,0 +1,10 @@
+date,game,type,label,conf,tier,reasoning
+2026-04-16,Los Angeles Angels @ New York Yankees,ML,New York Yankees ML,0.744,LOCK,Away SP TBD vs Max Fried ERA 2.71 [NEUTRAL] | Recent: Los Angeles Angels 7.0 RPG (33% W) | New York Yankees 5.7 RPG (67% W) | 💰 STEAM: Sharp $ on New York Yankees (WITH model) | Line: Los Angeles Angels +230 | New York Yankees -280
+2026-04-16,Tampa Bay Rays @ Chicago White Sox,TOTAL,OVER 8.5,0.74,LOCK,Model projects 11.1 runs vs 8.0 line (2.6 run edge)
+2026-04-16,Tampa Bay Rays @ Chicago White Sox,ML,Tampa Bay Rays ML,0.636,STRONG,Steven Matz ERA 5.00 [NEUTRAL] (home SP TBD) | Recent: Tampa Bay Rays 8.0 RPG (100% W) | Chicago White Sox 4.0 RPG (0% W) | Line: Tampa Bay Rays -124 | Chicago White Sox +106
+2026-04-16,Texas Rangers @ Athletics,ML,Texas Rangers ML,0.615,LEAN,Jack Leiter ERA 3.97 [NEUTRAL] vs Jacob Lopez ERA 3.65 [COLD] | Recent: Texas Rangers 4.7 RPG (33% W) | Athletics 3.0 RPG (67% W) | Line: Texas Rangers -116 | Athletics +19
+2026-04-16,Texas Rangers @ Athletics,TOTAL,UNDER 8.5,0.607,LEAN,Model projects 7.8 runs vs 9.0 line (0.8 run edge)
+2026-04-16,Seattle Mariners @ San Diego Padres,TOTAL,OVER 8.5,0.59,LEAN,Model projects 9.1 runs vs 8.5 line (0.6 run edge) | Pitcher-friendly park (factor 96.0)
+2026-04-16,Baltimore Orioles @ Cleveland Guardians,TOTAL,OVER 8.5,0.587,LEAN,Model projects 9.1 runs vs 8.0 line (0.6 run edge)
+2026-04-16,Los Angeles Angels @ New York Yankees,RL,New York Yankees -1.5,0.575,LEAN,ML conf 74% | Projected margin 1.6 runs | New York Yankees 67% W last 10
+2026-04-16,Seattle Mariners @ San Diego Padres,ML,San Diego Padres ML,0.551,LEAN,Luis Castillo ERA 3.89 [NEUTRAL] vs Walker Buehler ERA 4.60 [NEUTRAL] | Recent: Seattle Mariners 4.3 RPG (33% W) | San Diego Padres 5.5 RPG (100% W) | Pitcher park (96.0)
