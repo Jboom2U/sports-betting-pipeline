@@ -1032,19 +1032,21 @@ function renderTeamView(team){
     (p.away === away && p.home === home) ||
     (p.game && p.game.includes(away) && p.game.includes(home))
   );
-  const mlPick = gamePicks.find(p => p.type === "ML");
+  const mlPick    = gamePicks.find(p => p.type === "ML");
   const totalPick = gamePicks.find(p => p.type === "TOTAL");
 
-  // Prediction bars
-  let awayConf = 50, homeConf = 50;
+  // Look up raw win probabilities from DATA_GAMES (available for ALL games)
+  const gameData = DATA_GAMES.find(g => g.away === away && g.home === home);
+
+  // Prediction bars — use DATA_GAMES wp for all games, overlay pick tier if one exists
+  let awayConf = gameData ? gameData.away_wp : 50;
+  let homeConf = gameData ? gameData.home_wp : 50;
   let awayPick = "", homePick = "";
   if(mlPick){
-    const pickedHome = mlPick.home && mlPick.label && mlPick.label.includes(home.split(" ").pop());
+    const pickedHome = mlPick.label && mlPick.label.includes(home.split(" ").pop());
     if(pickedHome){
-      homeConf = mlPick.conf; awayConf = Math.round((100 - mlPick.conf) * 10) / 10;
       homePick = `✓ Model Pick (${mlPick.tier})`;
     } else {
-      awayConf = mlPick.conf; homeConf = Math.round((100 - mlPick.conf) * 10) / 10;
       awayPick = `✓ Model Pick (${mlPick.tier})`;
     }
   }
@@ -1127,8 +1129,8 @@ function renderTeamView(team){
         </div>
       </div>
 
-      <!-- Prediction bars (today's games only) -->
-      ${isToday && mlPick ? `
+      <!-- Prediction bars (today's games only — always shown when DATA_GAMES has the game) -->
+      ${isToday && gameData ? `
       <div class="team-pred-row">
         <div class="team-pred-box">
           <div class="team-pred-label">${away}</div>
