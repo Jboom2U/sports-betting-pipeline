@@ -1,0 +1,8 @@
+game_id,away_team,home_team,game_date,snap1_time,snap2_time,ml_away_open,ml_away_now,ml_away_move,ml_home_open,ml_home_now,ml_home_move,total_open,total_now,total_move,ml_signal,total_signal,sharp_side,timestamp
+0e45c1c07e2b9a60ebf70c74f0180cb6,Detroit Tigers,Boston Red Sox,2026-04-20,2026-04-20T11:43:10Z,2026-04-20T11:43:34Z,117,117,0.0,-138,-138,0.0,8,8,0.0,STABLE,STABLE,,2026-04-20 07:43:34
+8b84f5c8a8eec852cbc8ab761818b5dc,Houston Astros,Cleveland Guardians,2026-04-20,2026-04-20T11:43:10Z,2026-04-20T11:43:34Z,-63,-63,0.0,-115,-115,0.0,8,8,0.0,STABLE,STABLE,,2026-04-20 07:43:34
+eaa622d11f4b04e532bbea382e56ca52,Cincinnati Reds,Tampa Bay Rays,2026-04-20,2026-04-20T11:43:10Z,2026-04-20T11:43:34Z,-36,-36,0.0,-117,-117,0.0,8,8,0.0,STABLE,STABLE,,2026-04-20 07:43:34
+e50158ffe72f093d4037185c9d31a5eb,St. Louis Cardinals,Miami Marlins,2026-04-20,2026-04-20T11:43:10Z,2026-04-20T11:43:34Z,112,112,0.0,-132,-132,0.0,8,8,0.0,STABLE,STABLE,,2026-04-20 07:43:34
+6e7862ded6af1d5c6d82f19895ccd191,Atlanta Braves,Washington Nationals,2026-04-20,2026-04-20T11:43:10Z,2026-04-20T11:43:34Z,-166,-166,0.0,140,140,0.0,8,8,0.0,STABLE,STABLE,,2026-04-20 07:43:34
+6a0b76ac89fd72cc8272b53212004e44,Baltimore Orioles,Kansas City Royals,2026-04-20,2026-04-20T11:43:10Z,2026-04-20T11:43:34Z,-116,-116,0.0,-61,-61,0.0,9,9,0.0,STABLE,STABLE,,2026-04-20 07:43:34
+0d70750c31542bcfe935969cb9ccc66e,Philadelphia Phillies,Chicago Cubs,2026-04-20,2026-04-20T11:43:10Z,2026-04-20T11:43:34Z,-114,-114,0.0,-104,-104,0.0,8,8,0.0,STABLE,STABLE,,2026-04-20 07:43:34
