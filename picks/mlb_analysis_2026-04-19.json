@@ -1,0 +1,403 @@
+{
+  "date": "2026-04-19",
+  "graded_picks": [
+    {
+      "label": "Chicago Cubs ML",
+      "game": "New York Mets @ Chicago Cubs",
+      "type": "ML",
+      "tier": "LOCK",
+      "conf": 90.0,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "David Peterson ERA 4.23 vs Javier Assad ERA 3.35 | Recent: New York Mets 1.8 RPG (0% W) | Chicago Cubs 10.0 RPG (75% W) | \ud83d\udcb0 STEAM: Sharp $ on Chicago Cubs (WITH model)"
+    },
+    {
+      "label": "New York Yankees ML",
+      "game": "Kansas City Royals @ New York Yankees",
+      "type": "ML",
+      "tier": "LOCK",
+      "conf": 80.1,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Cole Ragans ERA 4.57 vs Ryan Weathers ERA 3.64 | Recent: Kansas City Royals 3.2 RPG (0% W) | New York Yankees 5.0 RPG (60% W)"
+    },
+    {
+      "label": "UNDER 8.8",
+      "game": "Detroit Tigers @ Boston Red Sox",
+      "type": "TOTAL",
+      "tier": "LOCK",
+      "conf": 74.0,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Model projects 6.9 runs vs 8.8 line (1.9 run edge) | Elite pitching matchup (avg ERA 3.35)"
+    },
+    {
+      "label": "UNDER 8.4",
+      "game": "Baltimore Orioles @ Cleveland Guardians",
+      "type": "TOTAL",
+      "tier": "LOCK",
+      "conf": 74.0,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "Model projects 6.6 runs vs 8.4 line (1.8 run edge) | Elite pitching matchup (avg ERA 2.67)"
+    },
+    {
+      "label": "OVER 8.5",
+      "game": "St. Louis Cardinals @ Houston Astros",
+      "type": "TOTAL",
+      "tier": "LOCK",
+      "conf": 74.0,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Model projects 10.3 runs vs 8.5 line (1.8 run edge)"
+    },
+    {
+      "label": "OVER 8.3",
+      "game": "San Diego Padres @ Los Angeles Angels",
+      "type": "TOTAL",
+      "tier": "LOCK",
+      "conf": 74.0,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "Model projects 11.0 runs vs 8.3 line (2.7 run edge) | Weak pitching matchup (avg ERA 5.33)"
+    },
+    {
+      "label": "Miami Marlins ML",
+      "game": "Milwaukee Brewers @ Miami Marlins",
+      "type": "ML",
+      "tier": "LOCK",
+      "conf": 72.6,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Jacob Misiorowski ERA 4.71 vs Eury P\u00e9rez ERA 3.85 | Recent: Milwaukee Brewers 4.5 RPG (75% W) | Miami Marlins 5.8 RPG (25% W) | \ud83d\udcb0 STEAM: Sharp $ on Miami Marlins (WITH model) | Pitcher park (96.0)"
+    },
+    {
+      "label": "UNDER 8.4",
+      "game": "Texas Rangers @ Seattle Mariners",
+      "type": "TOTAL",
+      "tier": "LOCK",
+      "conf": 72.4,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Model projects 6.8 runs vs 8.4 line (1.6 run edge) | Elite pitching matchup (avg ERA 3.46)"
+    },
+    {
+      "label": "Atlanta Braves ML",
+      "game": "Atlanta Braves @ Philadelphia Phillies",
+      "type": "ML",
+      "tier": "LOCK",
+      "conf": 72.4,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Grant Holmes ERA 4.45 (home SP TBD) | Recent: Atlanta Braves 6.2 RPG (75% W) | Philadelphia Phillies 4.8 RPG (25% W) | \ud83d\udcb0 STEAM: Sharp $ on Atlanta Braves (WITH model)"
+    },
+    {
+      "label": "Arizona Diamondbacks ML",
+      "game": "Toronto Blue Jays @ Arizona Diamondbacks",
+      "type": "ML",
+      "tier": "LOCK",
+      "conf": 71.7,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "Kevin Gausman ERA 3.51 vs Ryne Nelson ERA 3.19 | Recent: Toronto Blue Jays 3.5 RPG (25% W) | Arizona Diamondbacks 6.2 RPG (75% W)"
+    },
+    {
+      "label": "Chicago Cubs -1.5",
+      "game": "New York Mets @ Chicago Cubs",
+      "type": "RL",
+      "tier": "LOCK",
+      "conf": 70.0,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "ML conf 90% | Projected margin 4.3 runs | Chicago Cubs 75% W last 10"
+    },
+    {
+      "label": "OVER 8.8",
+      "game": "Atlanta Braves @ Philadelphia Phillies",
+      "type": "TOTAL",
+      "tier": "LOCK",
+      "conf": 70.0,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "Model projects 10.2 runs vs 8.8 line (1.4 run edge)"
+    },
+    {
+      "label": "OVER 8.2",
+      "game": "Milwaukee Brewers @ Miami Marlins",
+      "type": "TOTAL",
+      "tier": "LOCK",
+      "conf": 68.4,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "Model projects 9.5 runs vs 8.2 line (1.3 run edge) | Pitcher-friendly park (factor 96.0)"
+    },
+    {
+      "label": "New York Yankees -1.5",
+      "game": "Kansas City Royals @ New York Yankees",
+      "type": "RL",
+      "tier": "STRONG",
+      "conf": 66.1,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "ML conf 80% | Projected margin 2.9 runs"
+    },
+    {
+      "label": "OVER 8.8",
+      "game": "New York Mets @ Chicago Cubs",
+      "type": "TOTAL",
+      "tier": "STRONG",
+      "conf": 66.0,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "Model projects 9.9 runs vs 8.8 line (1.1 run edge)"
+    },
+    {
+      "label": "Los Angeles Dodgers ML",
+      "game": "Los Angeles Dodgers @ Colorado Rockies",
+      "type": "ML",
+      "tier": "STRONG",
+      "conf": 65.8,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "Roki Sasaki ERA 4.47 vs Michael Lorenzen ERA 4.30 | Recent: Los Angeles Dodgers 5.2 RPG (100% W) | Colorado Rockies 2.8 RPG (25% W) | \ud83d\udcb0 STEAM: Sharp $ on Colorado Rockies (AGAINST model) | Hitter park (117.0)"
+    },
+    {
+      "label": "OVER 8.5",
+      "game": "San Francisco Giants @ Washington Nationals",
+      "type": "TOTAL",
+      "tier": "STRONG",
+      "conf": 65.1,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "Model projects 9.6 runs vs 8.5 line (1.1 run edge)"
+    },
+    {
+      "label": "Boston Red Sox ML",
+      "game": "Detroit Tigers @ Boston Red Sox",
+      "type": "ML",
+      "tier": "STRONG",
+      "conf": 64.3,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "Framber Valdez ERA 3.97 vs Garrett Crochet ERA 2.72 | Recent: Detroit Tigers 3.5 RPG (75% W) | Boston Red Sox 4.0 RPG (50% W) | \ud83d\udcb0 DRIFT: Sharp $ on Boston Red Sox (WITH model)"
+    },
+    {
+      "label": "OVER 9.9",
+      "game": "Los Angeles Dodgers @ Colorado Rockies",
+      "type": "TOTAL",
+      "tier": "LEAN",
+      "conf": 59.7,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Model projects 10.6 runs vs 9.9 line (0.7 run edge) | Coors-level hitter park (factor 117.0)"
+    },
+    {
+      "label": "Arizona Diamondbacks -1.5",
+      "game": "Toronto Blue Jays @ Arizona Diamondbacks",
+      "type": "RL",
+      "tier": "LEAN",
+      "conf": 59.3,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "ML conf 72% | Projected margin 1.8 runs | Arizona Diamondbacks 75% W last 10"
+    },
+    {
+      "label": "Los Angeles Dodgers -1.5",
+      "game": "Los Angeles Dodgers @ Colorado Rockies",
+      "type": "RL",
+      "tier": "LEAN",
+      "conf": 58.7,
+      "result": "LOSS",
+      "profit": -1.0,
+      "reasoning": "ML conf 66% | Projected margin 2.9 runs | Los Angeles Dodgers 100% W last 10"
+    },
+    {
+      "label": "St. Louis Cardinals ML",
+      "game": "St. Louis Cardinals @ Houston Astros",
+      "type": "ML",
+      "tier": "LEAN",
+      "conf": 57.1,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Matthew Liberatore ERA 4.30 vs Mike Burrows ERA 3.88 | Recent: St. Louis Cardinals 5.8 RPG (75% W) | Houston Astros 3.6 RPG (40% W) | \ud83d\udcb0 DRIFT: Sharp $ on St. Louis Cardinals (WITH model)"
+    },
+    {
+      "label": "OVER 8.3",
+      "game": "Tampa Bay Rays @ Pittsburgh Pirates",
+      "type": "TOTAL",
+      "tier": "LEAN",
+      "conf": 56.4,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Model projects 8.8 runs vs 8.3 line (0.4 run edge)"
+    },
+    {
+      "label": "Miami Marlins -1.5",
+      "game": "Milwaukee Brewers @ Miami Marlins",
+      "type": "RL",
+      "tier": "LEAN",
+      "conf": 56.1,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "ML conf 73% | Projected margin 1.6 runs | Miami Marlins 25% W last 10"
+    },
+    {
+      "label": "Atlanta Braves -1.5",
+      "game": "Atlanta Braves @ Philadelphia Phillies",
+      "type": "RL",
+      "tier": "LEAN",
+      "conf": 55.9,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "ML conf 72% | Projected margin 2.3 runs | Atlanta Braves 75% W last 10"
+    },
+    {
+      "label": "San Diego Padres ML",
+      "game": "San Diego Padres @ Los Angeles Angels",
+      "type": "ML",
+      "tier": "LEAN",
+      "conf": 55.8,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Michael King ERA 4.01 vs Reid Detmers ERA 6.66 | Recent: San Diego Padres 4.0 RPG (75% W) | Los Angeles Angels 8.0 RPG (60% W) | \ud83d\udcb0 STEAM: Sharp $ on San Diego Padres (WITH model)"
+    },
+    {
+      "label": "Chicago White Sox ML",
+      "game": "Chicago White Sox @ Athletics",
+      "type": "ML",
+      "tier": "LEAN",
+      "conf": 55.8,
+      "result": "WIN",
+      "profit": 0.909,
+      "reasoning": "Away SP TBD vs Jeffrey Springs ERA 4.32 | Recent: Chicago White Sox 5.0 RPG (25% W) | Athletics 3.4 RPG (40% W)"
+    }
+  ],
+  "metrics": {
+    "overall": {
+      "wins": 15,
+      "losses": 12,
+      "pushes": 0,
+      "total": 27,
+      "profit": 1.636,
+      "staked": 27.0,
+      "win_rate": 0.556,
+      "roi": 0.061
+    },
+    "by_tier": {
+      "LOCK": {
+        "wins": 7,
+        "losses": 6,
+        "pushes": 0,
+        "total": 13,
+        "profit": 0.364,
+        "staked": 13.0,
+        "win_rate": 0.538,
+        "roi": 0.028
+      },
+      "STRONG": {
+        "wins": 1,
+        "losses": 4,
+        "pushes": 0,
+        "total": 5,
+        "profit": -3.091,
+        "staked": 5.0,
+        "win_rate": 0.2,
+        "roi": -0.618
+      },
+      "LEAN": {
+        "wins": 7,
+        "losses": 2,
+        "pushes": 0,
+        "total": 9,
+        "profit": 4.364,
+        "staked": 9.0,
+        "win_rate": 0.778,
+        "roi": 0.485
+      }
+    },
+    "by_type": {
+      "ML": {
+        "wins": 7,
+        "losses": 3,
+        "pushes": 0,
+        "total": 10,
+        "profit": 3.364,
+        "staked": 10.0,
+        "win_rate": 0.7,
+        "roi": 0.336
+      },
+      "TOTAL": {
+        "wins": 5,
+        "losses": 6,
+        "pushes": 0,
+        "total": 11,
+        "profit": -1.455,
+        "staked": 11.0,
+        "win_rate": 0.455,
+        "roi": -0.132
+      },
+      "RL": {
+        "wins": 3,
+        "losses": 3,
+        "pushes": 0,
+        "total": 6,
+        "profit": -0.273,
+        "staked": 6.0,
+        "win_rate": 0.5,
+        "roi": -0.045
+      }
+    },
+    "over_bias": {
+      "wins": 3,
+      "losses": 5,
+      "pushes": 0,
+      "total": 8,
+      "profit": -2.273,
+      "staked": 8.0,
+      "win_rate": 0.375,
+      "roi": -0.284
+    },
+    "under_bias": {
+      "wins": 2,
+      "losses": 1,
+      "pushes": 0,
+      "total": 3,
+      "profit": 0.818,
+      "staked": 3.0,
+      "win_rate": 0.667,
+      "roi": 0.273
+    }
+  },
+  "findings": [
+    "Overall: 15-12 (55.6% WR) | ROI: +6.1% on 27 units staked",
+    "LOCK tier: 7-6 (53.8%) \u2014 \u26a0 underperforming for highest-confidence tier",
+    "STRONG tier: 1-4 (20.0%) \u2014 \u26a0 below 62% expected threshold",
+    "LEAN tier: 7-2 (77.8%) \u2014 \u2713 solid for LEAN range",
+    "OVERs: 3-5 (37.5%) \u2014 \u26a0 OVER bias confirmed \u2014 model systematically projects too many runs",
+    "UNDERs: 2-1 (66.7%)",
+    "Moneyline: 7-3 (70.0%) | Profit: +3.36u \u2014 strongest segment today"
+  ],
+  "recommendations": [
+    {
+      "priority": "HIGH",
+      "area": "OVER bias",
+      "action": "OVERs went 3-5 (38%). Retune run-expectancy baseline downward or apply a 5-10% shrinkage to projected run totals before comparing to the line."
+    },
+    {
+      "priority": "HIGH",
+      "area": "LOCK tier calibration",
+      "action": "LOCK picks underperformed. Raise LOCK threshold to 72%+ or remove heavy favorites (worse than -200) from LOCK tier."
+    },
+    {
+      "priority": "MED",
+      "area": "STRONG tier calibration",
+      "action": "STRONG tier hit below 50%. Consider raising threshold to 65%+ or reviewing feature weights for 62-68% confidence range."
+    },
+    {
+      "priority": "MED",
+      "area": "TBD starter suppression",
+      "action": "2 picks included games with TBD starters. Auto-downgrade picks to LEAN (or suppress TOTAL picks entirely) when either SP is TBD at publish time."
+    }
+  ],
+  "generated_at": "2026-04-20T09:47:12.889207"
+}
