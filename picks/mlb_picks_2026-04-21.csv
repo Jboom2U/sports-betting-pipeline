@@ -2,7 +2,7 @@ date,game,type,label,conf,tier,reasoning
 2026-04-21,St. Louis Cardinals @ Miami Marlins,TOTAL,OVER 8.0,0.74,LOCK,Model projects 11.2 runs vs 8.0 line (3.2 run edge) | Pitcher-friendly park (factor 96.0) | Weak pitching matchup (avg ERA 5.32)
 2026-04-21,New York Yankees @ Boston Red Sox,TOTAL,OVER 8.0,0.74,LOCK,Model projects 10.4 runs vs 8.0 line (2.4 run edge)
 2026-04-21,Philadelphia Phillies @ Chicago Cubs,TOTAL,OVER 8.0,0.74,LOCK,Model projects 10.5 runs vs 8.0 line (2.5 run edge)
-2026-04-21,Houston Astros @ Cleveland Guardians,ML,Cleveland Guardians ML,0.7343,LOCK,Away SP TBD vs Parker Messick ERA 2.65 [HOT] | Recent: Houston Astros 4.6 RPG (38% W) | Cleveland Guardians 4.9 RPG (50% W) | Line: Houston Astros +122 | Cleveland Guardians -144
+2026-04-21,Houston Astros @ Cleveland Guardians,ML,Cleveland Guardians ML,0.7343,LOCK,Away SP TBD vs Parker Messick ERA 2.65 [HOT] | Recent: Houston Astros 4.6 RPG (38% W) | Cleveland Guardians 4.9 RPG (50% W) | Line: Houston Astros +121 | Cleveland Guardians -143
 2026-04-21,Minnesota Twins @ New York Mets,TOTAL,UNDER 8.0,0.73,LOCK,Model projects 6.4 runs vs 8.0 line (1.6 run edge) | Elite pitching matchup (avg ERA 2.88)
 2026-04-21,Chicago White Sox @ Arizona Diamondbacks,TOTAL,OVER 8.6,0.7257,LOCK,Model projects 10.2 runs vs 8.6 line (1.6 run edge)
 2026-04-21,Philadelphia Phillies @ Chicago Cubs,ML,Chicago Cubs ML,0.7191,LOCK,Recent: Philadelphia Phillies 3.3 RPG (14% W) | Chicago Cubs 7.3 RPG (86% W) | Line: Philadelphia Phillies +61 | Chicago Cubs -119
@@ -11,7 +11,7 @@ date,game,type,label,conf,tier,reasoning
 2026-04-21,Atlanta Braves @ Washington Nationals,ML,Atlanta Braves ML,0.6523,STRONG,Recent: Atlanta Braves 5.9 RPG (86% W) | Washington Nationals 4.5 RPG (38% W) | Line: Atlanta Braves -136 | Washington Nationals +115
 2026-04-21,Toronto Blue Jays @ Los Angeles Angels,TOTAL,OVER 8.3,0.6443,STRONG,Model projects 9.3 runs vs 8.3 line (1.0 run edge)
 2026-04-21,Chicago White Sox @ Arizona Diamondbacks,ML,Arizona Diamondbacks ML,0.6327,STRONG,Recent: Chicago White Sox 5.5 RPG (33% W) | Arizona Diamondbacks 5.8 RPG (67% W)
-2026-04-21,Minnesota Twins @ New York Mets,ML,New York Mets ML,0.6306,STRONG,Away SP TBD vs Nolan Mclean ERA 1.55 [HOT] | Recent: Minnesota Twins 5.5 RPG (33% W) | New York Mets 1.7 RPG (0% W) | Line: Minnesota Twins +151 | New York Mets -180
+2026-04-21,Minnesota Twins @ New York Mets,ML,New York Mets ML,0.6306,STRONG,Away SP TBD vs Nolan Mclean ERA 1.55 [HOT] | Recent: Minnesota Twins 5.5 RPG (33% W) | New York Mets 1.7 RPG (0% W) | Line: Minnesota Twins +150 | New York Mets -178
 2026-04-21,Baltimore Orioles @ Kansas City Royals,TOTAL,UNDER 9.0,0.6171,LEAN,Model projects 8.2 runs vs 9.0 line (0.8 run edge)
 2026-04-21,Los Angeles Dodgers @ San Francisco Giants,TOTAL,OVER 8.1,0.6157,LEAN,Model projects 8.9 runs vs 8.1 line (0.8 run edge) | Pitcher-friendly park (factor 95.0)
 2026-04-21,New York Yankees @ Boston Red Sox,ML,New York Yankees ML,0.6123,LEAN,Recent: New York Yankees 6.4 RPG (71% W) | Boston Red Sox 3.9 RPG (43% W) | Line: New York Yankees -20 | Boston Red Sox -117
