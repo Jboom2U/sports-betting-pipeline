@@ -1,26 +1,24 @@
 date,game,type,label,conf,tier,reasoning
-2026-04-21,Houston Astros @ Cleveland Guardians,ML,Cleveland Guardians ML,0.8027,LOCK,Away SP TBD vs Parker Messick ERA 2.65 | Recent: Houston Astros 4.0 RPG (29% W) | Cleveland Guardians 5.3 RPG (57% W) | 💰 STEAM: Sharp $ on Cleveland Guardians (WITH model) | Line: Houston Astros +122 | Cleveland Guardians -144
-2026-04-21,Philadelphia Phillies @ Chicago Cubs,ML,Chicago Cubs ML,0.7603,LOCK,Recent: Philadelphia Phillies 3.7 RPG (17% W) | Chicago Cubs 7.7 RPG (83% W) | 💰 STEAM: Sharp $ on Chicago Cubs (WITH model) | Line: Philadelphia Phillies +61 | Chicago Cubs -119
-2026-04-21,St. Louis Cardinals @ Miami Marlins,TOTAL,OVER 8.0,0.74,LOCK,Model projects 10.9 runs vs 8.0 line (2.9 run edge) | Pitcher-friendly park (factor 96.0) | Weak pitching matchup (avg ERA 5.32)
-2026-04-21,New York Yankees @ Boston Red Sox,TOTAL,OVER 8.0,0.74,LOCK,Model projects 10.1 runs vs 8.0 line (2.1 run edge)
-2026-04-21,Minnesota Twins @ New York Mets,TOTAL,UNDER 8.0,0.74,LOCK,Model projects 6.3 runs vs 8.0 line (1.7 run edge) | Elite pitching matchup (avg ERA 2.88)
-2026-04-21,Philadelphia Phillies @ Chicago Cubs,TOTAL,OVER 8.0,0.74,LOCK,Model projects 10.8 runs vs 8.0 line (2.8 run edge)
+2026-04-21,St. Louis Cardinals @ Miami Marlins,TOTAL,OVER 8.0,0.74,LOCK,Model projects 11.2 runs vs 8.0 line (3.2 run edge) | Pitcher-friendly park (factor 96.0) | Weak pitching matchup (avg ERA 5.32)
+2026-04-21,New York Yankees @ Boston Red Sox,TOTAL,OVER 8.0,0.74,LOCK,Model projects 10.4 runs vs 8.0 line (2.4 run edge)
+2026-04-21,Philadelphia Phillies @ Chicago Cubs,TOTAL,OVER 8.0,0.74,LOCK,Model projects 10.5 runs vs 8.0 line (2.5 run edge)
+2026-04-21,Houston Astros @ Cleveland Guardians,ML,Cleveland Guardians ML,0.7343,LOCK,Away SP TBD vs Parker Messick ERA 2.65 [HOT] | Recent: Houston Astros 4.6 RPG (38% W) | Cleveland Guardians 4.9 RPG (50% W) | Line: Houston Astros +122 | Cleveland Guardians -144
+2026-04-21,Minnesota Twins @ New York Mets,TOTAL,UNDER 8.0,0.73,LOCK,Model projects 6.4 runs vs 8.0 line (1.6 run edge) | Elite pitching matchup (avg ERA 2.88)
 2026-04-21,Chicago White Sox @ Arizona Diamondbacks,TOTAL,OVER 8.6,0.7257,LOCK,Model projects 10.2 runs vs 8.6 line (1.6 run edge)
-2026-04-21,Atlanta Braves @ Washington Nationals,TOTAL,OVER 8.0,0.6743,STRONG,Model projects 9.2 runs vs 8.0 line (1.2 run edge)
-2026-04-21,Toronto Blue Jays @ Los Angeles Angels,TOTAL,OVER 8.3,0.67,STRONG,Model projects 9.5 runs vs 8.3 line (1.2 run edge)
-2026-04-21,San Diego Padres @ Colorado Rockies,TOTAL,UNDER 9.9,0.6529,STRONG,Model projects 8.8 runs vs 9.9 line (1.1 run edge) | Coors-level hitter park (factor 117.0)
-2026-04-21,Minnesota Twins @ New York Mets,ML,New York Mets ML,0.6434,STRONG,Away SP TBD vs Nolan Mclean ERA 1.55 | Recent: Minnesota Twins 5.5 RPG (33% W) | New York Mets 1.7 RPG (0% W) | Line: Minnesota Twins +151 | New York Mets -180
-2026-04-21,Baltimore Orioles @ Kansas City Royals,TOTAL,UNDER 9.0,0.6371,STRONG,Model projects 8.0 runs vs 9.0 line (1.0 run edge)
+2026-04-21,Philadelphia Phillies @ Chicago Cubs,ML,Chicago Cubs ML,0.7191,LOCK,Recent: Philadelphia Phillies 3.3 RPG (14% W) | Chicago Cubs 7.3 RPG (86% W) | Line: Philadelphia Phillies +61 | Chicago Cubs -119
+2026-04-21,Atlanta Braves @ Washington Nationals,TOTAL,OVER 8.0,0.7071,LOCK,Model projects 9.4 runs vs 8.0 line (1.4 run edge)
+2026-04-21,San Diego Padres @ Colorado Rockies,TOTAL,UNDER 9.9,0.6571,STRONG,Model projects 8.8 runs vs 9.9 line (1.1 run edge) | Coors-level hitter park (factor 117.0)
+2026-04-21,Atlanta Braves @ Washington Nationals,ML,Atlanta Braves ML,0.6523,STRONG,Recent: Atlanta Braves 5.9 RPG (86% W) | Washington Nationals 4.5 RPG (38% W) | Line: Atlanta Braves -136 | Washington Nationals +115
+2026-04-21,Toronto Blue Jays @ Los Angeles Angels,TOTAL,OVER 8.3,0.6443,STRONG,Model projects 9.3 runs vs 8.3 line (1.0 run edge)
 2026-04-21,Chicago White Sox @ Arizona Diamondbacks,ML,Arizona Diamondbacks ML,0.6327,STRONG,Recent: Chicago White Sox 5.5 RPG (33% W) | Arizona Diamondbacks 5.8 RPG (67% W)
-2026-04-21,New York Yankees @ Boston Red Sox,ML,New York Yankees ML,0.6326,STRONG,Recent: New York Yankees 6.4 RPG (71% W) | Boston Red Sox 3.2 RPG (33% W) | Line: New York Yankees -20 | Boston Red Sox -117
-2026-04-21,Houston Astros @ Cleveland Guardians,RL,Cleveland Guardians -1.5,0.6222,STRONG,ML conf 80% | Projected margin 2.2 runs
-2026-04-21,Athletics @ Seattle Mariners,ML,Seattle Mariners ML,0.6127,LEAN,Recent: Athletics 4.0 RPG (43% W) | Seattle Mariners 3.9 RPG (43% W)
-2026-04-21,Atlanta Braves @ Washington Nationals,ML,Atlanta Braves ML,0.6036,LEAN,Recent: Atlanta Braves 5.3 RPG (83% W) | Washington Nationals 4.6 RPG (43% W) | 💰 DRIFT: Sharp $ on Washington Nationals (AGAINST model) | Line: Atlanta Braves -136 | Washington Nationals +115
-2026-04-21,Cincinnati Reds @ Tampa Bay Rays,TOTAL,OVER 8.0,0.5957,LEAN,Model projects 8.7 runs vs 8.0 line (0.7 run edge) | Pitcher-friendly park (factor 96.0)
-2026-04-21,Philadelphia Phillies @ Chicago Cubs,RL,Chicago Cubs -1.5,0.5882,LEAN,ML conf 76% | Projected margin 2.3 runs | Chicago Cubs 83% W last 10
-2026-04-21,Los Angeles Dodgers @ San Francisco Giants,ML,Los Angeles Dodgers ML,0.5788,LEAN,Recent: Los Angeles Dodgers 5.0 RPG (67% W) | San Francisco Giants 4.0 RPG (50% W) | Pitcher park (95.0)
-2026-04-21,St. Louis Cardinals @ Miami Marlins,ML,Miami Marlins ML,0.5755,LEAN,Dustin May ERA 5.45 vs Chris Paddack ERA 5.18 | Recent: St. Louis Cardinals 6.2 RPG (83% W) | Miami Marlins 5.0 RPG (33% W) | 💰 DRIFT: Sharp $ on Miami Marlins (WITH model) | Line: St. Louis Cardinals -62 | Miami Marlins -115 | Pitcher park (96.0)
-2026-04-21,Los Angeles Dodgers @ San Francisco Giants,TOTAL,OVER 8.1,0.57,LEAN,Model projects 8.6 runs vs 8.1 line (0.5 run edge) | Pitcher-friendly park (factor 95.0)
-2026-04-21,Toronto Blue Jays @ Los Angeles Angels,ML,Los Angeles Angels ML,0.567,LEAN,Recent: Toronto Blue Jays 4.3 RPG (33% W) | Los Angeles Angels 6.0 RPG (43% W)
-2026-04-21,Houston Astros @ Cleveland Guardians,TOTAL,OVER 8.0,0.5543,LEAN,Model projects 8.4 runs vs 8.0 line (0.4 run edge) | Elite pitching matchup (avg ERA 3.43)
-2026-04-21,Cincinnati Reds @ Tampa Bay Rays,ML,Tampa Bay Rays ML,0.5517,LEAN,Chase Burns ERA 4.77 [NEUTRAL] (home SP TBD) | Recent: Cincinnati Reds 4.0 RPG (83% W) | Tampa Bay Rays 5.5 RPG (67% W) | Line: Cincinnati Reds -113 | Tampa Bay Rays -105 | Pitcher park (96.0)
+2026-04-21,Minnesota Twins @ New York Mets,ML,New York Mets ML,0.6306,STRONG,Away SP TBD vs Nolan Mclean ERA 1.55 [HOT] | Recent: Minnesota Twins 5.5 RPG (33% W) | New York Mets 1.7 RPG (0% W) | Line: Minnesota Twins +151 | New York Mets -180
+2026-04-21,Baltimore Orioles @ Kansas City Royals,TOTAL,UNDER 9.0,0.6171,LEAN,Model projects 8.2 runs vs 9.0 line (0.8 run edge)
+2026-04-21,Los Angeles Dodgers @ San Francisco Giants,TOTAL,OVER 8.1,0.6157,LEAN,Model projects 8.9 runs vs 8.1 line (0.8 run edge) | Pitcher-friendly park (factor 95.0)
+2026-04-21,New York Yankees @ Boston Red Sox,ML,New York Yankees ML,0.6123,LEAN,Recent: New York Yankees 6.4 RPG (71% W) | Boston Red Sox 3.9 RPG (43% W) | Line: New York Yankees -20 | Boston Red Sox -117
+2026-04-21,Los Angeles Dodgers @ San Francisco Giants,ML,Los Angeles Dodgers ML,0.6085,LEAN,Recent: Los Angeles Dodgers 6.0 RPG (71% W) | San Francisco Giants 4.0 RPG (50% W) | Pitcher park (95.0)
+2026-04-21,Houston Astros @ Cleveland Guardians,RL,Cleveland Guardians -1.5,0.6074,LEAN,ML conf 73% | Projected margin 1.9 runs
+2026-04-21,Athletics @ Seattle Mariners,ML,Seattle Mariners ML,0.5978,LEAN,Recent: Athletics 4.2 RPG (50% W) | Seattle Mariners 3.9 RPG (38% W)
+2026-04-21,Philadelphia Phillies @ Chicago Cubs,RL,Chicago Cubs -1.5,0.5953,LEAN,ML conf 72% | Projected margin 2.3 runs | Chicago Cubs 86% W last 10
+2026-04-21,San Diego Padres @ Colorado Rockies,ML,San Diego Padres ML,0.5755,LEAN,Randy Vásquez ERA 4.03 [NEUTRAL] (home SP TBD) | Recent: San Diego Padres 3.7 RPG (83% W) | Colorado Rockies 3.9 RPG (43% W) | Hitter park (117.0)
+2026-04-21,Baltimore Orioles @ Kansas City Royals,ML,Baltimore Orioles ML,0.5729,LEAN,Recent: Baltimore Orioles 4.8 RPG (38% W) | Kansas City Royals 3.1 RPG (0% W) | Line: Baltimore Orioles +110 | Kansas City Royals -129
+2026-04-21,Cincinnati Reds @ Tampa Bay Rays,TOTAL,OVER 8.0,0.5714,LEAN,Model projects 8.5 runs vs 8.0 line (0.5 run edge) | Pitcher-friendly park (factor 96.0)
