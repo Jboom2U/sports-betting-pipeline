@@ -1,9 +1,0 @@
-game_id,away_team,home_team,game_date,snap1_time,snap2_time,ml_away_open,ml_away_now,ml_away_move,ml_home_open,ml_home_now,ml_home_move,total_open,total_now,total_move,ml_signal,total_signal,sharp_side,timestamp
-45655eea8b0523564f56d5ba45520388,New York Mets,Chicago Cubs,2026-04-17,2026-04-17T08:44:42Z,2026-04-17T13:02:24Z,119,121,2.0,-140,-143,-3.0,10,10,0.0,STABLE,STABLE,Chicago Cubs,2026-04-17 09:02:24
-3eb605c9b25ccc2ad16334a2f4a4c17e,Baltimore Orioles,Cleveland Guardians,2026-04-17,2026-04-17T08:44:42Z,2026-04-17T13:02:24Z,117,118,1.0,-138,-139,-1.0,8,8,0.0,STABLE,STABLE,,2026-04-17 09:02:24
-7067ff8b35400b4b9c0c1b2cf807fe58,Atlanta Braves,Philadelphia Phillies,2026-04-17,2026-04-17T08:44:42Z,2026-04-17T13:02:24Z,-114,-113,1.0,-63,-64,-1.0,10,10,0.0,STABLE,STABLE,,2026-04-17 09:02:24
-534d4f4aa2042d0efb0d307c77b7b0bf,Tampa Bay Rays,Pittsburgh Pirates,2026-04-17,2026-04-17T08:44:42Z,2026-04-17T13:02:24Z,117,113,-4.0,-138,-134,4.0,8,8,0.0,DRIFT,STABLE,Tampa Bay Rays,2026-04-17 09:02:24
-72adcb72b594dcf90c1756f4f9358d4c,San Francisco Giants,Washington Nationals,2026-04-17,2026-04-17T08:44:42Z,2026-04-17T13:02:24Z,-157,-157,0.0,133,134,1.0,8,8,0.0,STABLE,STABLE,,2026-04-17 09:02:24
-a1ab635fdacdca4f7d8f471d141a873f,Kansas City Royals,New York Yankees,2026-04-17,2026-04-17T08:44:42Z,2026-04-17T13:02:24Z,154,157,3.0,-184,-187,-3.0,8,8,0.0,DRIFT,STABLE,New York Yankees,2026-04-17 09:02:24
-6c36be674cd46d59ac8a57a727b8a4ca,Milwaukee Brewers,Miami Marlins,2026-04-17,2026-04-17T08:44:42Z,2026-04-17T13:02:24Z,-106,-105,1.0,-113,-113,0.0,8,8,0.0,STABLE,STABLE,,2026-04-17 09:02:24
-f396e7f6c0d265d701a8b7123bbcee83,Detroit Tigers,Boston Red Sox,2026-04-17,2026-04-17T08:44:42Z,2026-04-17T13:02:24Z,109,109,0.0,-128,-128,0.0,8,8,0.0,STABLE,STABLE,,2026-04-17 09:02:24
