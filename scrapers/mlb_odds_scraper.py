@@ -50,18 +50,14 @@ DRIFT_THRESH  = 3
 SNAPSHOT_FIELDNAMES = [
     "snapshot_id", "snapshot_time", "game_id", "game_date", "game_time_utc",
     "away_team", "home_team",
-    # Moneyline consensus
+    # Moneyline
     "ml_away", "ml_home",
     # Run line
     "rl_away_line", "rl_away_price", "rl_home_line", "rl_home_price",
-    # Totals consensus
+    # Totals
     "total_line", "total_over_price", "total_under_price",
     # Book count
     "books_used",
-    # DraftKings specific (softest public book — best for value spotting)
-    "dk_ml_away", "dk_ml_home", "dk_total",
-    # Discrepancy: DraftKings vs consensus (positive = DK offers more value on that side)
-    "disc_ml_away", "disc_ml_home", "disc_total",
 ]
 
 MOVEMENT_FIELDNAMES = [
@@ -132,38 +128,30 @@ def _avg(prices: list) -> float | None:
 
 def parse_game(game: dict, snapshot_time: str) -> dict:
     """Parse one game from Odds API response into a flat snapshot row."""
-    home   = game.get("home_team", "")
-    away   = game.get("away_team", "")
-    g_time = game.get("commence_time", "")
-    g_date = g_time[:10] if g_time else ""
+    home    = game.get("home_team", "")
+    away    = game.get("away_team", "")
+    g_time  = game.get("commence_time", "")
+    g_date  = g_time[:10] if g_time else ""
 
-    ml_away_prices, ml_home_prices        = [], []
-    rl_away_lines,  rl_home_lines         = [], []
-    rl_away_prices, rl_home_prices        = [], []
+    ml_away_prices, ml_home_prices   = [], []
+    rl_away_lines,  rl_home_lines    = [], []
+    rl_away_prices, rl_home_prices   = [], []
     total_lines, over_prices, under_prices = [], [], []
-
-    # DraftKings specific (softest public book — best value signal)
-    dk_ml_away = dk_ml_home = dk_total = None
 
     for bm in game.get("bookmakers", []):
         bk = bm.get("key", "")
+        # Prioritize consensus books
         if bk not in CONSENSUS_BOOKS:
             continue
 
         for market in bm.get("markets", []):
-            key      = market.get("key", "")
+            key = market.get("key", "")
             outcomes = market.get("outcomes", [])
 
             if key == "h2h":
                 for o in outcomes:
-                    if o["name"] == home:
-                        ml_home_prices.append(o["price"])
-                        if bk == "draftkings":
-                            dk_ml_home = o["price"]
-                    elif o["name"] == away:
-                        ml_away_prices.append(o["price"])
-                        if bk == "draftkings":
-                            dk_ml_away = o["price"]
+                    if o["name"] == home:  ml_home_prices.append(o["price"])
+                    elif o["name"] == away: ml_away_prices.append(o["price"])
 
             elif key == "spreads":
                 for o in outcomes:
@@ -177,48 +165,29 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
             elif key == "totals":
                 for o in outcomes:
                     total_lines.append(o.get("point"))
-                    if o["name"] == "Over":
-                        over_prices.append(o.get("price"))
-                        if bk == "draftkings":
-                            dk_total = o.get("point")
-                    elif o["name"] == "Under":
-                        under_prices.append(o.get("price"))
+                    if o["name"] == "Over":  over_prices.append(o.get("price"))
+                    elif o["name"] == "Under": under_prices.append(o.get("price"))
 
-    books_used    = max(len(ml_away_prices), 1)
-    cons_ml_away  = _avg(ml_away_prices)
-    cons_ml_home  = _avg(ml_home_prices)
-    cons_total    = _avg(total_lines)
-
-    # Discrepancy: DK price minus consensus (positive = DK is softer = more value)
-    def _disc(dk, cons):
-        if dk is None or cons is None:
-            return None
-        return round(dk - cons, 1)
+    books_used = max(len(ml_away_prices), 1)
 
     return {
-        "snapshot_id":      f"{game.get('id','')[:8]}_{snapshot_time[:13]}",
-        "snapshot_time":    snapshot_time,
-        "game_id":          game.get("id", ""),
-        "game_date":        g_date,
-        "game_time_utc":    g_time,
-        "away_team":        away,
-        "home_team":        home,
-        "ml_away":          cons_ml_away,
-        "ml_home":          cons_ml_home,
-        "rl_away_line":     _avg(rl_away_lines),
-        "rl_away_price":    _avg(rl_away_prices),
-        "rl_home_line":     _avg(rl_home_lines),
-        "rl_home_price":    _avg(rl_home_prices),
-        "total_line":       cons_total,
-        "total_over_price": _avg(over_prices),
+        "snapshot_id":     f"{game.get('id','')[:8]}_{snapshot_time[:13]}",
+        "snapshot_time":   snapshot_time,
+        "game_id":         game.get("id", ""),
+        "game_date":       g_date,
+        "game_time_utc":   g_time,
+        "away_team":       away,
+        "home_team":       home,
+        "ml_away":         _avg(ml_away_prices),
+        "ml_home":         _avg(ml_home_prices),
+        "rl_away_line":    _avg(rl_away_lines),
+        "rl_away_price":   _avg(rl_away_prices),
+        "rl_home_line":    _avg(rl_home_lines),
+        "rl_home_price":   _avg(rl_home_prices),
+        "total_line":      _avg(total_lines),
+        "total_over_price":_avg(over_prices),
         "total_under_price":_avg(under_prices),
-        "books_used":       books_used,
-        "dk_ml_away":       dk_ml_away,
-        "dk_ml_home":       dk_ml_home,
-        "dk_total":         dk_total,
-        "disc_ml_away":     _disc(dk_ml_away, cons_ml_away),
-        "disc_ml_home":     _disc(dk_ml_home, cons_ml_home),
-        "disc_total":       _disc(dk_total, cons_total),
+        "books_used":      books_used,
     }
 
 
@@ -388,9 +357,9 @@ def run() -> dict:
         sig = m.get("ml_signal","")
         if sig in ("STEAM", "DRIFT"):
             log.info(f"LINE MOVE [{sig}] {m['away_team']} @ {m['home_team']} | "
-                     f"ML: {m.get('ml_away_open')} -> {m.get('ml_away_now')} away | "
+                     f"ML: {m.get('ml_away_open')} → {m.get('ml_away_now')} away | "
                      f"Sharp: {m.get('sharp_side','?')} | "
-                     f"Total: {m.get('total_open')} -> {m.get('total_now')}")
+                     f"Total: {m.get('total_open')} → {m.get('total_now')}")
 
     # Save
     save_snapshot(curr_snaps)

@@ -33,8 +33,12 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def main(date=None):
-    # argparse is handled in __main__ block only — never called from here.
+def main():
+    parser = argparse.ArgumentParser(description="MLB Betting Data Pipeline")
+    parser.add_argument("--date", type=str, default=None,
+                        help="Override date for backfill (YYYY-MM-DD). Defaults to yesterday.")
+    args = parser.parse_args()
+
     log.info("=" * 60)
     log.info(f"PIPELINE START | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info("=" * 60)
@@ -42,11 +46,11 @@ def main(date=None):
     # ── Step 1: Scrape ────────────────────────────────────────────────────────
     try:
         from scrapers.mlb_scraper import run as scrape
-        if date:
+        if args.date:
             # Backfill: override YESTERDAY in scraper
             import scrapers.mlb_scraper as scraper_module
-            scraper_module.YESTERDAY = date
-            scraper_module.TODAY     = date
+            scraper_module.YESTERDAY = args.date
+            scraper_module.TODAY     = args.date
             scraper_module.TIMESTAMP = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         counts = scrape()
         log.info(f"Scrape complete: {counts}")
@@ -57,9 +61,9 @@ def main(date=None):
     # ── Step 2: Normalize + Append ────────────────────────────────────────────
     try:
         from normalize.mlb_normalize import run as normalize
-        if date:
+        if args.date:
             import normalize.mlb_normalize as norm_module
-            norm_module.TODAY = date
+            norm_module.TODAY = args.date
         normalize()
         log.info("Normalize + append complete")
     except Exception as e:
@@ -155,7 +159,4 @@ def main(date=None):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MLB Betting Data Pipeline")
-    parser.add_argument("--date", type=str, default=None)
-    args = parser.parse_args()
-    main(date=args.date)
+    main()

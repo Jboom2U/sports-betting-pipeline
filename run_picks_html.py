@@ -568,65 +568,6 @@ def load_kalshi(date: str) -> dict:
         return {}
 
 
-def load_line_movement(date: str) -> list:
-    """
-    Load the most recent line movement records for date.
-    Returns list of movement dicts keyed by game matchup.
-    Only includes games with STEAM or DRIFT signals.
-    """
-    import csv as _csv
-    clean_dir = os.path.join(os.path.dirname(__file__), "data", "clean")
-    path = os.path.join(clean_dir, f"mlb_line_movement_{date}.csv")
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8") as f:
-            rows = list(_csv.DictReader(f))
-
-        # Keep only most recent record per game
-        latest = {}
-        for r in rows:
-            k = (r.get("away_team",""), r.get("home_team",""))
-            if k not in latest or r.get("snap2_time","") > latest[k].get("snap2_time",""):
-                latest[k] = r
-
-        out = []
-        for r in latest.values():
-            ml_sig    = r.get("ml_signal", "NO_DATA")
-            tot_sig   = r.get("total_signal", "NO_DATA")
-            # Only surface meaningful moves
-            if ml_sig not in ("STEAM","DRIFT") and tot_sig not in ("STEAM","DRIFT"):
-                continue
-
-            def _n(v):
-                try: return float(v)
-                except: return None
-
-            out.append({
-                "away":          r.get("away_team",""),
-                "home":          r.get("home_team",""),
-                "ml_away_open":  _n(r.get("ml_away_open")),
-                "ml_away_now":   _n(r.get("ml_away_now")),
-                "ml_away_move":  _n(r.get("ml_away_move")),
-                "ml_home_open":  _n(r.get("ml_home_open")),
-                "ml_home_now":   _n(r.get("ml_home_now")),
-                "ml_home_move":  _n(r.get("ml_home_move")),
-                "total_open":    _n(r.get("total_open")),
-                "total_now":     _n(r.get("total_now")),
-                "total_move":    _n(r.get("total_move")),
-                "ml_signal":     ml_sig,
-                "total_signal":  tot_sig,
-                "sharp_side":    r.get("sharp_side",""),
-                "snap1_time":    r.get("snap1_time",""),
-                "snap2_time":    r.get("snap2_time",""),
-            })
-        log.info(f"Line movement loaded: {len(out)} games with notable moves")
-        return out
-    except Exception as e:
-        log.warning(f"Line movement load failed: {e}")
-        return []
-
-
 def load_yesterday_analysis(date: str) -> dict:
     """
     Load the most recent analysis JSON (for yesterday's picks) to show in
@@ -658,9 +599,6 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="pragma" content="no-cache"/>
-<meta http-equiv="expires" content="0"/>
 <title>Sports Betting Parlay Genius</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <style>
@@ -792,38 +730,6 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .fav-MEDIUM {background:rgba(255,152,0,.13);color:#ffb74d;border:1px solid rgba(255,152,0,.35)}
 .fav-NEUTRAL{background:rgba(0,230,118,.1);color:#69f0ae;border:1px solid rgba(0,230,118,.3)}
 
-/* ── LINE MOVEMENT ── */
-.move-row{
-  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
-  margin-top:8px;padding:6px 10px;border-radius:6px;
-  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);
-}
-.move-icon{font-size:.9rem}
-.move-label{font-size:.72rem;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.4px}
-.move-detail{font-size:.75rem;color:var(--text);flex:1}
-.move-badge-steam{font-size:.65rem;font-weight:800;padding:2px 7px;border-radius:4px;
-  background:rgba(239,83,80,.2);color:#ef5350;border:1px solid rgba(239,83,80,.4);text-transform:uppercase}
-.move-badge-drift{font-size:.65rem;font-weight:800;padding:2px 7px;border-radius:4px;
-  background:rgba(255,152,0,.2);color:#ffa726;border:1px solid rgba(255,152,0,.4);text-transform:uppercase}
-.move-confirm{font-size:.68rem;font-weight:700;color:#69f0ae}
-.move-reverse{font-size:.68rem;font-weight:700;color:#ef5350}
-
-/* ── SHARP MONEY PANEL ── */
-.sharp-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;
-  padding:20px 24px;margin-bottom:28px}
-.sharp-game{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;
-  padding:14px 0;border-bottom:1px solid rgba(255,255,255,.06)}
-.sharp-game:last-child{border-bottom:none;padding-bottom:0}
-.sharp-matchup{font-size:.9rem;font-weight:700;color:var(--text);min-width:180px}
-.sharp-desc{font-size:.82rem;color:var(--sub);flex:1;line-height:1.5}
-.sharp-agree{font-size:.75rem;font-weight:700;color:#69f0ae;white-space:nowrap}
-.sharp-reverse{font-size:.75rem;font-weight:700;color:#ef5350;white-space:nowrap}
-.sharp-neutral{font-size:.75rem;font-weight:700;color:var(--sub);white-space:nowrap}
-.sharp-badge{font-size:.65rem;font-weight:800;padding:3px 9px;border-radius:4px;
-  text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
-.sharp-badge-steam{background:rgba(239,83,80,.2);color:#ef5350;border:1px solid rgba(239,83,80,.4)}
-.sharp-badge-drift{background:rgba(255,152,0,.2);color:#ffa726;border:1px solid rgba(255,152,0,.4)}
-
 /* ── KALSHI SIGNAL ── */
 .kalshi-row{
   display:flex;align-items:center;gap:8px;
@@ -865,36 +771,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 }
 .pick-card{
   background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
-  padding:16px;cursor:pointer;transition:transform .15s,border-color .15s;
+  padding:16px;cursor:default;transition:transform .15s,border-color .15s;
   position:relative;overflow:hidden;
 }
 .pick-card:hover{transform:translateY(-2px)}
-.pick-card.expanded{border-color:var(--green)}
-.pick-card-props-toggle{
-  display:flex;align-items:center;gap:5px;font-size:.7rem;font-weight:600;
-  color:var(--sub);margin-top:8px;padding-top:8px;
-  border-top:1px solid rgba(255,255,255,.05);cursor:pointer;
-  transition:color .15s;user-select:none;
-}
-.pick-card-props-toggle:hover{color:var(--green)}
-.pick-card-props-panel{
-  display:none;margin-top:10px;padding-top:10px;
-  border-top:1px solid rgba(0,230,118,.2);
-}
-.pick-card-props-panel.open{display:block}
-.inline-prop{
-  display:flex;justify-content:space-between;align-items:center;
-  padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);
-  font-size:.75rem;
-}
-.inline-prop:last-child{border-bottom:none}
-.inline-prop-player{color:var(--text);font-weight:600}
-.inline-prop-line{color:var(--sub)}
-.inline-prop-conf{font-weight:700;white-space:nowrap;margin-left:8px}
-.inline-prop-tier-LOCK  {color:var(--gold)}
-.inline-prop-tier-STRONG{color:var(--blue)}
-.inline-prop-tier-LEAN  {color:var(--green)}
-.inline-props-empty{font-size:.74rem;color:var(--sub);padding:6px 0;font-style:italic}
 .pick-card.tier-LOCK  {border-top:3px solid var(--gold)}
 .pick-card.tier-STRONG{border-top:3px solid var(--blue)}
 .pick-card.tier-LEAN  {border-top:3px solid var(--green)}
@@ -1074,9 +954,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .team-btn{padding:7px 13px;border-radius:6px;border:1px solid var(--border);background:var(--card);
   color:var(--sub);font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .team-btn:hover{border-color:var(--green);color:var(--text)}
-.team-btn.active{background:var(--green);color:#fff !important;border-color:var(--green)}
+.team-btn.active{background:var(--green);color:#000;border-color:var(--green)}
 .team-btn.playing{border-color:rgba(0,230,118,.4);color:var(--green)}
-.team-btn.playing.active{color:#fff !important}
 
 .team-game-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:20px}
 .team-matchup-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px}
@@ -1207,16 +1086,16 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   <div class="filter-group">
     <span class="filter-label">Bet Type</span>
     <button class="filter-btn active" data-group="type" data-val="all">All</button>
-    <button class="filter-btn" data-group="type" data-val="ML">Win Bet (Moneyline)</button>
-    <button class="filter-btn" data-group="type" data-val="RL">Spread (Run Line)</button>
+    <button class="filter-btn" data-group="type" data-val="ML">Moneyline</button>
+    <button class="filter-btn" data-group="type" data-val="RL">Run Line</button>
     <button class="filter-btn" data-group="type" data-val="TOTAL">Over/Under</button>
   </div>
   <div class="filter-group">
     <span class="filter-label">Confidence</span>
     <button class="filter-btn active" data-group="tier" data-val="all">All</button>
-    <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock — Best Bets</button>
+    <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock</button>
     <button class="filter-btn" data-group="tier" data-val="STRONG">⭐⭐ Strong</button>
-    <button class="filter-btn" data-group="tier" data-val="LEAN">⭐ Lean — Watch Only</button>
+    <button class="filter-btn" data-group="tier" data-val="LEAN">⭐ Lean</button>
   </div>
   <div class="search-wrap">
     <input class="search-input" id="teamSearch" placeholder="Search team…" type="text"/>
@@ -1241,13 +1120,6 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="section-title">🎯 Individual Picks</div>
     <div class="results-count" id="pickResults"></div>
     <div class="picks-grid" id="picksGrid"></div>
-
-    <!-- Sharp Money Panel — only shown when movement data exists -->
-    <div id="sharpMoneySection" style="display:none">
-      <div class="section-title">💰 Where the Pro Money Is Going</div>
-      <div class="sharp-panel" id="sharpMoneyGrid"></div>
-    </div>
-
     <div class="section-title">🔥 Parlay Recommendations</div>
     <div class="section-tabs">
       <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
@@ -1315,7 +1187,6 @@ const DATA_SCORES    = __SCORES__;
 const DATA_PROPS     = __PROPS__;
 const DATA_SCHEDULE  = __SCHEDULE__;
 const DATA_YESTERDAY = __YESTERDAY__;
-const DATA_MOVEMENT  = __MOVEMENT__;
 
 // ── State ────────────────────────────────────────────────────────────────────
 let filterType = "all", filterTier = "all", filterTeam = "";
@@ -1330,12 +1201,8 @@ document.getElementById("gameCount").textContent = DATA_GAMES.length;
 document.getElementById("pickCount").textContent = DATA_PICKS.length;
 document.getElementById("lockCount").textContent = DATA_PICKS.filter(p=>p.tier==="LOCK").length;
 if(DATA_PICKS.length){
-  const tp = DATA_PICKS[0];
-  const awayCity = tp.away ? tp.away.split(" ").slice(-1)[0] : "";
-  const homeCity = tp.home ? tp.home.split(" ").slice(-1)[0] : "";
-  const gameCtx  = (awayCity && homeCity) ? ` · ${awayCity} @ ${homeCity}` : "";
-  document.getElementById("topPick").innerHTML =
-    `<span style="color:var(--gold)">${tp.label} (${tp.conf}%)</span><span style="color:var(--sub);font-size:.75rem">${gameCtx}</span>`;
+  document.getElementById("topPick").textContent =
+    DATA_PICKS[0].label + " (" + DATA_PICKS[0].conf + "%)";
 }
 
 // ── Render Picks ─────────────────────────────────────────────────────────────
@@ -1359,10 +1226,10 @@ function renderPicks(){
     const wb = (cls, active, label) =>
       `<span class="warn-badge ${cls} ${active ? 'active' : 'inactive'}">${label}</span>`;
     const warnHtml = `<div class="warn-row">
-      ${wb('warn-tbd',    p.tbd_sp,      '⚠ Starter Unknown')}
-      ${wb('warn-thin',   p.thin_edge,   'Close Call')}
-      ${wb('warn-heavy',  p.heavy_fav,   'Heavy Favorite')}
-      ${wb('warn-lineup', p.unconfirmed, 'Lineup Not Set')}
+      ${wb('warn-tbd',    p.tbd_sp,      '⚠ TBD SP')}
+      ${wb('warn-thin',   p.thin_edge,   'Thin Edge')}
+      ${wb('warn-heavy',  p.heavy_fav,   'Heavy Chalk')}
+      ${wb('warn-lineup', p.unconfirmed, 'Lineups TBD')}
     </div>`;
 
     // Favorite tier — always shown on every card
@@ -1389,55 +1256,10 @@ function renderPicks(){
         </div>`;
     }
 
-    // Line movement for this game
-    let moveHtml = "";
-    const mv = DATA_MOVEMENT.find(m => m.away === p.away && m.home === p.home);
-    if(mv){
-      const sig     = mv.ml_signal === "STEAM" ? mv.ml_signal
-                    : mv.total_signal === "STEAM" ? mv.total_signal
-                    : mv.ml_signal === "DRIFT" ? mv.ml_signal : mv.total_signal;
-      const sigBadge = sig === "STEAM"
-        ? `<span class="move-badge-steam">🔥 Heavy Action</span>`
-        : `<span class="move-badge-drift">📈 Notable Shift</span>`;
-
-      const sharp     = mv.sharp_side || "";
-      const isML      = p.type === "ML" || p.type === "RL";
-      const pickedTeam = p.team || "";
-
-      // Did sharp money go WITH or AGAINST our pick?
-      const sharpAgrees = sharp && pickedTeam &&
-        (sharp.toLowerCase().includes(pickedTeam.toLowerCase()) ||
-         pickedTeam.toLowerCase().includes(sharp.split(" ").slice(-1)[0].toLowerCase()));
-      const sharpLabel = !sharp ? ""
-        : sharpAgrees
-          ? `<span class="move-confirm">✓ Pro money agrees</span>`
-          : `<span class="move-reverse">⚠ Pro money going other way</span>`;
-
-      // Build readable movement description
-      let moveDesc = "";
-      if(mv.ml_signal === "STEAM" || mv.ml_signal === "DRIFT"){
-        const openPrice = mv.ml_away_open || mv.ml_home_open;
-        const nowPrice  = mv.ml_away_now  || mv.ml_home_now;
-        if(openPrice && nowPrice && sharp){
-          moveDesc = `Odds shifted ${Math.abs(mv.ml_away_move || mv.ml_home_move || 0)} points toward ${sharp.split(" ").slice(-1)[0]}`;
-        }
-      } else if(mv.total_signal === "STEAM" || mv.total_signal === "DRIFT"){
-        const dir = (mv.total_move || 0) > 0 ? "higher" : "lower";
-        moveDesc = `Total moved ${Math.abs(mv.total_move || 0).toFixed(1)} runs ${dir} (${mv.total_open} → ${mv.total_now})`;
-      }
-
-      moveHtml = `<div class="move-row">
-        <span class="move-icon">💰</span>
-        ${sigBadge}
-        ${moveDesc ? `<span class="move-detail">${moveDesc}</span>` : ""}
-        ${sharpLabel}
-      </div>`;
-    }
-
     grid.innerHTML += `
       <div class="pick-card tier-${p.tier}" data-type="${p.type}" data-tier="${p.tier}">
         <div class="pick-top">
-          <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
+          <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"O/U":p.type}</span>
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
         </div>
         <div class="pick-label">${p.label}</div>
@@ -1451,14 +1273,7 @@ function renderPicks(){
         ${favHtml}
         ${warnHtml}
         ${kalshiHtml}
-        ${moveHtml}
         <div class="pick-reasoning">${p.reasoning}</div>
-        <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
-          <span class="toggle-arrow">▶</span> View Player Props for this game
-        </div>
-        <div class="pick-card-props-panel">
-          ${buildInlineProps(p.away, p.home)}
-        </div>
       </div>`;
   });
   document.getElementById("pickResults").innerHTML =
@@ -1467,110 +1282,6 @@ function renderPicks(){
 }
 
 function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":"⭐"; }
-
-// ── Inline props for pick card ────────────────────────────────────────────────
-function buildInlineProps(away, home){
-  if(!DATA_PROPS || !DATA_PROPS.length){
-    return `<div class="inline-props-empty">Player props will appear here once lineups are confirmed — check back closer to game time.</div>`;
-  }
-  const gameProps = DATA_PROPS.filter(p =>
-    (p.away === away && p.home === home) ||
-    (p.game && p.game.includes(away) && p.game.includes(home))
-  );
-  if(!gameProps.length){
-    return `<div class="inline-props-empty">No props available for this game yet.</div>`;
-  }
-  // Sort by conf descending, show top 8
-  const sorted = [...gameProps].sort((a,b) => (b.conf||0)-(a.conf||0)).slice(0,8);
-  return sorted.map(p => {
-    const propLabel = p.prop_type || p.type || "";
-    const tierCls   = `inline-prop-tier-${p.tier||"LEAN"}`;
-    return `<div class="inline-prop">
-      <span class="inline-prop-player">${p.player_name||"—"}</span>
-      <span class="inline-prop-line">${propLabel} ${p.label||""}</span>
-      <span class="inline-prop-conf ${tierCls}">${p.conf||"—"}% ${tierIcon(p.tier||"LEAN")}</span>
-    </div>`;
-  }).join("");
-}
-
-function toggleCardProps(event, el){
-  event.stopPropagation();
-  const panel = el.nextElementSibling;
-  const arrow = el.querySelector(".toggle-arrow");
-  const isOpen = panel.classList.toggle("open");
-  arrow.textContent = isOpen ? "▼" : "▶";
-  el.closest(".pick-card").classList.toggle("expanded", isOpen);
-}
-
-// ── Sharp Money Panel ─────────────────────────────────────────────────────────
-function renderSharpMoney(){
-  const section = document.getElementById("sharpMoneySection");
-  const grid    = document.getElementById("sharpMoneyGrid");
-  if(!DATA_MOVEMENT || DATA_MOVEMENT.length === 0){
-    section.style.display = "none";
-    return;
-  }
-  section.style.display = "block";
-  grid.innerHTML = "";
-
-  DATA_MOVEMENT.forEach(mv => {
-    const awayName = mv.away.split(" ").slice(-1)[0];
-    const homeName = mv.home.split(" ").slice(-1)[0];
-
-    // Determine the dominant signal
-    const sig = mv.ml_signal === "STEAM" ? "STEAM"
-              : mv.total_signal === "STEAM" ? "STEAM"
-              : mv.ml_signal === "DRIFT"  ? "DRIFT" : "DRIFT";
-    const sigBadge = sig === "STEAM"
-      ? `<span class="sharp-badge sharp-badge-steam">🔥 Heavy Action</span>`
-      : `<span class="sharp-badge sharp-badge-drift">📈 Notable Shift</span>`;
-
-    // Plain-English description
-    let desc = "";
-    const sharp = mv.sharp_side || "";
-    const sharpNick = sharp ? sharp.split(" ").slice(-1)[0] : "";
-
-    if((mv.ml_signal === "STEAM" || mv.ml_signal === "DRIFT") && sharp){
-      const pts = Math.abs(mv.ml_away_move || mv.ml_home_move || 0);
-      const word = sig === "STEAM" ? "heavily" : "noticeably";
-      desc = `Professional bettors are ${word} backing the <strong>${sharpNick}</strong> to win. `;
-      desc += `The odds have shifted ${pts} points in their favor since this morning`;
-      if(mv.total_signal === "STEAM" || mv.total_signal === "DRIFT"){
-        const tdir = (mv.total_move||0) > 0 ? "higher" : "lower";
-        desc += `, and the total has also moved ${Math.abs(mv.total_move||0).toFixed(1)} runs ${tdir}`;
-      }
-      desc += ".";
-    } else if(mv.total_signal === "STEAM" || mv.total_signal === "DRIFT"){
-      const tdir = (mv.total_move||0) > 0 ? "higher (more runs expected)" : "lower (fewer runs expected)";
-      const pts  = Math.abs(mv.total_move||0).toFixed(1);
-      desc = `The expected total runs for this game has shifted ${pts} runs ${tdir} — indicating large bets on the ${(mv.total_move||0)>0?"Over":"Under"}.`;
-    }
-
-    // Does sharp money agree with any of our picks for this game?
-    const gamePick = DATA_PICKS.find(p => p.away === mv.away && p.home === mv.home);
-    let agreeHtml = "";
-    if(gamePick && sharp){
-      const pickTeamNick = gamePick.team ? gamePick.team.split(" ").slice(-1)[0] : "";
-      const sharpMatch   = sharpNick && pickTeamNick &&
-        (sharpNick.toLowerCase() === pickTeamNick.toLowerCase());
-      if(sharpMatch){
-        agreeHtml = `<span class="sharp-agree">✓ Agrees with our ${gamePick.tier} pick</span>`;
-      } else if(gamePick.type === "ML" || gamePick.type === "RL"){
-        agreeHtml = `<span class="sharp-reverse">⚠ Goes against our ${gamePick.tier} pick — use caution</span>`;
-      }
-    } else if(gamePick){
-      agreeHtml = `<span class="sharp-neutral">No model pick for this game</span>`;
-    }
-
-    grid.innerHTML += `<div class="sharp-game">
-      <div>
-        <div class="sharp-matchup">${awayName} @ ${homeName} ${sigBadge}</div>
-        ${agreeHtml ? `<div style="margin-top:4px">${agreeHtml}</div>` : ""}
-      </div>
-      <div class="sharp-desc">${desc}</div>
-    </div>`;
-  });
-}
 
 // ── Yesterday's Results Banner ────────────────────────────────────────────────
 function renderYesterday(){
@@ -2344,113 +2055,42 @@ async function doRefresh(){
 
 // ── Scores Ticker ─────────────────────────────────────────────────────────────
 function renderTicker(){
-  // Live scores are fetched directly from MLB Stats API in the browser
-  // so they update in real time without needing the server to regenerate HTML
   const track = document.getElementById("tickerTrack");
-
-  function cityName(fullName) {
-    return fullName ? fullName.split(" ").slice(0,-1).join(" ") || fullName : fullName;
+  if(!DATA_SCORES || DATA_SCORES.length === 0){
+    track.innerHTML = `<span class="ticker-empty">No completed games yet today — check back later</span>`;
+    return;
   }
-
-  function buildTickerHTML(games) {
-    if (!games || games.length === 0) {
-      return `<span class="ticker-empty">No games in progress yet today — check back later</span>`;
-    }
-    let html = "";
-    for (let pass = 0; pass < 2; pass++) {
-      games.forEach(g => {
-        const awayScore = g.away_score;
-        const homeScore = g.home_score;
-        const awayWon   = awayScore > homeScore;
-        const isLive    = g.is_live;
-        const liveStyle = isLive ? "color:#ff6b35" : "";
-        const liveClass = isLive ? "ticker-live" : "ticker-final";
-        html += `
-          <div class="ticker-item">
-            <span class="${awayWon ? 'ticker-score win' : 'ticker-score loss'}">${g.away_city} ${awayScore}</span>
-            <span style="color:var(--sub)">@</span>
-            <span class="${!awayWon ? 'ticker-score win' : 'ticker-score loss'}">${g.home_city} ${homeScore}</span>
-            <span class="${liveClass}" style="${liveStyle}">${g.label}</span>
-          </div>`;
-      });
-    }
-    return html;
+  // Build items twice so the loop is seamless
+  let html = "";
+  for(let pass=0; pass<2; pass++){
+    DATA_SCORES.forEach(s=>{
+      const awayWon  = parseInt(s.away_score) > parseInt(s.home_score);
+      const liveStyle= s.is_live ? "color:#ff6b35;animation:pulse 1.5s infinite" : "";
+      const liveClass= s.is_live ? "ticker-live" : "ticker-final";
+      html += `
+        <div class="ticker-item">
+          <span class="${awayWon?'ticker-score win':'ticker-score loss'}">${s.away_city} ${s.away_score}</span>
+          <span style="color:var(--sub)">@</span>
+          <span class="${!awayWon?'ticker-score win':'ticker-score loss'}">${s.home_city} ${s.home_score}</span>
+          <span class="${liveClass}" style="${liveStyle}">${s.label}</span>
+        </div>`;
+    });
   }
-
-  async function fetchLiveScores() {
-    const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
-    const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${today}&hydrate=linescore&gameType=R`;
-    try {
-      const resp = await fetch(url);
-      const data = await resp.json();
-      const games = [];
-      for (const dateEntry of (data.dates || [])) {
-        for (const game of (dateEntry.games || [])) {
-          const abstract = game?.status?.abstractGameState;
-          if (abstract !== "Final" && abstract !== "Live") continue;
-          const away      = game.teams.away;
-          const home      = game.teams.home;
-          const linescore = game.linescore || {};
-          const inning    = linescore.currentInning || 9;
-          const half      = linescore.inningHalf || "";
-          const isLive    = abstract === "Live";
-          let label       = isLive ? `${half.slice(0,3)} ${inning}` : "Final";
-          if (!isLive && inning > 9) label = `F/${inning}`;
-          games.push({
-            away_city:  cityName(away.team.name),
-            home_city:  cityName(home.team.name),
-            away_score: away.score ?? 0,
-            home_score: home.score ?? 0,
-            is_live:    isLive,
-            label:      label,
-          });
-        }
-      }
-      return games;
-    } catch(e) {
-      console.warn("Live scores fetch failed:", e);
-      return null;
-    }
-  }
-
-  async function refreshTicker() {
-    const games = await fetchLiveScores();
-    if (games !== null) {
-      track.innerHTML = buildTickerHTML(games);
-      const duration = Math.max(20, games.length * 5);
-      track.style.animationDuration = duration + "s";
-    }
-  }
-
-  // Initial load + refresh every 2 minutes
-  refreshTicker();
-  setInterval(refreshTicker, 2 * 60 * 1000);
+  track.innerHTML = html;
+  // Adjust animation speed based on number of items
+  const duration = Math.max(20, DATA_SCORES.length * 5);
+  track.style.animationDuration = duration + "s";
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 renderTicker();
 renderYesterday();
 renderPicks();
-renderSharpMoney();
 renderParlays();
 renderSchedule();
 renderGames();
 renderProps();
 initTeamsTab();
-
-// Auto-reload every 15 minutes to pick up fresh odds, lineups, and scores
-// Only runs between 9am and midnight ET
-(function() {
-  const RELOAD_MS = 15 * 60 * 1000;
-  function scheduleReload() {
-    const now = new Date();
-    const etHour = new Date(now.toLocaleString("en-US", {timeZone: "America/New_York"})).getHours();
-    if (etHour >= 9 && etHour < 24) {
-      setTimeout(() => { location.reload(true); }, RELOAD_MS);
-    }
-  }
-  scheduleReload();
-})();
 </script>
 </body>
 </html>"""
@@ -2459,20 +2099,13 @@ initTeamsTab();
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
-def main(date=None, no_open=False):
-    # argparse is handled in __main__ block only — never called from here.
-    target = date or datetime.now().strftime("%Y-%m-%d")
+def main():
+    parser = argparse.ArgumentParser(description="MLB Picks HTML Dashboard")
+    parser.add_argument("--date", default=None)
+    parser.add_argument("--no-open", action="store_true", help="Don't auto-open browser")
+    args = parser.parse_args()
 
-    # ── Refresh odds before loading the model ────────────────────────────────
-    # Runs every time so total lines always reflect the current market, not
-    # whatever was in the CSV from when the pipeline last ran.
-    if not date:   # only refresh for today — backfill dates use historical data
-        try:
-            from scrapers.mlb_odds_scraper import run as run_odds
-            odds_result = run_odds()
-            log.info(f"Odds refreshed: {odds_result}")
-        except Exception as e:
-            log.warning(f"Odds refresh failed (non-fatal): {e}")
+    target = args.date or datetime.now().strftime("%Y-%m-%d")
 
     from model.mlb_model import MLBModel
     from model.mlb_picks import generate_picks, build_parlays
@@ -2483,7 +2116,7 @@ def main(date=None, no_open=False):
 
     # score_today filters to upcoming games only — we also need all games for the schedule tab
     all_schedule = [g for g in model.schedule if g.get("game_date") == (
-        date or datetime.now().strftime("%Y-%m-%d")
+        args.date or datetime.now().strftime("%Y-%m-%d")
     )]
 
     scored, actual_date = model.score_today(target)
@@ -2523,26 +2156,18 @@ def main(date=None, no_open=False):
     schedule_json  = json.dumps(prep_schedule_view(schedule_games, today_scores, standings))
 
     # ── Refresh lineups + hitter stats before props ───────────────────────────
-    # Lineups refresh every run. Hitter stats only re-fetch if the file is
-    # missing or older than 2 hours — avoids the slow 270-player API call on
-    # every 10-minute cache refresh (the file persists within a deployment).
+    # Run every time run_picks_html.py is called so props stay current.
+    # Lineups typically confirm 1-3 hours before first pitch — this ensures
+    # we always have the freshest data regardless of when the pipeline last ran.
     try:
         from scrapers.mlb_lineup_scraper import run as run_lineups
         lineups = run_lineups(target_date=actual_date)
         confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
         log.info(f"Lineup refresh: {len(lineups)} games, {confirmed} confirmed")
         if confirmed > 0:
-            import time as _time
-            _stats_path = os.path.join(os.path.dirname(__file__), "data", "raw",
-                                       f"mlb_hitter_stats_{actual_date}.json")
-            _stats_age  = (_time.time() - os.path.getmtime(_stats_path)
-                           if os.path.exists(_stats_path) else float("inf"))
-            if _stats_age > 23 * 3600:
-                from scrapers.mlb_hitter_scraper import run as run_hitters
-                run_hitters(target_date=actual_date)
-                log.info("Hitter stats refreshed for props")
-            else:
-                log.info(f"Hitter stats are {int(_stats_age/60)}m old — skipping re-fetch")
+            from scrapers.mlb_hitter_scraper import run as run_hitters
+            run_hitters(target_date=actual_date)
+            log.info("Hitter stats refreshed for props")
     except Exception as e:
         log.warning(f"Lineup refresh failed (non-fatal): {e}")
 
@@ -2570,10 +2195,6 @@ def main(date=None, no_open=False):
     yesterday_data = load_yesterday_analysis(actual_date)
     yesterday_json = json.dumps(yesterday_data)
 
-    # Line movement (sharp money signals)
-    movement_data = load_line_movement(actual_date)
-    movement_json = json.dumps(movement_data)
-
     # Serialize
     picks_json       = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
     games_json       = json.dumps(prep_games(scored))
@@ -2592,8 +2213,7 @@ def main(date=None, no_open=False):
             .replace("__PROPS__",       props_json)
             .replace("__SCHEDULE__",    schedule_json)
             .replace("__YESTERDAY__",   yesterday_json)
-            .replace("__TEAM_SCHED__",  team_sched_json)
-            .replace("__MOVEMENT__",    movement_json))
+            .replace("__TEAM_SCHED__",  team_sched_json))
 
     os.makedirs(PICKS_DIR, exist_ok=True)
     out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")
@@ -2629,17 +2249,10 @@ def main(date=None, no_open=False):
     log.info(f"{len(scored)} games | {len(picks)} picks | "
              f"{len(parlays_2)} 2-leg parlays | {len(parlays_3)} 3-leg parlays")
 
-    if not no_open:
-        import webbrowser
+    if not args.no_open:
         webbrowser.open(f"file:///{os.path.abspath(latest_path)}")
         log.info("Opening in browser...")
 
-    return html
-
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MLB Picks HTML Dashboard")
-    parser.add_argument("--date", default=None)
-    parser.add_argument("--no-open", action="store_true", help="Don't auto-open browser")
-    args = parser.parse_args()
-    main(date=args.date, no_open=args.no_open)
+    main()

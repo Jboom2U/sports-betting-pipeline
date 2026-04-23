@@ -10,7 +10,7 @@ vs. disagrees (potential model flaw or genuine edge).
 
 Setup:
     1. Create an account at kalshi.com and generate an API key
-       (Account Settings -> API Keys)
+       (Account Settings → API Keys)
     2. Add one line to your .env file in the repo root:
          KALSHI_API_KEY=your_key_id_here
     That's it — no private key or cryptography package needed for read-only access.
@@ -55,8 +55,8 @@ KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 MLB_SERIES = ["KXMLBW", "MLBWINNER", "KXMLB"]
 
 # How far Kalshi probability must diverge from model for AGREE/DISAGREE signal
-AGREE_THRESHOLD    = 0.04   # within 4 pp -> NEUTRAL
-DISAGREE_THRESHOLD = 0.12   # 12+ pp apart, opposite sides of 50% -> DISAGREE
+AGREE_THRESHOLD    = 0.04   # within 4 pp → NEUTRAL
+DISAGREE_THRESHOLD = 0.12   # 12+ pp apart, opposite sides of 50% → DISAGREE
 
 MASTER_FIELDS = [
     "snapshot_date", "snapshot_time", "game_date",
@@ -190,7 +190,7 @@ def _broad_search(api_key: str) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PARSE MARKET -> TEAM NAMES
+# PARSE MARKET → TEAM NAMES
 # ─────────────────────────────────────────────────────────────────────────────
 
 TEAM_ALIASES = {
@@ -343,7 +343,7 @@ def save_master(date: str, games: list):
         writer.writeheader()
         writer.writerows(existing + new_rows)
 
-    log.info(f"Kalshi master updated: {len(new_rows)} games -> {path}")
+    log.info(f"Kalshi master updated: {len(new_rows)} games → {path}")
 
 
 def load_kalshi_for_date(date: str) -> dict:

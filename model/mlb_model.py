@@ -409,227 +409,6 @@ class MLBModel:
 
         return ml_adj, total_adj
 
-    def book_discrepancy_adj(self, away: str, home: str,
-                              ml_pick: str, total_pick: str) -> tuple:
-        """
-        Returns (ml_adj, total_adj) based on DraftKings vs consensus discrepancy.
-        Positive disc = DK is softer than market (more value on that side).
-        10-19 pts better -> +0.02 | 20+ pts better -> +0.04 | 10+ pts worse -> -0.02
-        """
-        snap = self.get_odds(away, home)
-        if not snap:
-            return 0.0, 0.0
-
-        ml_adj    = 0.0
-        total_adj = 0.0
-
-        # ML discrepancy
-        disc = sf(snap.get("disc_ml_away") if ml_pick == away else snap.get("disc_ml_home"))
-        if disc is not None:
-            if disc >= 20:    ml_adj = +0.04
-            elif disc >= 10:  ml_adj = +0.02
-            elif disc <= -10: ml_adj = -0.02
-
-        # Total discrepancy
-        disc_t = sf(snap.get("disc_total"))
-        if disc_t is not None:
-            if total_pick == "OVER":
-                if disc_t <= -0.5:   total_adj = +0.02
-                elif disc_t >= 0.5:  total_adj = -0.02
-            else:
-                if disc_t >= 0.5:    total_adj = +0.02
-                elif disc_t <= -0.5: total_adj = -0.02
-
-        return ml_adj, total_adj
-
-    # ── Rest Days ─────────────────────────────────────────────────────────────
-    def get_rest_days(self, team: str, game_date: str) -> int | None:
-        """
-        Returns days of rest for team heading into game_date.
-        0 = back-to-back, 1 = one day off, 2+ = well-rested.
-        None = not enough data.
-        """
-        if not game_date:
-            return None
-        prev_games = []
-        for row in self.schedule:
-            if row.get("away_team") != team and row.get("home_team") != team:
-                continue
-            gd = row.get("game_date", "")
-            if gd and gd < game_date:
-                prev_games.append(gd)
-        if not prev_games:
-            # Also check scores master
-            for row in self.scores:
-                if row.get("away_team") != team and row.get("home_team") != team:
-                    continue
-                gd = row.get("game_date", "")
-                if gd and gd < game_date:
-                    prev_games.append(gd)
-        if not prev_games:
-            return None
-        last_game = max(prev_games)
-        try:
-            from datetime import datetime as _dt
-            d1 = _dt.strptime(game_date, "%Y-%m-%d")
-            d2 = _dt.strptime(last_game, "%Y-%m-%d")
-            return (d1 - d2).days - 1   # 0 = played yesterday (back-to-back)
-        except Exception:
-            return None
-
-    def rest_adj(self, away: str, home: str,
-                 game_date: str, ml_side: str) -> tuple:
-        """
-        Returns (ml_adj, total_adj) based on rest days differential.
-        Back-to-back (0 rest): -0.02 to the tired team's pick
-        2+ days rest vs back-to-back: +0.02 to the rested team
-        """
-        away_rest = self.get_rest_days(away, game_date)
-        home_rest = self.get_rest_days(home, game_date)
-        if away_rest is None or home_rest is None:
-            return 0.0, 0.0
-
-        ml_adj    = 0.0
-        total_adj = 0.0
-
-        # Back-to-back penalty
-        if away_rest == 0 and home_rest > 0:
-            if ml_side == "away": ml_adj = -0.02
-            else:                 ml_adj = +0.02
-        elif home_rest == 0 and away_rest > 0:
-            if ml_side == "home": ml_adj = -0.02
-            else:                 ml_adj = +0.02
-
-        # Well-rested edge (2+ days vs 0-1 days)
-        if away_rest >= 2 and home_rest == 0:
-            if ml_side == "away": ml_adj += +0.01
-        elif home_rest >= 2 and away_rest == 0:
-            if ml_side == "home": ml_adj += +0.01
-
-        # Totals: fatigue reduces run production slightly
-        if away_rest == 0 or home_rest == 0:
-            total_adj = -0.01  # slight UNDER lean when either team is tired
-
-        return ml_adj, total_adj
-
-    # ── Pitcher Quality Gap ────────────────────────────────────────────────────
-    def pitcher_gap_adj(self, away_era_adj: float, home_era_adj: float,
-                        ml_side: str) -> float:
-        """
-        Confidence boost when one starter is significantly better than the other.
-        ERA gap of 0.75+ → +0.02 | gap of 1.50+ → +0.03 | gap of 2.50+ → +0.04
-        Applied to the team facing the WORSE pitcher.
-        """
-        if away_era_adj is None or home_era_adj is None:
-            return 0.0
-        if away_era_adj <= 0 or home_era_adj <= 0:
-            return 0.0
-
-        # Lower ERA = better pitcher. Gap = how much worse one starter is.
-        gap = abs(away_era_adj - home_era_adj)
-        better_side = "home" if away_era_adj > home_era_adj else "away"  # lower ERA wins
-
-        if gap < 0.75:
-            return 0.0
-        elif gap < 1.50:
-            boost = 0.02
-        elif gap < 2.50:
-            boost = 0.03
-        else:
-            boost = 0.04
-
-        # Boost applies to the team facing the worse pitcher (offensive edge)
-        # which is ALSO the team with the better pitcher pitching for them
-        if ml_side == better_side:
-            return +boost
-        else:
-            return -boost   # we're picking the team facing the better arm — small penalty
-
-    # ── Market Agreement ──────────────────────────────────────────────────────
-    def market_agreement_adj(self, ml_conf_base: float,
-                              away_odds: float | None,
-                              home_odds: float | None,
-                              ml_side: str) -> float:
-        """
-        Compare model's win probability to implied market probability.
-        If model and market agree strongly → validate confidence.
-        If model strongly disagrees with market → flag (could be edge OR error).
-
-        Returns ml_adj float.
-        Market implied prob from American odds:
-          Negative line: |line| / (|line| + 100)
-          Positive line: 100  / (line  + 100)
-        """
-        if away_odds is None or home_odds is None:
-            return 0.0
-
-        def _implied(odds: float) -> float:
-            if odds < 0:
-                return abs(odds) / (abs(odds) + 100)
-            else:
-                return 100.0 / (odds + 100)
-
-        # Normalize to remove vig
-        away_imp = _implied(away_odds)
-        home_imp = _implied(home_odds)
-        total    = away_imp + home_imp
-        if total <= 0:
-            return 0.0
-        away_imp /= total
-        home_imp /= total
-
-        market_wp = home_imp if ml_side == "home" else away_imp
-        model_gap = ml_conf_base - market_wp   # positive = model MORE confident than market
-
-        # Model agrees with market (both like same side, gap small)
-        if abs(model_gap) <= 0.03:
-            return +0.01   # slight validation boost — market confirms our pick
-
-        # Model is more confident than market — possible edge
-        if 0.04 <= model_gap <= 0.10:
-            return +0.02   # we see more edge than the market
-
-        # Model significantly more confident — either big edge or model over-confident
-        if model_gap > 0.10:
-            return +0.01   # reduce boost (dangerous territory — market may know more)
-
-        # Market more confident than model — we're fighting the market
-        if model_gap < -0.05:
-            return -0.02   # market sees something we don't — reduce confidence
-
-        return 0.0
-
-    # ── Convergence Multiplier ────────────────────────────────────────────────
-    def convergence_adj(self, signals: list) -> float:
-        """
-        When multiple independent signals all agree, compound confidence.
-        signals: list of booleans — True if signal agrees with pick, False if against.
-        Returns additional confidence boost for convergence.
-
-        3 signals agree  → +0.02
-        4 signals agree  → +0.03
-        5+ signals agree → +0.04
-        Majority against → -0.02
-        """
-        if not signals:
-            return 0.0
-        agree   = sum(1 for s in signals if s is True)
-        against = sum(1 for s in signals if s is False)
-        total   = len(signals)
-
-        if total < 3:
-            return 0.0
-
-        if agree >= 5:
-            return +0.04
-        elif agree >= 4:
-            return +0.03
-        elif agree >= 3:
-            return +0.02
-        elif against >= 3:
-            return -0.02
-        return 0.0
-
     # ── Bullpen Lookup ────────────────────────────────────────────────────────
     def get_bullpen(self, team: str) -> dict:
         """Return bullpen ERA and WHIP for the team. Falls back to league avg."""
@@ -852,76 +631,21 @@ class MLBModel:
         else:
             ml_team, ml_side, ml_conf_base = away, "away", away_wp
 
-        # Odds — fetch early so we can use the market total line
-        odds_snap   = self.get_odds(away, home)
-        movement    = self.get_movement(away, home)
-
-        # Totals — use real market line when available, otherwise park-adjusted fallback
-        # League-average O/U baseline is ~8.5; scale by park run factor for a sensible default
-        market_line = sf(odds_snap.get("total_line"))
-        if market_line:
-            line = market_line
-        else:
-            # Park-adjusted fallback: 8.5 * (park_runs/100), capped at 12.5
-            line = round(min(12.5, 8.5 * (park_runs / 100.0)), 1)
-
+        # Totals
+        line = 8.5
         diff = exp_total - line
         total_pick      = "OVER" if diff > 0 else "UNDER"
         total_conf_base = min(0.74, 0.50 + abs(diff) / 7.0)
+
+        # Line movement confidence adjustments
+        odds_snap   = self.get_odds(away, home)
+        movement    = self.get_movement(away, home)
         ml_adj, total_adj = self.line_movement_confidence_adj(
             away, home, ml_team, total_pick
         )
-        disc_ml_adj, disc_total_adj = self.book_discrepancy_adj(
-            away, home, ml_team, total_pick
-        )
-        ml_adj    += disc_ml_adj
-        total_adj += disc_total_adj
-
-        # Rest/travel adjustment
-        rest_ml_adj, rest_total_adj = self.rest_adj(away, home, game_date, ml_side)
-        ml_adj    += rest_ml_adj
-        total_adj += rest_total_adj
-
-        # Pitcher quality gap adjustment
-        away_era_adj = away_sp.get("era_adj", LEAGUE["era"])
-        home_era_adj = home_sp.get("era_adj", LEAGUE["era"])
-        gap_adj = self.pitcher_gap_adj(away_era_adj, home_era_adj, ml_side)
-        ml_adj += gap_adj
-
-        # Market agreement adjustment
-        market_ml_adj = self.market_agreement_adj(
-            ml_conf_base,
-            sf(odds_snap.get("ml_away")),
-            sf(odds_snap.get("ml_home")),
-            ml_side
-        )
-        ml_adj += market_ml_adj
-
-        # Convergence multiplier — how many independent signals agree with the ML pick?
-        mov = self.get_movement(away, home)
-        sharp = mov.get("sharp_side", "") if mov else ""
-        conv_signals = []
-        # Signal 1: line movement direction
-        if mov and mov.get("ml_signal") in ("STEAM","DRIFT"):
-            conv_signals.append(sharp == ml_team)
-        # Signal 2: pitcher gap favors our pick
-        if gap_adj != 0.0:
-            conv_signals.append(gap_adj > 0)
-        # Signal 3: market agrees with model
-        if market_ml_adj != 0.0:
-            conv_signals.append(market_ml_adj > 0)
-        # Signal 4: team recent form — picked team winning > 60% last 10
-        picked_form = home_form if ml_side == "home" else away_form
-        if picked_form.get("win_pct") is not None:
-            conv_signals.append(picked_form["win_pct"] >= 0.60)
-        # Signal 5: rest advantage
-        if rest_ml_adj != 0.0:
-            conv_signals.append(rest_ml_adj > 0)
-        conv_adj  = self.convergence_adj(conv_signals)
-        ml_adj   += conv_adj
 
         ml_conf    = round(min(0.90, max(0.10, ml_conf_base + ml_adj)), 4)
-        total_conf = round(min(0.82, max(0.10, total_conf_base + total_adj)), 4)
+        total_conf = round(min(0.80, max(0.10, total_conf_base + total_adj)), 4)
 
         # Run line: only offer when one side has 60%+ ML confidence
         rl_threshold = 0.60
@@ -1020,12 +744,6 @@ class MLBModel:
             "total_move":     sf(movement.get("total_move")),
             "ml_adj":         ml_adj,
             "total_adj":      total_adj,
-            "rest_ml_adj":    rest_ml_adj,
-            "gap_adj":        gap_adj,
-            "market_ml_adj":  market_ml_adj,
-            "conv_adj":       conv_adj,
-            "away_rest":      self.get_rest_days(away, game_date),
-            "home_rest":      self.get_rest_days(home, game_date),
 
             # Bullpen
             "away_bp_era":    away_bp["era"],

@@ -20,15 +20,8 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-:: Step 2 - Grade yesterday's picks (generates mlb_analysis_YYYY-MM-DD.json for Yesterday panel)
-echo [%date% %time%] Step 2: Grading yesterday's picks... >> "%LOG%"
-python run_analysis.py >> "%LOG%" 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [%date% %time%] WARNING: Analysis failed - continuing anyway. >> "%LOG%"
-)
-
-:: Step 3 - Generate HTML picks dashboard
-echo [%date% %time%] Step 3: Generating picks dashboard... >> "%LOG%"
+:: Step 2 - Generate HTML picks dashboard
+echo [%date% %time%] Step 2: Generating picks dashboard... >> "%LOG%"
 python run_picks_html.py --no-open >> "%LOG%" 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo [%date% %time%] ERROR: Picks generation failed. >> "%LOG%"

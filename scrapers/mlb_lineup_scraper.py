@@ -152,7 +152,7 @@ def run(target_date: str = None) -> list[dict]:
         json.dump(lineups, f, indent=2)
 
     confirmed = sum(1 for g in lineups if g["lineup_confirmed"])
-    log.info(f"Lineups: {len(lineups)} games, {confirmed} confirmed -> {out_path}")
+    log.info(f"Lineups: {len(lineups)} games, {confirmed} confirmed → {out_path}")
     return lineups
 
 
