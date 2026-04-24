@@ -84,7 +84,10 @@ KALSHI_MOVEMENT_FIELDS = [
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get_api_key() -> str:
-    """Load Kalshi API key from .env or environment."""
+    """Load Kalshi API key — environment variable takes priority (Railway), then .env file (local dev)."""
+    key = os.environ.get("KALSHI_API_KEY", "").strip()
+    if key:
+        return key
     env_path = os.path.join(BASE_DIR, ".env")
     if os.path.exists(env_path):
         with open(env_path) as f:
@@ -92,9 +95,6 @@ def _get_api_key() -> str:
                 line = line.strip()
                 if line.startswith("KALSHI_API_KEY="):
                     return line.split("=", 1)[1].strip().strip('"').strip("'")
-    key = os.environ.get("KALSHI_API_KEY", "")
-    if key:
-        return key
     raise ValueError(
         "KALSHI_API_KEY not found. Add KALSHI_API_KEY=your_key_id to your .env file."
     )

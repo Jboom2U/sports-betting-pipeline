@@ -25,6 +25,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -38,6 +39,7 @@ os.makedirs(CLEAN_DIR, exist_ok=True)
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 SPORT         = "baseball_mlb"
+ET            = ZoneInfo("America/New_York")
 
 # Books to average for consensus line (prioritized)
 CONSENSUS_BOOKS = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbet",
@@ -50,14 +52,18 @@ DRIFT_THRESH  = 3
 SNAPSHOT_FIELDNAMES = [
     "snapshot_id", "snapshot_time", "game_id", "game_date", "game_time_utc",
     "away_team", "home_team",
-    # Moneyline
+    # Moneyline consensus
     "ml_away", "ml_home",
     # Run line
     "rl_away_line", "rl_away_price", "rl_home_line", "rl_home_price",
-    # Totals
+    # Totals consensus
     "total_line", "total_over_price", "total_under_price",
     # Book count
     "books_used",
+    # DraftKings specific (softest public book — best for value spotting)
+    "dk_ml_away", "dk_ml_home", "dk_total",
+    # Discrepancy: DraftKings vs consensus (positive = DK offers more value on that side)
+    "disc_ml_away", "disc_ml_home", "disc_total",
 ]
 
 MOVEMENT_FIELDNAMES = [
@@ -79,8 +85,10 @@ MOVEMENT_FIELDNAMES = [
 # API KEY
 # ─────────────────────────────────────────────────────────────────────────────
 def get_api_key() -> str:
-    """Load API key from .env file or environment variable."""
-    # Try .env file first
+    """Load API key — environment variable takes priority (Railway), then .env file (local dev)."""
+    key = os.environ.get("ODDS_API_KEY", "").strip()
+    if key:
+        return key
     env_path = os.path.join(BASE_DIR, ".env")
     if os.path.exists(env_path):
         with open(env_path) as f:
@@ -88,10 +96,7 @@ def get_api_key() -> str:
                 line = line.strip()
                 if line.startswith("ODDS_API_KEY="):
                     return line.split("=", 1)[1].strip().strip('"').strip("'")
-
-    # Fall back to environment variable
-    key = os.environ.get("ODDS_API_KEY", "")
-    return key
+    return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,30 +133,48 @@ def _avg(prices: list) -> float | None:
 
 def parse_game(game: dict, snapshot_time: str) -> dict:
     """Parse one game from Odds API response into a flat snapshot row."""
-    home    = game.get("home_team", "")
-    away    = game.get("away_team", "")
-    g_time  = game.get("commence_time", "")
-    g_date  = g_time[:10] if g_time else ""
+    home   = game.get("home_team", "")
+    away   = game.get("away_team", "")
+    g_time = game.get("commence_time", "")
 
-    ml_away_prices, ml_home_prices   = [], []
-    rl_away_lines,  rl_home_lines    = [], []
-    rl_away_prices, rl_home_prices   = [], []
+    # Convert UTC commence_time to ET date so late games (after 8pm ET / midnight UTC)
+    # aren't bucketed under tomorrow's date in Railway's UTC environment.
+    if g_time:
+        try:
+            dt_utc = datetime.strptime(g_time, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            g_date = dt_utc.astimezone(ET).strftime("%Y-%m-%d")
+        except Exception:
+            g_date = g_time[:10]
+    else:
+        g_date = ""
+
+    ml_away_prices, ml_home_prices        = [], []
+    rl_away_lines,  rl_home_lines         = [], []
+    rl_away_prices, rl_home_prices        = [], []
     total_lines, over_prices, under_prices = [], [], []
+
+    # DraftKings specific (softest public book — best value signal)
+    dk_ml_away = dk_ml_home = dk_total = None
 
     for bm in game.get("bookmakers", []):
         bk = bm.get("key", "")
-        # Prioritize consensus books
         if bk not in CONSENSUS_BOOKS:
             continue
 
         for market in bm.get("markets", []):
-            key = market.get("key", "")
+            key      = market.get("key", "")
             outcomes = market.get("outcomes", [])
 
             if key == "h2h":
                 for o in outcomes:
-                    if o["name"] == home:  ml_home_prices.append(o["price"])
-                    elif o["name"] == away: ml_away_prices.append(o["price"])
+                    if o["name"] == home:
+                        ml_home_prices.append(o["price"])
+                        if bk == "draftkings":
+                            dk_ml_home = o["price"]
+                    elif o["name"] == away:
+                        ml_away_prices.append(o["price"])
+                        if bk == "draftkings":
+                            dk_ml_away = o["price"]
 
             elif key == "spreads":
                 for o in outcomes:
@@ -165,29 +188,48 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
             elif key == "totals":
                 for o in outcomes:
                     total_lines.append(o.get("point"))
-                    if o["name"] == "Over":  over_prices.append(o.get("price"))
-                    elif o["name"] == "Under": under_prices.append(o.get("price"))
+                    if o["name"] == "Over":
+                        over_prices.append(o.get("price"))
+                        if bk == "draftkings":
+                            dk_total = o.get("point")
+                    elif o["name"] == "Under":
+                        under_prices.append(o.get("price"))
 
-    books_used = max(len(ml_away_prices), 1)
+    books_used    = max(len(ml_away_prices), 1)
+    cons_ml_away  = _avg(ml_away_prices)
+    cons_ml_home  = _avg(ml_home_prices)
+    cons_total    = _avg(total_lines)
+
+    # Discrepancy: DK price minus consensus (positive = DK is softer = more value)
+    def _disc(dk, cons):
+        if dk is None or cons is None:
+            return None
+        return round(dk - cons, 1)
 
     return {
-        "snapshot_id":     f"{game.get('id','')[:8]}_{snapshot_time[:13]}",
-        "snapshot_time":   snapshot_time,
-        "game_id":         game.get("id", ""),
-        "game_date":       g_date,
-        "game_time_utc":   g_time,
-        "away_team":       away,
-        "home_team":       home,
-        "ml_away":         _avg(ml_away_prices),
-        "ml_home":         _avg(ml_home_prices),
-        "rl_away_line":    _avg(rl_away_lines),
-        "rl_away_price":   _avg(rl_away_prices),
-        "rl_home_line":    _avg(rl_home_lines),
-        "rl_home_price":   _avg(rl_home_prices),
-        "total_line":      _avg(total_lines),
-        "total_over_price":_avg(over_prices),
+        "snapshot_id":      f"{game.get('id','')[:8]}_{snapshot_time[:13]}",
+        "snapshot_time":    snapshot_time,
+        "game_id":          game.get("id", ""),
+        "game_date":        g_date,
+        "game_time_utc":    g_time,
+        "away_team":        away,
+        "home_team":        home,
+        "ml_away":          cons_ml_away,
+        "ml_home":          cons_ml_home,
+        "rl_away_line":     _avg(rl_away_lines),
+        "rl_away_price":    _avg(rl_away_prices),
+        "rl_home_line":     _avg(rl_home_lines),
+        "rl_home_price":    _avg(rl_home_prices),
+        "total_line":       cons_total,
+        "total_over_price": _avg(over_prices),
         "total_under_price":_avg(under_prices),
-        "books_used":      books_used,
+        "books_used":       books_used,
+        "dk_ml_away":       dk_ml_away,
+        "dk_ml_home":       dk_ml_home,
+        "dk_total":         dk_total,
+        "disc_ml_away":     _disc(dk_ml_away, cons_ml_away),
+        "disc_ml_home":     _disc(dk_ml_home, cons_ml_home),
+        "disc_total":       _disc(dk_total, cons_total),
     }
 
 
@@ -207,17 +249,18 @@ def detect_movement(prev_snaps: list, curr_snaps: list) -> list:
     Compare current snapshot to most recent previous snapshot.
     Returns list of movement rows.
     """
-    # Index previous by (away, home, game_date)
+    # Index previous by (away, home) — omitting game_date avoids UTC/ET date mismatches
+    # between old snapshots stored before this fix and new ones.
     prev_map = {}
     for row in prev_snaps:
-        k = (row.get("away_team",""), row.get("home_team",""), row.get("game_date",""))
+        k = (row.get("away_team",""), row.get("home_team",""))
         prev_map[k] = row
 
     movements = []
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S")
 
     for curr in curr_snaps:
-        k = (curr.get("away_team",""), curr.get("home_team",""), curr.get("game_date",""))
+        k = (curr.get("away_team",""), curr.get("home_team",""))
         prev = prev_map.get(k)
         if not prev:
             continue
@@ -276,19 +319,26 @@ def _num(val):
 # LOAD PREVIOUS SNAPSHOT
 # ─────────────────────────────────────────────────────────────────────────────
 def load_previous_snapshot(today: str) -> list:
-    """Load the most recent odds snapshot for today."""
+    """
+    Load the EARLIEST available odds snapshot for today's games.
+
+    Using the earliest (not most recent) as the baseline gives the widest
+    possible window to detect movement.  Yesterday's evening snapshot of
+    today's games is stored with game_date = today, so it naturally becomes
+    the opening line — exactly what sharp-action tracking needs.
+    """
     master = os.path.join(CLEAN_DIR, "mlb_odds_master.csv")
     if not os.path.exists(master):
         return []
     with open(master, encoding="utf-8") as f:
         rows = [r for r in csv.DictReader(f) if r.get("game_date") == today]
-    # Return most recent snapshot per game
-    latest = {}
+    # Return EARLIEST snapshot per game (opening line baseline)
+    earliest = {}
     for r in rows:
         k = (r.get("away_team",""), r.get("home_team",""))
-        if k not in latest or r.get("snapshot_time","") > latest[k].get("snapshot_time",""):
-            latest[k] = r
-    return list(latest.values())
+        if k not in earliest or r.get("snapshot_time","") < earliest[k].get("snapshot_time",""):
+            earliest[k] = r
+    return list(earliest.values())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -332,7 +382,9 @@ def run() -> dict:
         log.warning("Sign up free at the-odds-api.com and add ODDS_API_KEY=your_key to .env")
         return {"snapshots": 0, "movements": 0}
 
-    today         = datetime.now().strftime("%Y-%m-%d")
+    # Use ET date so Railway's UTC clock doesn't roll us into "tomorrow" after 8pm ET
+    now_et        = datetime.now(ET)
+    today         = now_et.strftime("%Y-%m-%d")
     snapshot_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     try:
@@ -341,8 +393,18 @@ def run() -> dict:
         log.error(f"Odds fetch failed: {e}")
         return {"snapshots": 0, "movements": 0, "error": str(e)}
 
-    # Filter to today's games
-    today_games = [g for g in games if g.get("commence_time","")[:10] == today]
+    # Filter to today's games using ET date conversion (same logic as parse_game)
+    def _game_et_date(g):
+        ct = g.get("commence_time", "")
+        if not ct:
+            return ""
+        try:
+            dt_utc = datetime.strptime(ct, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            return dt_utc.astimezone(ET).strftime("%Y-%m-%d")
+        except Exception:
+            return ct[:10]
+
+    today_games = [g for g in games if _game_et_date(g) == today]
     log.info(f"Found {len(today_games)} games today out of {len(games)} total")
 
     # Parse snapshots
@@ -357,19 +419,6 @@ def run() -> dict:
         sig = m.get("ml_signal","")
         if sig in ("STEAM", "DRIFT"):
             log.info(f"LINE MOVE [{sig}] {m['away_team']} @ {m['home_team']} | "
-                     f"ML: {m.get('ml_away_open')} → {m.get('ml_away_now')} away | "
+                     f"ML: {m.get('ml_away_open')} -> {m.get('ml_away_now')} away | "
                      f"Sharp: {m.get('sharp_side','?')} | "
-                     f"Total: {m.get('total_open')} → {m.get('total_now')}")
-
-    # Save
-    save_snapshot(curr_snaps)
-    save_movement(movements, today)
-
-    log.info(f"Odds scraper complete | {len(curr_snaps)} snapshots | {len(movements)} movement records")
-    return {"snapshots": len(curr_snaps), "movements": len(movements)}
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s [%(levelname)s] %(message)s")
-    run()
+                     f"Total: {m.get('total_open')} -> {m.get('tot
