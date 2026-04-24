@@ -8,27 +8,23 @@ for each game. Comparing your model's win probability to Kalshi's implied
 probability flags picks where the model agrees with the market (higher conviction)
 vs. disagrees (potential model flaw or genuine edge).
 
+Multi-snapshot mode: Each run APPENDS a new snapshot row rather than replacing
+today's data. This enables Kalshi movement detection — tracking when the
+prediction market shifts (often ahead of sportsbooks).
+
+Movement thresholds (percentage points of implied probability):
+    STEAM  — 5+ pp shift  (strong signal — market strongly repriced)
+    DRIFT  — 2-4 pp shift (moderate signal — notable repricing)
+    STABLE — <2 pp        (normal variance)
+
 Setup:
     1. Create an account at kalshi.com and generate an API key
-       (Account Settings → API Keys)
-    2. Add one line to your .env file in the repo root:
-         KALSHI_API_KEY=your_key_id_here
-    That's it — no private key or cryptography package needed for read-only access.
+    2. Add KALSHI_API_KEY=your_key_id to your .env file
 
 Output:
-    data/clean/mlb_kalshi_master.csv
+    data/clean/mlb_kalshi_master.csv   (all snapshots, appended)
+    data/clean/mlb_kalshi_movement_YYYY-MM-DD.csv
     data/raw/mlb_kalshi_YYYY-MM-DD.json
-
-How it's used:
-    - run_picks_html.py loads the master CSV and annotates pick cards with
-      Kalshi implied win probability and an AGREE / DISAGREE / NEUTRAL signal
-    - run_analysis.py compares model confidence vs Kalshi price to track
-      which disagreements the model wins over time (long-run edge detection)
-
-Kalshi API v2:
-    Base URL: https://api.elections.kalshi.com/trade-api/v2
-    Auth:     Authorization: <api_key>
-    Markets:  GET /markets?limit=200&series_ticker=KXMLBW
 """
 
 import os
@@ -51,12 +47,15 @@ os.makedirs(CLEAN_DIR, exist_ok=True)
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 # Known Kalshi series tickers for MLB game winner markets.
-# Kalshi may update these — check kalshi.com/browse if markets aren't found.
 MLB_SERIES = ["KXMLBW", "MLBWINNER", "KXMLB"]
 
-# How far Kalshi probability must diverge from model for AGREE/DISAGREE signal
-AGREE_THRESHOLD    = 0.04   # within 4 pp → NEUTRAL
-DISAGREE_THRESHOLD = 0.12   # 12+ pp apart, opposite sides of 50% → DISAGREE
+# Model vs Kalshi signal thresholds
+AGREE_THRESHOLD    = 0.04   # within 4 pp -> NEUTRAL
+DISAGREE_THRESHOLD = 0.12   # 12+ pp apart, opposite sides of 50% -> DISAGREE
+
+# Kalshi movement thresholds (percentage points of implied probability)
+KALSHI_STEAM_THRESH = 0.05   # 5 pp move = strong market repricing
+KALSHI_DRIFT_THRESH = 0.02   # 2 pp move = moderate repricing
 
 MASTER_FIELDS = [
     "snapshot_date", "snapshot_time", "game_date",
@@ -68,6 +67,15 @@ MASTER_FIELDS = [
     "kalshi_yes_bid",
     "kalshi_volume",
     "market_title",
+]
+
+KALSHI_MOVEMENT_FIELDS = [
+    "away_team", "home_team", "game_date",
+    "snap1_time", "snap2_time",
+    "kalshi_away_open", "kalshi_away_now", "kalshi_away_move",
+    "kalshi_home_open", "kalshi_home_now", "kalshi_home_move",
+    "kalshi_signal", "kalshi_sharp_side",
+    "timestamp",
 ]
 
 
@@ -190,7 +198,7 @@ def _broad_search(api_key: str) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PARSE MARKET → TEAM NAMES
+# PARSE MARKET -> TEAM NAMES
 # ─────────────────────────────────────────────────────────────────────────────
 
 TEAM_ALIASES = {
@@ -308,22 +316,18 @@ def save_raw(date: str, markets: list):
     log.info(f"Raw Kalshi data saved: {path}")
 
 
-def save_master(date: str, games: list):
-    """Append (or refresh) today's rows in the master CSV."""
+def save_master(date: str, snapshot_time_str: str, games: list):
+    """
+    APPEND this snapshot to the master CSV.
+    Each call throughout the day adds a new set of rows so movement can be detected.
+    """
     path = os.path.join(CLEAN_DIR, "mlb_kalshi_master.csv")
-    now  = datetime.now()
-
-    existing = []
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                if row.get("snapshot_date") != date:
-                    existing.append(row)
+    write_header = not os.path.exists(path)
 
     new_rows = [
         {
             "snapshot_date":    date,
-            "snapshot_time":    now.strftime("%H:%M"),
+            "snapshot_time":    snapshot_time_str,
             "game_date":        date,
             "away_team":        g["away_team"],
             "home_team":        g["home_team"],
@@ -338,18 +342,40 @@ def save_master(date: str, games: list):
         for g in games
     ]
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=MASTER_FIELDS)
-        writer.writeheader()
-        writer.writerows(existing + new_rows)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=MASTER_FIELDS)
+        if write_header:
+            w.writeheader()
+        w.writerows(new_rows)
 
-    log.info(f"Kalshi master updated: {len(new_rows)} games → {path}")
+    log.info(f"Kalshi snapshot appended: {len(new_rows)} games at {snapshot_time_str}")
+
+
+def load_earliest_snapshot(today: str) -> list:
+    """
+    Load the EARLIEST Kalshi snapshot for today's games (opening market baseline).
+    Used as the comparison baseline for movement detection.
+    """
+    path = os.path.join(CLEAN_DIR, "mlb_kalshi_master.csv")
+    if not os.path.exists(path):
+        return []
+
+    with open(path, encoding="utf-8") as f:
+        rows = [r for r in csv.DictReader(f) if r.get("game_date") == today]
+
+    earliest = {}
+    for r in rows:
+        k = (r.get("away_team", ""), r.get("home_team", ""))
+        if k not in earliest or r.get("snapshot_time", "") < earliest[k].get("snapshot_time", ""):
+            earliest[k] = r
+    return list(earliest.values())
 
 
 def load_kalshi_for_date(date: str) -> dict:
     """
-    Load saved Kalshi data for a given date.
+    Load the MOST RECENT Kalshi snapshot for each game on a given date.
     Returns dict keyed by sorted (team_a, team_b) tuple.
+    Used for displaying current Kalshi probability on pick cards.
     """
     path = os.path.join(CLEAN_DIR, "mlb_kalshi_master.csv")
     if not os.path.exists(path):
@@ -368,6 +394,7 @@ def load_kalshi_for_date(date: str) -> dict:
             except ValueError:
                 away_p, home_p = 0.5, 0.5
             key = tuple(sorted([away, home]))
+            # Iterating chronologically means last row per game = most recent
             data[key] = {
                 "away_team":        away,
                 "home_team":        home,
@@ -378,6 +405,120 @@ def load_kalshi_for_date(date: str) -> dict:
             }
     return data
 
+
+def load_kalshi_movement(date: str) -> list:
+    """
+    Load today's Kalshi movement records.
+    Returns list of movement dicts with STEAM/DRIFT signals.
+    """
+    path = os.path.join(CLEAN_DIR, f"mlb_kalshi_movement_{date}.csv")
+    if not os.path.exists(path):
+        return []
+    out = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                sig = r.get("kalshi_signal", "STABLE")
+                if sig in ("STEAM", "DRIFT"):
+                    out.append(dict(r))
+    except Exception as e:
+        log.warning(f"Kalshi movement load failed: {e}")
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MOVEMENT DETECTION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _kalshi_signal(move: float) -> str:
+    if move is None:
+        return "NO_DATA"
+    abs_m = abs(move)
+    if abs_m >= KALSHI_STEAM_THRESH:
+        return "STEAM"
+    if abs_m >= KALSHI_DRIFT_THRESH:
+        return "DRIFT"
+    return "STABLE"
+
+
+def detect_kalshi_movement(prev_snaps: list, curr_games: list, date: str, curr_time: str) -> list:
+    """
+    Compare current Kalshi snapshot to the earliest baseline for today.
+    Returns movement records for all matched games.
+    """
+    prev_map = {}
+    for r in prev_snaps:
+        k = (r.get("away_team", ""), r.get("home_team", ""))
+        prev_map[k] = r
+
+    movements = []
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for curr in curr_games:
+        k = (curr.get("away_team", ""), curr.get("home_team", ""))
+        prev = prev_map.get(k)
+        if not prev:
+            continue
+
+        try:
+            away_open = float(prev.get("kalshi_away_prob", 0))
+            away_now  = float(curr.get("kalshi_away_prob", 0))
+            home_open = float(prev.get("kalshi_home_prob", 0))
+            home_now  = float(curr.get("kalshi_home_prob", 0))
+        except (ValueError, TypeError):
+            continue
+
+        away_move = round(away_now - away_open, 3)
+        home_move = round(home_now - home_open, 3)
+
+        # Signal is based on whichever side moved more
+        dominant_move = away_move if abs(away_move) >= abs(home_move) else home_move
+        signal = _kalshi_signal(dominant_move)
+
+        # Sharp side: probability INCREASING means market money flowing to that team
+        sharp_side = ""
+        if abs(away_move) >= KALSHI_DRIFT_THRESH:
+            sharp_side = curr["away_team"] if away_move > 0 else curr["home_team"]
+        elif abs(home_move) >= KALSHI_DRIFT_THRESH:
+            sharp_side = curr["home_team"] if home_move > 0 else curr["away_team"]
+
+        movements.append({
+            "away_team":         curr.get("away_team", ""),
+            "home_team":         curr.get("home_team", ""),
+            "game_date":         date,
+            "snap1_time":        prev.get("snapshot_time", ""),
+            "snap2_time":        curr_time,
+            "kalshi_away_open":  away_open,
+            "kalshi_away_now":   away_now,
+            "kalshi_away_move":  away_move,
+            "kalshi_home_open":  home_open,
+            "kalshi_home_now":   home_now,
+            "kalshi_home_move":  home_move,
+            "kalshi_signal":     signal,
+            "kalshi_sharp_side": sharp_side,
+            "timestamp":         ts,
+        })
+
+    return movements
+
+
+def save_kalshi_movement(movements: list, date: str):
+    if not movements:
+        return
+    path = os.path.join(CLEAN_DIR, f"mlb_kalshi_movement_{date}.csv")
+    write_header = not os.path.exists(path)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=KALSHI_MOVEMENT_FIELDS)
+        if write_header:
+            w.writeheader()
+        w.writerows(movements)
+    notable = sum(1 for m in movements if m.get("kalshi_signal") in ("STEAM", "DRIFT"))
+    log.info(f"Kalshi movement saved: {len(movements)} games | {notable} notable moves")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MODEL vs KALSHI SIGNAL
+# ─────────────────────────────────────────────────────────────────────────────
 
 def get_kalshi_signal(model_wp: float, kalshi_prob: float) -> str:
     """
@@ -400,11 +541,12 @@ def get_kalshi_signal(model_wp: float, kalshi_prob: float) -> str:
 
 def run(target_date: str = None) -> str:
     """
-    Fetch Kalshi MLB markets for target_date, save to CSV.
+    Fetch Kalshi MLB markets, append snapshot, detect movement.
     Returns a summary string.
     """
-    date    = target_date or datetime.now().strftime("%Y-%m-%d")
-    api_key = _get_api_key()
+    date         = target_date or datetime.now().strftime("%Y-%m-%d")
+    snapshot_time = datetime.now().strftime("%H:%M:%S")
+    api_key      = _get_api_key()
 
     raw_markets = fetch_all_mlb_markets(api_key)
     if not raw_markets:
@@ -412,16 +554,28 @@ def run(target_date: str = None) -> str:
 
     save_raw(date, raw_markets)
     games = extract_game_probabilities(raw_markets)
-    save_master(date, games)
+    if not games:
+        return f"No parseable MLB game markets for {date}"
 
-    return f"{len(games)} Kalshi markets saved for {date}"
+    # Load earliest snapshot BEFORE saving this one (so we compare against baseline)
+    prev_snaps = load_earliest_snapshot(date)
+
+    # Append this snapshot
+    save_master(date, snapshot_time, games)
+
+    # Detect movement vs baseline
+    if prev_snaps:
+        movements = detect_kalshi_movement(prev_snaps, games, date, snapshot_time)
+        save_kalshi_movement(movements, date)
+        notable = sum(1 for m in movements if m.get("kalshi_signal") in ("STEAM", "DRIFT"))
+        log.info(f"Kalshi: {len(games)} games | {notable} notable market moves")
+        return f"Kalshi: {len(games)} games | {notable} notable moves"
+
+    log.info(f"Kalshi: {len(games)} games saved (first snapshot — baseline set)")
+    return f"Kalshi: {len(games)} games saved for {date}"
 
 
 if __name__ == "__main__":
-    import argparse
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=None)
-    args = parser.parse_args()
-    print(run(args.date))
+    print(run())

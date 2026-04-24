@@ -120,14 +120,20 @@ def _needs_odds_snapshot() -> bool:
 
 
 def _run_odds_snapshot():
-    """Take a fresh odds snapshot. Non-fatal — captures line movement for the sharp money panel."""
-    log.info("Taking mid-day odds snapshot...")
+    """Take a fresh odds + Kalshi snapshot. Non-fatal — powers the Sharp Action panel."""
+    log.info("Taking mid-day odds + Kalshi snapshot...")
     try:
         from scrapers.mlb_odds_scraper import run as run_odds
         result = run_odds()
         log.info(f"Odds snapshot complete: {result}")
     except Exception as e:
         log.warning(f"Odds snapshot failed (non-fatal): {e}")
+    try:
+        from scrapers.mlb_kalshi_scraper import run as run_kalshi
+        k_result = run_kalshi()
+        log.info(f"Kalshi snapshot complete: {k_result}")
+    except Exception as e:
+        log.warning(f"Kalshi snapshot failed (non-fatal): {e}")
 
 
 def _needs_lineup_refresh() -> bool:

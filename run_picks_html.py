@@ -529,6 +529,7 @@ def prep_props(props: list) -> list:
             "fav_tier":     fav_tier,
             "unconfirmed":  unconfirmed,
             "tbd_sp":       tbd_sp,
+            "projected":    p.get("projected", False),
         })
     return out
 
@@ -568,6 +569,111 @@ def load_kalshi(date: str) -> dict:
         return {}
 
 
+def load_line_movement(date: str) -> list:
+    """
+    Load line movement for date and merge in Kalshi movement.
+    Returns list of movement dicts — includes games where EITHER sportsbooks
+    OR Kalshi show meaningful movement (STEAM / DRIFT).
+    """
+    import csv as _csv
+    clean_dir = os.path.join(os.path.dirname(__file__), "data", "clean")
+
+    def _n(v):
+        try: return float(v)
+        except: return None
+
+    # ── Sportsbook movement ──────────────────────────────────────────────────
+    sb_map = {}
+    sb_path = os.path.join(clean_dir, f"mlb_line_movement_{date}.csv")
+    if os.path.exists(sb_path):
+        try:
+            with open(sb_path, encoding="utf-8") as f:
+                rows = list(_csv.DictReader(f))
+            latest = {}
+            for r in rows:
+                k = (r.get("away_team",""), r.get("home_team",""))
+                if k not in latest or r.get("snap2_time","") > latest[k].get("snap2_time",""):
+                    latest[k] = r
+            for k, r in latest.items():
+                sb_map[k] = {
+                    "away":          r.get("away_team",""),
+                    "home":          r.get("home_team",""),
+                    "ml_away_open":  _n(r.get("ml_away_open")),
+                    "ml_away_now":   _n(r.get("ml_away_now")),
+                    "ml_away_move":  _n(r.get("ml_away_move")),
+                    "ml_home_open":  _n(r.get("ml_home_open")),
+                    "ml_home_now":   _n(r.get("ml_home_now")),
+                    "ml_home_move":  _n(r.get("ml_home_move")),
+                    "total_open":    _n(r.get("total_open")),
+                    "total_now":     _n(r.get("total_now")),
+                    "total_move":    _n(r.get("total_move")),
+                    "ml_signal":     r.get("ml_signal", "NO_DATA"),
+                    "total_signal":  r.get("total_signal", "NO_DATA"),
+                    "sharp_side":    r.get("sharp_side",""),
+                    "snap1_time":    r.get("snap1_time",""),
+                    "snap2_time":    r.get("snap2_time",""),
+                    # Kalshi fields default to None until merged
+                    "kalshi_away_open":  None,
+                    "kalshi_away_now":   None,
+                    "kalshi_away_move":  None,
+                    "kalshi_home_open":  None,
+                    "kalshi_home_now":   None,
+                    "kalshi_home_move":  None,
+                    "kalshi_signal":     "NO_DATA",
+                    "kalshi_sharp_side": "",
+                }
+        except Exception as e:
+            log.warning(f"Sportsbook movement load failed: {e}")
+
+    # ── Kalshi movement ──────────────────────────────────────────────────────
+    try:
+        from scrapers.mlb_kalshi_scraper import load_kalshi_movement as _load_km
+        km_rows = _load_km(date)
+        for r in km_rows:
+            k = (r.get("away_team",""), r.get("home_team",""))
+            kalshi_fields = {
+                "kalshi_away_open":  _n(r.get("kalshi_away_open")),
+                "kalshi_away_now":   _n(r.get("kalshi_away_now")),
+                "kalshi_away_move":  _n(r.get("kalshi_away_move")),
+                "kalshi_home_open":  _n(r.get("kalshi_home_open")),
+                "kalshi_home_now":   _n(r.get("kalshi_home_now")),
+                "kalshi_home_move":  _n(r.get("kalshi_home_move")),
+                "kalshi_signal":     r.get("kalshi_signal", "STABLE"),
+                "kalshi_sharp_side": r.get("kalshi_sharp_side", ""),
+            }
+            if k in sb_map:
+                sb_map[k].update(kalshi_fields)
+            else:
+                # Kalshi moved but sportsbooks didn't — still worth surfacing
+                sb_map[k] = {
+                    "away":  r.get("away_team",""),
+                    "home":  r.get("home_team",""),
+                    "ml_away_open": None, "ml_away_now": None, "ml_away_move": None,
+                    "ml_home_open": None, "ml_home_now": None, "ml_home_move": None,
+                    "total_open": None,   "total_now":   None, "total_move":   None,
+                    "ml_signal":    "NO_DATA",
+                    "total_signal": "NO_DATA",
+                    "sharp_side":   "",
+                    "snap1_time":   r.get("snap1_time",""),
+                    "snap2_time":   r.get("snap2_time",""),
+                    **kalshi_fields,
+                }
+    except Exception as e:
+        log.warning(f"Kalshi movement merge failed: {e}")
+
+    # ── Filter to games with at least one meaningful signal ──────────────────
+    out = []
+    for r in sb_map.values():
+        sb_notable = (r.get("ml_signal") in ("STEAM","DRIFT") or
+                      r.get("total_signal") in ("STEAM","DRIFT"))
+        k_notable  = r.get("kalshi_signal") in ("STEAM","DRIFT")
+        if sb_notable or k_notable:
+            out.append(r)
+
+    log.info(f"Line movement loaded: {len(out)} games with notable moves (sportsbook + Kalshi)")
+    return out
+
+
 def load_yesterday_analysis(date: str) -> dict:
     """
     Load the most recent analysis JSON (for yesterday's picks) to show in
@@ -591,6 +697,93 @@ def load_yesterday_analysis(date: str) -> dict:
     return {}
 
 
+PROJ_LINEUPS_CACHE = os.path.join(os.path.dirname(__file__), "data", "clean", "mlb_projected_lineups.json")
+
+
+def save_projected_lineups_cache(lineups: dict) -> None:
+    """
+    Persist projected lineups to data/clean/ so they survive git pushes to Railway.
+    Called by run_pipeline.py after building lineups from raw hitter stats files.
+    """
+    try:
+        os.makedirs(os.path.dirname(PROJ_LINEUPS_CACHE), exist_ok=True)
+        with open(PROJ_LINEUPS_CACHE, "w", encoding="utf-8") as f:
+            json.dump(lineups, f)
+        log.info(f"Projected lineups cache saved: {len(lineups)} teams → {PROJ_LINEUPS_CACHE}")
+    except Exception as e:
+        log.warning(f"Could not save projected lineups cache: {e}")
+
+
+def load_projected_lineups(today: str) -> dict:
+    """
+    Return the most recent confirmed batting order per team from previous days.
+    Used to pre-populate the Teams tab before today's lineups are officially posted.
+
+    Returns dict keyed by team full name:
+      { "Boston Red Sox": {"players": [{"name": "...", "order": 1, "pos": "CF"}, ...], "date": "2026-04-22"}, ... }
+    """
+    import glob as _glob
+
+    raw_dir = os.path.join(os.path.dirname(__file__), "data", "raw")
+    files = sorted(
+        _glob.glob(os.path.join(raw_dir, "mlb_hitter_stats_*.json")),
+        reverse=True  # most recent first
+    )
+
+    team_lineups: dict = {}
+    for filepath in files:
+        date_str = os.path.basename(filepath).replace("mlb_hitter_stats_", "").replace(".json", "")
+        if date_str >= today:
+            continue  # skip today or future files
+        try:
+            with open(filepath, encoding="utf-8") as f:
+                data = json.load(f)
+            for game in data.get("hitters", []):
+                if not game.get("lineup_confirmed"):
+                    continue
+                for team, key in [
+                    (game.get("away_team", ""), "away_lineup"),
+                    (game.get("home_team", ""), "home_lineup"),
+                ]:
+                    if not team or team in team_lineups:
+                        continue
+                    players = sorted(game.get(key, []), key=lambda p: p.get("batting_order", 99))
+                    if players:
+                        team_lineups[team] = {
+                            # Full player dicts so the props model can score them
+                            "players": [
+                                {
+                                    **p,                               # all stats
+                                    "name": p.get("player_name", ""), # JS display alias
+                                    "pos":  p.get("position", ""),    # JS display alias
+                                }
+                                for p in players
+                            ],
+                            "date": date_str,
+                        }
+        except Exception:
+            continue
+        if len(team_lineups) >= 30:
+            break
+
+    if team_lineups:
+        log.info(f"Projected lineups loaded: {len(team_lineups)} teams from raw hitter stats")
+        # Auto-save to data/clean/ so Railway gets them on next git push
+        save_projected_lineups_cache(team_lineups)
+    else:
+        # No raw files found — try the pre-saved cache (present on Railway)
+        if os.path.exists(PROJ_LINEUPS_CACHE):
+            try:
+                with open(PROJ_LINEUPS_CACHE, encoding="utf-8") as f:
+                    team_lineups = json.load(f)
+                log.info(f"Projected lineups loaded from cache: {len(team_lineups)} teams")
+            except Exception as e:
+                log.warning(f"Projected lineups cache load failed: {e}")
+        else:
+            log.info("No projected lineups available (no raw files or cache)")
+    return team_lineups
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HTML TEMPLATE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -599,6 +792,9 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="pragma" content="no-cache"/>
+<meta http-equiv="expires" content="0"/>
 <title>Sports Betting Parlay Genius</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <style>
@@ -730,6 +926,38 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .fav-MEDIUM {background:rgba(255,152,0,.13);color:#ffb74d;border:1px solid rgba(255,152,0,.35)}
 .fav-NEUTRAL{background:rgba(0,230,118,.1);color:#69f0ae;border:1px solid rgba(0,230,118,.3)}
 
+/* ── LINE MOVEMENT ── */
+.move-row{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin-top:8px;padding:6px 10px;border-radius:6px;
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);
+}
+.move-icon{font-size:.9rem}
+.move-label{font-size:.72rem;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.4px}
+.move-detail{font-size:.75rem;color:var(--text);flex:1}
+.move-badge-steam{font-size:.65rem;font-weight:800;padding:2px 7px;border-radius:4px;
+  background:rgba(239,83,80,.2);color:#ef5350;border:1px solid rgba(239,83,80,.4);text-transform:uppercase}
+.move-badge-drift{font-size:.65rem;font-weight:800;padding:2px 7px;border-radius:4px;
+  background:rgba(255,152,0,.2);color:#ffa726;border:1px solid rgba(255,152,0,.4);text-transform:uppercase}
+.move-confirm{font-size:.68rem;font-weight:700;color:#69f0ae}
+.move-reverse{font-size:.68rem;font-weight:700;color:#ef5350}
+
+/* ── SHARP MONEY PANEL ── */
+.sharp-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:20px 24px;margin-bottom:28px}
+.sharp-game{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;
+  padding:14px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+.sharp-game:last-child{border-bottom:none;padding-bottom:0}
+.sharp-matchup{font-size:.9rem;font-weight:700;color:var(--text);min-width:180px}
+.sharp-desc{font-size:.82rem;color:var(--sub);flex:1;line-height:1.5}
+.sharp-agree{font-size:.75rem;font-weight:700;color:#69f0ae;white-space:nowrap}
+.sharp-reverse{font-size:.75rem;font-weight:700;color:#ef5350;white-space:nowrap}
+.sharp-neutral{font-size:.75rem;font-weight:700;color:var(--sub);white-space:nowrap}
+.sharp-badge{font-size:.65rem;font-weight:800;padding:3px 9px;border-radius:4px;
+  text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.sharp-badge-steam{background:rgba(239,83,80,.2);color:#ef5350;border:1px solid rgba(239,83,80,.4)}
+.sharp-badge-drift{background:rgba(255,152,0,.2);color:#ffa726;border:1px solid rgba(255,152,0,.4)}
+
 /* ── KALSHI SIGNAL ── */
 .kalshi-row{
   display:flex;align-items:center;gap:8px;
@@ -771,10 +999,36 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 }
 .pick-card{
   background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
-  padding:16px;cursor:default;transition:transform .15s,border-color .15s;
+  padding:16px;cursor:pointer;transition:transform .15s,border-color .15s;
   position:relative;overflow:hidden;
 }
 .pick-card:hover{transform:translateY(-2px)}
+.pick-card.expanded{border-color:var(--green)}
+.pick-card-props-toggle{
+  display:flex;align-items:center;gap:5px;font-size:.7rem;font-weight:600;
+  color:var(--sub);margin-top:8px;padding-top:8px;
+  border-top:1px solid rgba(255,255,255,.05);cursor:pointer;
+  transition:color .15s;user-select:none;
+}
+.pick-card-props-toggle:hover{color:var(--green)}
+.pick-card-props-panel{
+  display:none;margin-top:10px;padding-top:10px;
+  border-top:1px solid rgba(0,230,118,.2);
+}
+.pick-card-props-panel.open{display:block}
+.inline-prop{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);
+  font-size:.75rem;
+}
+.inline-prop:last-child{border-bottom:none}
+.inline-prop-player{color:var(--text);font-weight:600}
+.inline-prop-line{color:var(--sub)}
+.inline-prop-conf{font-weight:700;white-space:nowrap;margin-left:8px}
+.inline-prop-tier-LOCK  {color:var(--gold)}
+.inline-prop-tier-STRONG{color:var(--blue)}
+.inline-prop-tier-LEAN  {color:var(--green)}
+.inline-props-empty{font-size:.74rem;color:var(--sub);padding:6px 0;font-style:italic}
 .pick-card.tier-LOCK  {border-top:3px solid var(--gold)}
 .pick-card.tier-STRONG{border-top:3px solid var(--blue)}
 .pick-card.tier-LEAN  {border-top:3px solid var(--green)}
@@ -954,8 +1208,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .team-btn{padding:7px 13px;border-radius:6px;border:1px solid var(--border);background:var(--card);
   color:var(--sub);font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .team-btn:hover{border-color:var(--green);color:var(--text)}
-.team-btn.active{background:var(--green);color:#000;border-color:var(--green)}
+.team-btn.active{background:var(--green);color:#fff !important;border-color:var(--green)}
 .team-btn.playing{border-color:rgba(0,230,118,.4);color:var(--green)}
+.team-btn.playing.active{color:#fff !important}
 
 .team-game-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:20px}
 .team-matchup-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px}
@@ -1051,6 +1306,45 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:#2e4060}
+
+/* ── SHARP ACTION TAB ── */
+.sharp-action-card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:20px 24px;margin-bottom:16px;transition:border-color .15s}
+.sharp-action-card:hover{border-color:rgba(239,83,80,.3)}
+.sharp-explain-box{background:rgba(239,83,80,.06);border:1px solid rgba(239,83,80,.2);
+  border-radius:10px;padding:14px 18px;margin-bottom:24px;font-size:.82rem;color:var(--sub);line-height:1.6}
+.sharp-odds-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.sharp-odds-box{background:var(--bg);border-radius:8px;padding:12px;text-align:center}
+.sharp-odds-team-lbl{font-size:.68rem;color:var(--sub);margin-bottom:8px;
+  text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.sharp-odds-row{display:flex;justify-content:space-around;align-items:center;gap:4px}
+.sharp-odds-cell{text-align:center}
+.sharp-odds-cell-lbl{font-size:.6rem;color:var(--sub)}
+.sharp-odds-cell-num{font-size:1.05rem;font-weight:800}
+.sharp-odds-arrow{color:var(--sub);font-size:1.1rem;align-self:center}
+.sharp-total-row{background:var(--bg);border-radius:8px;padding:10px 14px;margin-bottom:12px;
+  display:flex;align-items:center;gap:12px;font-size:.82rem;flex-wrap:wrap}
+.sharp-bet-call{background:rgba(0,230,118,.06);border:1px solid rgba(0,230,118,.2);
+  border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;
+  align-items:center;flex-wrap:wrap;gap:8px}
+.sharp-bet-call-lbl{font-size:.68rem;color:var(--sub);text-transform:uppercase;
+  letter-spacing:.5px;margin-bottom:4px}
+.sharp-bet-call-text{font-size:.95rem;font-weight:800;color:var(--text)}
+.sharp-empty{text-align:center;padding:60px 20px}
+
+/* ── STATUS LINK ── */
+a.status-link{
+  font-size:.72rem;color:var(--sub);text-decoration:none;
+  border:1px solid var(--border);border-radius:12px;padding:3px 11px;
+  transition:all .2s;
+}
+a.status-link:hover{color:var(--green);border-color:var(--green)}
+
+/* ── PARLAY EV ── */
+.parlay-ev{font-size:.72rem;font-weight:700;color:var(--green);
+  background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.2);
+  border-radius:4px;padding:2px 9px;white-space:nowrap;margin-top:4px;display:inline-block}
+.parlay-breakeven{font-size:.7rem;color:var(--sub);margin-top:4px}
 </style>
 </head>
 <body>
@@ -1063,6 +1357,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="stat-pill">Picks <span id="pickCount">—</span></div>
     <div class="stat-pill">Locks <span id="lockCount">—</span></div>
     <div class="stat-pill">Top Pick <span id="topPick">—</span></div>
+    <a href="/status" class="status-link">⚙ Status</a>
     <button id="refreshBtn" onclick="doRefresh()">
       <svg id="refreshIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -1086,16 +1381,16 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   <div class="filter-group">
     <span class="filter-label">Bet Type</span>
     <button class="filter-btn active" data-group="type" data-val="all">All</button>
-    <button class="filter-btn" data-group="type" data-val="ML">Moneyline</button>
-    <button class="filter-btn" data-group="type" data-val="RL">Run Line</button>
+    <button class="filter-btn" data-group="type" data-val="ML">Win Bet (Moneyline)</button>
+    <button class="filter-btn" data-group="type" data-val="RL">Spread (Run Line)</button>
     <button class="filter-btn" data-group="type" data-val="TOTAL">Over/Under</button>
   </div>
   <div class="filter-group">
     <span class="filter-label">Confidence</span>
     <button class="filter-btn active" data-group="tier" data-val="all">All</button>
-    <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock</button>
+    <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock — Best Bets</button>
     <button class="filter-btn" data-group="tier" data-val="STRONG">⭐⭐ Strong</button>
-    <button class="filter-btn" data-group="tier" data-val="LEAN">⭐ Lean</button>
+    <button class="filter-btn" data-group="tier" data-val="LEAN">⭐ Lean — Watch Only</button>
   </div>
   <div class="search-wrap">
     <input class="search-input" id="teamSearch" placeholder="Search team…" type="text"/>
@@ -1112,6 +1407,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <button class="section-nav-btn" data-panel="panel-teams">⚾ Teams</button>
     <button class="section-nav-btn" data-panel="panel-games">📊 Game Breakdown</button>
     <button class="section-nav-btn" data-panel="panel-yesterday" id="yesterdayTab" style="display:none">📈 Yesterday</button>
+    <button class="section-nav-btn" data-panel="panel-sharp">🔥 Sharp Action</button>
   </div>
 
   <!-- PANEL: GAME PICKS -->
@@ -1120,6 +1416,13 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="section-title">🎯 Individual Picks</div>
     <div class="results-count" id="pickResults"></div>
     <div class="picks-grid" id="picksGrid"></div>
+
+    <!-- Sharp Money Panel — only shown when movement data exists -->
+    <div id="sharpMoneySection" style="display:none">
+      <div class="section-title">💰 Where the Pro Money Is Going</div>
+      <div class="sharp-panel" id="sharpMoneyGrid"></div>
+    </div>
+
     <div class="section-title">🔥 Parlay Recommendations</div>
     <div class="section-tabs">
       <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
@@ -1158,6 +1461,14 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   <!-- PANEL: TEAMS -->
   <div class="section-panel" id="panel-teams">
     <div class="section-title">⚾ Team Lookup</div>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;flex-wrap:wrap">
+      <span style="font-size:.75rem;color:var(--sub)">
+        <span style="color:var(--green);font-weight:700">●</span> Playing today
+        &nbsp;&nbsp;
+        <span style="color:var(--sub);font-weight:700">●</span> Off today
+      </span>
+      <span style="font-size:.72rem;color:var(--sub)">Lineups post ~2–3 hrs before first pitch · Props appear once confirmed</span>
+    </div>
     <div id="teamButtonGrid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px"></div>
     <div id="teamGameView"></div>
   </div>
@@ -1173,6 +1484,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div id="yesterdayFull"></div>
   </div>
 
+  <!-- PANEL: SHARP ACTION -->
+  <div class="section-panel" id="panel-sharp">
+    <div id="sharpActionContent"></div>
+  </div>
+
 </div>
 
 <script>
@@ -1186,7 +1502,9 @@ const DATA_P3        = __P3__;
 const DATA_SCORES    = __SCORES__;
 const DATA_PROPS     = __PROPS__;
 const DATA_SCHEDULE  = __SCHEDULE__;
-const DATA_YESTERDAY = __YESTERDAY__;
+const DATA_YESTERDAY     = __YESTERDAY__;
+const DATA_MOVEMENT      = __MOVEMENT__;
+const DATA_PROJ_LINEUPS  = __PROJ_LINEUPS__;
 
 // ── State ────────────────────────────────────────────────────────────────────
 let filterType = "all", filterTier = "all", filterTeam = "";
@@ -1201,8 +1519,12 @@ document.getElementById("gameCount").textContent = DATA_GAMES.length;
 document.getElementById("pickCount").textContent = DATA_PICKS.length;
 document.getElementById("lockCount").textContent = DATA_PICKS.filter(p=>p.tier==="LOCK").length;
 if(DATA_PICKS.length){
-  document.getElementById("topPick").textContent =
-    DATA_PICKS[0].label + " (" + DATA_PICKS[0].conf + "%)";
+  const tp = DATA_PICKS[0];
+  const awayCity = tp.away ? tp.away.split(" ").slice(-1)[0] : "";
+  const homeCity = tp.home ? tp.home.split(" ").slice(-1)[0] : "";
+  const gameCtx  = (awayCity && homeCity) ? ` · ${awayCity} @ ${homeCity}` : "";
+  document.getElementById("topPick").innerHTML =
+    `<span style="color:var(--gold)">${tp.label} (${tp.conf}%)</span><span style="color:var(--sub);font-size:.75rem">${gameCtx}</span>`;
 }
 
 // ── Render Picks ─────────────────────────────────────────────────────────────
@@ -1226,10 +1548,10 @@ function renderPicks(){
     const wb = (cls, active, label) =>
       `<span class="warn-badge ${cls} ${active ? 'active' : 'inactive'}">${label}</span>`;
     const warnHtml = `<div class="warn-row">
-      ${wb('warn-tbd',    p.tbd_sp,      '⚠ TBD SP')}
-      ${wb('warn-thin',   p.thin_edge,   'Thin Edge')}
-      ${wb('warn-heavy',  p.heavy_fav,   'Heavy Chalk')}
-      ${wb('warn-lineup', p.unconfirmed, 'Lineups TBD')}
+      ${wb('warn-tbd',    p.tbd_sp,      '⚠ Starter Unknown')}
+      ${wb('warn-thin',   p.thin_edge,   'Close Call')}
+      ${wb('warn-heavy',  p.heavy_fav,   'Heavy Favorite')}
+      ${wb('warn-lineup', p.unconfirmed, 'Lineup Not Set')}
     </div>`;
 
     // Favorite tier — always shown on every card
@@ -1256,10 +1578,58 @@ function renderPicks(){
         </div>`;
     }
 
+    // Line movement for this game
+    let moveHtml = "";
+    const mv = DATA_MOVEMENT.find(m => m.away === p.away && m.home === p.home);
+    if(mv){
+      const sig     = mv.ml_signal === "STEAM" ? mv.ml_signal
+                    : mv.total_signal === "STEAM" ? mv.total_signal
+                    : mv.ml_signal === "DRIFT" ? mv.ml_signal : mv.total_signal;
+      const sigBadge = sig === "STEAM"
+        ? `<span class="move-badge-steam">🔥 Heavy Action</span>`
+        : `<span class="move-badge-drift">📈 Notable Shift</span>`;
+
+      const sharp     = mv.sharp_side || "";
+      const isML      = p.type === "ML" || p.type === "RL";
+      const pickedTeam = p.team || "";
+
+      // Did sharp money go WITH or AGAINST our pick?
+      const sharpAgrees = sharp && pickedTeam &&
+        (sharp.toLowerCase().includes(pickedTeam.toLowerCase()) ||
+         pickedTeam.toLowerCase().includes(sharp.split(" ").slice(-1)[0].toLowerCase()));
+      const sharpLabel = !sharp ? ""
+        : sharpAgrees
+          ? `<span class="move-confirm">✓ Pro money agrees</span>`
+          : `<span class="move-reverse">⚠ Pro money going other way</span>`;
+
+      // Build readable movement description
+      let moveDesc = "";
+      if(mv.ml_signal === "STEAM" || mv.ml_signal === "DRIFT"){
+        const isSideAway = sharp && mv.away && sharp.toLowerCase().includes(mv.away.split(" ").slice(-1)[0].toLowerCase());
+        const openOdds = isSideAway ? mv.ml_away_open : mv.ml_home_open;
+        const nowOdds  = isSideAway ? mv.ml_away_now  : mv.ml_home_now;
+        const pts      = Math.abs(isSideAway ? mv.ml_away_move : mv.ml_home_move || 0);
+        const fmtOdds  = o => o ? (o > 0 ? `+${Math.round(o)}` : Math.round(o)) : "?";
+        if(openOdds && nowOdds && sharp){
+          moveDesc = `${sharp.split(" ").slice(-1)[0]} odds: opened ${fmtOdds(openOdds)} → now ${fmtOdds(nowOdds)} (${pts} pt shift)`;
+        }
+      } else if(mv.total_signal === "STEAM" || mv.total_signal === "DRIFT"){
+        const dir = (mv.total_move || 0) > 0 ? "higher" : "lower";
+        moveDesc = `Total moved ${Math.abs(mv.total_move || 0).toFixed(1)} runs ${dir}: opened ${mv.total_open} → now ${mv.total_now}`;
+      }
+
+      moveHtml = `<div class="move-row">
+        <span class="move-icon">💰</span>
+        ${sigBadge}
+        ${moveDesc ? `<span class="move-detail">${moveDesc}</span>` : ""}
+        ${sharpLabel}
+      </div>`;
+    }
+
     grid.innerHTML += `
       <div class="pick-card tier-${p.tier}" data-type="${p.type}" data-tier="${p.tier}">
         <div class="pick-top">
-          <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"O/U":p.type}</span>
+          <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
         </div>
         <div class="pick-label">${p.label}</div>
@@ -1273,7 +1643,14 @@ function renderPicks(){
         ${favHtml}
         ${warnHtml}
         ${kalshiHtml}
+        ${moveHtml}
         <div class="pick-reasoning">${p.reasoning}</div>
+        <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
+          <span class="toggle-arrow">▶</span> View Player Props for this game
+        </div>
+        <div class="pick-card-props-panel">
+          ${buildInlineProps(p.away, p.home)}
+        </div>
       </div>`;
   });
   document.getElementById("pickResults").innerHTML =
@@ -1282,6 +1659,150 @@ function renderPicks(){
 }
 
 function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":"⭐"; }
+
+// ── Inline props for pick card ────────────────────────────────────────────────
+function buildInlineProps(away, home){
+  if(!DATA_PROPS || !DATA_PROPS.length){
+    return `<div class="inline-props-empty">Player props will appear here once lineups are confirmed — check back closer to game time.</div>`;
+  }
+  const gameProps = DATA_PROPS.filter(p =>
+    (p.away === away && p.home === home) ||
+    (p.game && p.game.includes(away) && p.game.includes(home))
+  );
+  if(!gameProps.length){
+    return `<div class="inline-props-empty">No props available for this game yet.</div>`;
+  }
+  // Sort by conf descending, show top 8
+  const sorted = [...gameProps].sort((a,b) => (b.conf||0)-(a.conf||0)).slice(0,8);
+  return sorted.map(p => {
+    const betDesc = propLabel(p.prop_type, p.line);   // e.g. "Hits Over 0.5"
+    const tierCls = `inline-prop-tier-${p.tier||"LEAN"}`;
+    return `<div class="inline-prop">
+      <span class="inline-prop-player">${p.player_name||"—"}</span>
+      <span class="inline-prop-line">${betDesc}</span>
+      <span class="inline-prop-conf ${tierCls}">${p.conf||"—"}% ${tierIcon(p.tier||"LEAN")}</span>
+    </div>`;
+  }).join("");
+}
+
+function toggleCardProps(event, el){
+  event.stopPropagation();
+  const panel = el.nextElementSibling;
+  const arrow = el.querySelector(".toggle-arrow");
+  const isOpen = panel.classList.toggle("open");
+  arrow.textContent = isOpen ? "▼" : "▶";
+  el.closest(".pick-card").classList.toggle("expanded", isOpen);
+}
+
+// ── Sharp Money Panel ─────────────────────────────────────────────────────────
+function renderSharpMoney(){
+  const section = document.getElementById("sharpMoneySection");
+  const grid    = document.getElementById("sharpMoneyGrid");
+  if(!DATA_MOVEMENT || DATA_MOVEMENT.length === 0){
+    section.style.display = "none";
+    return;
+  }
+  section.style.display = "block";
+  grid.innerHTML = "";
+
+  DATA_MOVEMENT.forEach(mv => {
+    const awayName = mv.away.split(" ").slice(-1)[0];
+    const homeName = mv.home.split(" ").slice(-1)[0];
+
+    // Determine the dominant signal
+    const sig = mv.ml_signal === "STEAM" ? "STEAM"
+              : mv.total_signal === "STEAM" ? "STEAM"
+              : mv.ml_signal === "DRIFT"  ? "DRIFT" : "DRIFT";
+    const sigBadge = sig === "STEAM"
+      ? `<span class="sharp-badge sharp-badge-steam">🔥 Heavy Action</span>`
+      : `<span class="sharp-badge sharp-badge-drift">📈 Notable Shift</span>`;
+
+    // Plain-English description
+    let desc = "";
+    const sharp = mv.sharp_side || "";
+    const sharpNick = sharp ? sharp.split(" ").slice(-1)[0] : "";
+
+    const fmtO = o => o ? (o > 0 ? `+${Math.round(o)}` : `${Math.round(o)}`) : "?";
+    if((mv.ml_signal === "STEAM" || mv.ml_signal === "DRIFT") && sharp){
+      const isSideAway = mv.away && sharpNick.toLowerCase() === mv.away.split(" ").slice(-1)[0].toLowerCase();
+      const openOdds   = isSideAway ? mv.ml_away_open : mv.ml_home_open;
+      const nowOdds    = isSideAway ? mv.ml_away_now  : mv.ml_home_now;
+      const pts        = Math.abs((isSideAway ? mv.ml_away_move : mv.ml_home_move) || 0);
+      const word       = sig === "STEAM" ? "heavily" : "noticeably";
+      desc = `Professional bettors are ${word} backing the <strong>${sharpNick}</strong> to win. `;
+      desc += `The win odds opened at ${fmtO(openOdds)} and have moved to ${fmtO(nowOdds)} — a ${pts}-point shift in their favor`;
+      if(mv.total_signal === "STEAM" || mv.total_signal === "DRIFT"){
+        const tdir = (mv.total_move||0) > 0 ? "higher" : "lower";
+        desc += `. The game total also shifted ${Math.abs(mv.total_move||0).toFixed(1)} runs ${tdir} (${mv.total_open} → ${mv.total_now})`;
+      }
+      desc += ".";
+    } else if(mv.total_signal === "STEAM" || mv.total_signal === "DRIFT"){
+      const tdir = (mv.total_move||0) > 0 ? "higher (more runs expected)" : "lower (fewer runs expected)";
+      const pts  = Math.abs(mv.total_move||0).toFixed(1);
+      desc = `The expected total runs for this game shifted ${pts} runs ${tdir} — opened at ${mv.total_open}, now at ${mv.total_now}. Large bets came in on the ${(mv.total_move||0)>0?"Over":"Under"}.`;
+    } else if(mv.kalshi_signal === "STEAM" || mv.kalshi_signal === "DRIFT"){
+      const kSharp = mv.kalshi_sharp_side || "";
+      const kNick  = kSharp ? kSharp.split(" ").slice(-1)[0] : "";
+      const kWord  = mv.kalshi_signal === "STEAM" ? "strongly" : "noticeably";
+      desc = kNick
+        ? `The Kalshi prediction market shifted ${kWord} toward the <strong>${kNick}</strong>. Sportsbook lines haven't moved yet — this can be an early signal before books adjust.`
+        : `The Kalshi prediction market repriced this game — sportsbook lines haven't moved yet.`;
+    }
+
+    // ── Kalshi confirmation badge ─────────────────────────────────────────
+    let kalshiHtml = "";
+    if(mv.kalshi_signal === "STEAM" || mv.kalshi_signal === "DRIFT"){
+      const kSharp    = mv.kalshi_sharp_side || "";
+      const kNick     = kSharp ? kSharp.split(" ").slice(-1)[0] : "";
+      const kMovePct  = mv.kalshi_away_move != null
+        ? Math.round(Math.abs(mv.kalshi_away_move) * 100) : 0;
+      const kSigColor = mv.kalshi_signal === "STEAM" ? "#ef5350" : "#ffa726";
+      const kLabel    = mv.kalshi_signal === "STEAM" ? "STEAM" : "DRIFT";
+
+      // Does Kalshi sharp side match sportsbook sharp side?
+      const sbSharpNick = (mv.sharp_side||"").split(" ").slice(-1)[0].toLowerCase();
+      const ksMatch = kNick && sbSharpNick && kNick.toLowerCase() === sbSharpNick;
+      const ksBadge = ksMatch
+        ? `<span style="color:#69f0ae;font-size:.72rem;font-weight:700">✓ Confirms sportsbook signal</span>`
+        : (mv.sharp_side
+          ? `<span style="color:#ffa726;font-size:.72rem;font-weight:700">⚠ Diverges from sportsbook</span>`
+          : "");
+
+      kalshiHtml = `<div style="margin-top:8px;padding:8px 10px;background:rgba(100,181,246,.07);
+        border-left:3px solid #42a5f5;border-radius:4px;font-size:.78rem">
+        <span style="color:#42a5f5;font-weight:700">📊 Kalshi Market</span>
+        <span style="margin-left:8px;color:${kSigColor};font-weight:700">${kLabel}</span>
+        ${kNick ? `<span style="color:#e2e8f0"> — Market moving toward <strong>${kNick}</strong>` +
+          (kMovePct ? ` (+${kMovePct}pp)` : "") + `</span>` : ""}
+        ${ksBadge ? `<span style="margin-left:10px">${ksBadge}</span>` : ""}
+      </div>`;
+    }
+
+    // Does sharp money agree with any of our picks for this game?
+    const gamePick = DATA_PICKS.find(p => p.away === mv.away && p.home === mv.home);
+    let agreeHtml = "";
+    if(gamePick && sharp){
+      const pickTeamNick = gamePick.team ? gamePick.team.split(" ").slice(-1)[0] : "";
+      const sharpMatch   = sharpNick && pickTeamNick &&
+        (sharpNick.toLowerCase() === pickTeamNick.toLowerCase());
+      if(sharpMatch){
+        agreeHtml = `<span class="sharp-agree">✓ Agrees with our ${gamePick.tier} pick</span>`;
+      } else if(gamePick.type === "ML" || gamePick.type === "RL"){
+        agreeHtml = `<span class="sharp-reverse">⚠ Goes against our ${gamePick.tier} pick — use caution</span>`;
+      }
+    } else if(gamePick){
+      agreeHtml = `<span class="sharp-neutral">No model pick for this game</span>`;
+    }
+
+    grid.innerHTML += `<div class="sharp-game">
+      <div>
+        <div class="sharp-matchup">${awayName} @ ${homeName} ${sigBadge}</div>
+        ${agreeHtml ? `<div style="margin-top:4px">${agreeHtml}</div>` : ""}
+      </div>
+      <div class="sharp-desc">${desc}${kalshiHtml}</div>
+    </div>`;
+  });
+}
 
 // ── Yesterday's Results Banner ────────────────────────────────────────────────
 function renderYesterday(){
@@ -1406,6 +1927,9 @@ function renderParlays(){
     grid.innerHTML=`<div class="empty">Not enough qualified legs for ${showParlay}-leg parlays today.</div>`;
     return;
   }
+  // Break-even thresholds by payout string
+  const BREAKEVEN = {"+260": 27.8, "+595": 14.4, "+1228": 7.5, "+2435": 3.9};
+
   data.forEach((par,i)=>{
     const legsHtml = par.legs.map(l=>`
       <div class="parlay-leg">
@@ -1415,6 +1939,13 @@ function renderParlays(){
           <div class="leg-game">${l.game}</div>
         </div>
       </div>`).join("");
+
+    // Edge vs break-even — makes clear why a "low" combined % is still a great bet
+    const be    = BREAKEVEN[par.payout] || (100 / (par.n_legs * 3.6));
+    const edge  = (par.combined - be).toFixed(1);
+    const evHtml = `<div class="parlay-ev">+${edge}% edge vs break-even</div>
+      <div class="parlay-breakeven">Break-even at ${par.payout} payout: ${be}% — you're at ${par.combined}%</div>`;
+
     grid.innerHTML += `
       <div class="parlay-card">
         <div class="parlay-header">
@@ -1422,7 +1953,8 @@ function renderParlays(){
           <span class="parlay-payout">${par.payout}</span>
         </div>
         <div class="parlay-conf">${par.combined}%<span>combined confidence</span></div>
-        <div class="parlay-legs">${legsHtml}</div>
+        ${evHtml}
+        <div class="parlay-legs" style="margin-top:12px">${legsHtml}</div>
       </div>`;
   });
 }
@@ -1568,16 +2100,51 @@ function localGameTime(utcStr){
 }
 
 // ── TEAMS TAB ─────────────────────────────────────────────────────────────────
+// Alphabetical — Athletics listed by nickname since they moved to Sacramento
 const ALL_TEAMS = [
-  "Arizona Diamondbacks","Atlanta Braves","Baltimore Orioles","Boston Red Sox",
-  "Chicago Cubs","Chicago White Sox","Cincinnati Reds","Cleveland Guardians",
-  "Colorado Rockies","Detroit Tigers","Houston Astros","Kansas City Royals",
-  "Los Angeles Angels","Los Angeles Dodgers","Miami Marlins","Milwaukee Brewers",
-  "Minnesota Twins","New York Mets","New York Yankees","Athletics",
+  "Arizona Diamondbacks","Athletics","Atlanta Braves","Baltimore Orioles",
+  "Boston Red Sox","Chicago Cubs","Chicago White Sox","Cincinnati Reds",
+  "Cleveland Guardians","Colorado Rockies","Detroit Tigers","Houston Astros",
+  "Kansas City Royals","Los Angeles Angels","Los Angeles Dodgers","Miami Marlins",
+  "Milwaukee Brewers","Minnesota Twins","New York Mets","New York Yankees",
   "Philadelphia Phillies","Pittsburgh Pirates","San Diego Padres","San Francisco Giants",
   "Seattle Mariners","St. Louis Cardinals","Tampa Bay Rays","Texas Rangers",
   "Toronto Blue Jays","Washington Nationals"
 ];
+
+// Unambiguous short labels — no duplicate "Sox", "Angels", etc.
+const TEAM_SHORT = {
+  "Arizona Diamondbacks":  "ARI D-backs",
+  "Athletics":             "ATH Athletics",
+  "Atlanta Braves":        "ATL Braves",
+  "Baltimore Orioles":     "BAL Orioles",
+  "Boston Red Sox":        "BOS Red Sox",
+  "Chicago Cubs":          "CHC Cubs",
+  "Chicago White Sox":     "CWS White Sox",
+  "Cincinnati Reds":       "CIN Reds",
+  "Cleveland Guardians":   "CLE Guards",
+  "Colorado Rockies":      "COL Rockies",
+  "Detroit Tigers":        "DET Tigers",
+  "Houston Astros":        "HOU Astros",
+  "Kansas City Royals":    "KC Royals",
+  "Los Angeles Angels":    "LAA Angels",
+  "Los Angeles Dodgers":   "LAD Dodgers",
+  "Miami Marlins":         "MIA Marlins",
+  "Milwaukee Brewers":     "MIL Brewers",
+  "Minnesota Twins":       "MIN Twins",
+  "New York Mets":         "NYM Mets",
+  "New York Yankees":      "NYY Yankees",
+  "Philadelphia Phillies": "PHI Phillies",
+  "Pittsburgh Pirates":    "PIT Pirates",
+  "San Diego Padres":      "SD Padres",
+  "San Francisco Giants":  "SF Giants",
+  "Seattle Mariners":      "SEA Mariners",
+  "St. Louis Cardinals":   "STL Cards",
+  "Tampa Bay Rays":        "TB Rays",
+  "Texas Rangers":         "TEX Rangers",
+  "Toronto Blue Jays":     "TOR Blue Jays",
+  "Washington Nationals":  "WSH Nats",
+};
 
 let activeTeam = null;
 let teamPropTypeFilter = "all";
@@ -1603,9 +2170,7 @@ function initTeamsTab(){
 }
 
 function teamShort(full){
-  const parts = full.split(" ");
-  // Return last word (nickname) — e.g. "Yankees", "Dodgers"
-  return parts[parts.length - 1];
+  return TEAM_SHORT[full] || full.split(" ").pop();
 }
 
 function renderTeamView(team){
@@ -1655,8 +2220,19 @@ function renderTeamView(team){
     (p.away_team === away && p.home_team === home) ||
     (p.game && p.game.includes(away) && p.game.includes(home))
   );
-  const awayProps = gameProps.filter(p => p.side === "away" || p.away_team === away);
-  const homeProps = gameProps.filter(p => p.side === "home" || p.home_team === home);
+  // Filter by side field — each prop knows which lineup it came from
+  const awayProps = gameProps.filter(p => p.side === "away");
+  const homeProps = gameProps.filter(p => p.side === "home");
+  // If side data missing fall back to show all under clicked team only
+  const clickedIsAway = team === away;
+  const primaryProps  = clickedIsAway
+    ? (awayProps.length ? awayProps : gameProps)
+    : (homeProps.length ? homeProps : gameProps);
+  const otherProps    = clickedIsAway
+    ? (homeProps.length ? homeProps : [])
+    : (awayProps.length ? awayProps : []);
+  const primaryLabel  = clickedIsAway ? away : home;
+  const otherLabel    = clickedIsAway ? home : away;
 
   const propTypes = [...new Set(gameProps.map(p => p.prop_type))].sort();
   const typeFilterHtml = propTypes.length > 1 ? `
@@ -1675,9 +2251,12 @@ function renderTeamView(team){
         : p.prop_type === "TB" ? Math.min(100, Math.max(0,(p.conf-40)*1.67))
         : Math.min(100, Math.max(0,(p.conf-50)*2));
       const tc = p.tier==="LOCK"?"var(--green)":p.tier==="STRONG"?"var(--blue)":"#ffb74d";
-      return `<div class="team-prop-mini">
+      const projTag = p.projected ? `<span style="font-size:.6rem;background:rgba(255,183,77,.18);
+        color:#ffb74d;border:1px solid rgba(255,183,77,.35);border-radius:3px;padding:1px 4px;
+        margin-left:4px;letter-spacing:.03em">PROJ</span>` : "";
+      return `<div class="team-prop-mini" style="${p.projected ? 'border:1px dashed rgba(255,183,77,.25)' : ''}">
         <div class="team-prop-mini-top">
-          <span class="team-prop-mini-name">${p.player_name}</span>
+          <span class="team-prop-mini-name">${p.player_name}${projTag}</span>
           <span class="team-prop-mini-type badge-${p.prop_type}">${propIcon(p.prop_type)} ${p.prop_type}</span>
         </div>
         <div class="team-prop-mini-line">${propLabel(p.prop_type, p.line)}</div>
@@ -1692,16 +2271,67 @@ function renderTeamView(team){
     }).join("");
   }
 
+  // Projected props: gameProps exist but are all tagged projected
+  const allProjected = gameProps.length > 0 && gameProps.every(p => p.projected);
+
   const noLineupMsg = !isToday ? `
-    <div style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.2);border-radius:8px;
-      padding:12px 16px;font-size:.82rem;color:#ffb74d;margin-bottom:14px">
-      ⏳ Full prop analysis available on game day when lineups are confirmed.
+    <div style="background:rgba(66,165,245,.07);border:1px solid rgba(66,165,245,.2);border-radius:8px;
+      padding:12px 16px;font-size:.82rem;color:#90caf9;margin-bottom:14px">
+      📅 Next game: ${game.day_label} — full prop analysis runs on game day once lineups confirm.
     </div>` :
-    (gameProps.length === 0 ? `
-    <div style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.2);border-radius:8px;
-      padding:12px 16px;font-size:.82rem;color:#ffb74d;margin-bottom:14px">
-      ⏳ Lineups not yet confirmed — props will appear once lineups are set (~2-3 hrs before first pitch).
-    </div>` : "");
+    allProjected ? `
+    <div style="background:rgba(255,183,77,.07);border:1px solid rgba(255,183,77,.25);border-radius:8px;
+      padding:12px 16px;margin-bottom:14px;display:flex;align-items:flex-start;gap:10px">
+      <div style="font-size:1.1rem;flex-shrink:0">📋</div>
+      <div>
+        <div style="font-size:.85rem;font-weight:700;color:#ffb74d;margin-bottom:4px">
+          Projected Props — Official Lineup Pending
+        </div>
+        <div style="font-size:.78rem;color:var(--sub);line-height:1.6">
+          These props are based on the most recent confirmed batting order. If today's
+          lineup matches yesterday's, the numbers stay the same. Cards marked
+          <span style="background:rgba(255,183,77,.18);color:#ffb74d;border:1px solid rgba(255,183,77,.35);
+            border-radius:3px;padding:1px 5px;font-size:.68rem">PROJ</span>
+          will automatically update when the official order posts.
+        </div>
+      </div>
+    </div>` :
+    (gameProps.length === 0 ? (() => {
+      // Try to show projected lineup from most recent confirmed order
+      const projAway = DATA_PROJ_LINEUPS[away];
+      const projHome = DATA_PROJ_LINEUPS[home];
+      const proj     = projAway || projHome;
+      const projTeam = projAway ? away : home;
+
+      const projSection = proj ? `
+        <div style="margin-top:14px">
+          <div style="font-size:.78rem;font-weight:700;color:#90caf9;margin-bottom:8px;letter-spacing:.04em;text-transform:uppercase">
+            📋 Projected Lineup — ${projTeam}
+            <span style="font-weight:400;color:var(--sub);margin-left:6px;text-transform:none">Based on ${proj.date} · Updates when official order posts</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px">
+            ${proj.players.map(p => `
+              <div style="background:rgba(66,165,245,.07);border:1px solid rgba(66,165,245,.15);border-radius:6px;
+                padding:6px 10px;font-size:.78rem;display:flex;align-items:center;gap:8px">
+                <span style="color:var(--sub);font-size:.7rem;min-width:14px;text-align:right">${p.order}</span>
+                <span style="color:var(--text)">${p.name}</span>
+                ${p.pos ? `<span style="color:var(--sub);font-size:.7rem;margin-left:auto">${p.pos}</span>` : ""}
+              </div>`).join("")}
+          </div>
+        </div>` : "";
+
+      return `
+      <div style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.2);border-radius:8px;
+        padding:12px 16px;margin-bottom:14px">
+        <div style="font-size:.85rem;font-weight:700;color:#ffb74d;margin-bottom:6px">⏳ Batting Order Not Yet Posted</div>
+        <div style="font-size:.78rem;color:var(--sub);line-height:1.6">
+          Probable starters are shown above. Teams typically post their batting order
+          2–3 hours before first pitch. Player props will populate automatically once
+          the lineup is confirmed — no refresh needed.
+        </div>
+        ${projSection}
+      </div>`;
+    })() : "");
 
   view.innerHTML = `
     <div class="team-game-card">
@@ -1756,10 +2386,11 @@ function renderTeamView(team){
         ${noLineupMsg}
         ${typeFilterHtml}
         <div id="teamPropsContent">
-          <div class="team-props-header">${away} — Player Props</div>
-          <div class="team-props-grid" id="awayPropsGrid">${miniProps(awayProps)}</div>
-          <div class="team-props-header" style="margin-top:16px">${home} — Player Props</div>
-          <div class="team-props-grid" id="homePropsGrid">${miniProps(homeProps)}</div>
+          <div class="team-props-header">${primaryLabel} — Player Props</div>
+          <div class="team-props-grid" id="awayPropsGrid">${miniProps(primaryProps)}</div>
+          ${otherProps.length ? `
+          <div class="team-props-header" style="margin-top:16px">${otherLabel} — Player Props</div>
+          <div class="team-props-grid" id="homePropsGrid">${miniProps(otherProps)}</div>` : ""}
         </div>
       </div>
     </div>`;
@@ -1770,8 +2401,9 @@ function renderTeamView(team){
       document.querySelectorAll("#teamPropFilters .ptype-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       teamPropTypeFilter = btn.dataset.ptype;
-      document.getElementById("awayPropsGrid").innerHTML = miniProps(awayProps);
-      document.getElementById("homePropsGrid").innerHTML = miniProps(homeProps);
+      document.getElementById("awayPropsGrid").innerHTML = miniProps(primaryProps);
+      const hpg = document.getElementById("homePropsGrid");
+      if(hpg) hpg.innerHTML = miniProps(otherProps);
     });
   });
 }
@@ -1930,8 +2562,12 @@ function renderProps(){
       propBarPct = Math.min(100, Math.max(0, (p.conf - 50) * 2));    // HITS/K: 50-100%
     }
 
+    const projBanner = p.projected ? `<div style="background:rgba(255,183,77,.1);border-bottom:1px solid rgba(255,183,77,.2);
+      padding:4px 10px;font-size:.68rem;color:#ffb74d;letter-spacing:.04em">
+      📋 PROJECTED — based on last confirmed lineup</div>` : "";
     grid.innerHTML += `
-      <div class="prop-card tier-${p.tier}">
+      <div class="prop-card tier-${p.tier}" style="${p.projected ? 'border:1px dashed rgba(255,183,77,.3)' : ''}">
+        ${projBanner}
         <div class="prop-top">
           <span class="prop-type-badge badge-${p.prop_type}">${propIcon(p.prop_type)} ${p.prop_type}</span>
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
@@ -2055,42 +2691,388 @@ async function doRefresh(){
 
 // ── Scores Ticker ─────────────────────────────────────────────────────────────
 function renderTicker(){
+  // Live scores are fetched directly from MLB Stats API in the browser
+  // so they update in real time without needing the server to regenerate HTML
   const track = document.getElementById("tickerTrack");
-  if(!DATA_SCORES || DATA_SCORES.length === 0){
-    track.innerHTML = `<span class="ticker-empty">No completed games yet today — check back later</span>`;
+
+  function cityName(fullName) {
+    return fullName ? fullName.split(" ").slice(0,-1).join(" ") || fullName : fullName;
+  }
+
+  function buildTickerHTML(games) {
+    if (!games || games.length === 0) {
+      return `<span class="ticker-empty">No games in progress yet today — check back later</span>`;
+    }
+    let html = "";
+    for (let pass = 0; pass < 2; pass++) {
+      games.forEach(g => {
+        const awayScore = g.away_score;
+        const homeScore = g.home_score;
+        const awayWon   = awayScore > homeScore;
+        const isLive    = g.is_live;
+        const liveStyle = isLive ? "color:#ff6b35" : "";
+        const liveClass = isLive ? "ticker-live" : "ticker-final";
+        html += `
+          <div class="ticker-item">
+            <span class="${awayWon ? 'ticker-score win' : 'ticker-score loss'}">${g.away_city} ${awayScore}</span>
+            <span style="color:var(--sub)">@</span>
+            <span class="${!awayWon ? 'ticker-score win' : 'ticker-score loss'}">${g.home_city} ${homeScore}</span>
+            <span class="${liveClass}" style="${liveStyle}">${g.label}</span>
+          </div>`;
+      });
+    }
+    return html;
+  }
+
+  async function fetchLiveScores() {
+    const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
+    const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${today}&hydrate=linescore&gameType=R`;
+    try {
+      const resp = await fetch(url);
+      const data = await resp.json();
+      const games = [];
+      for (const dateEntry of (data.dates || [])) {
+        for (const game of (dateEntry.games || [])) {
+          const abstract = game?.status?.abstractGameState;
+          if (abstract !== "Final" && abstract !== "Live") continue;
+          const away      = game.teams.away;
+          const home      = game.teams.home;
+          const linescore = game.linescore || {};
+          const inning    = linescore.currentInning || 9;
+          const half      = linescore.inningHalf || "";
+          const isLive    = abstract === "Live";
+          let label       = isLive ? `${half.slice(0,3)} ${inning}` : "Final";
+          if (!isLive && inning > 9) label = `F/${inning}`;
+          games.push({
+            away_city:  cityName(away.team.name),
+            home_city:  cityName(home.team.name),
+            away_score: away.score ?? 0,
+            home_score: home.score ?? 0,
+            is_live:    isLive,
+            label:      label,
+          });
+        }
+      }
+      return games;
+    } catch(e) {
+      console.warn("Live scores fetch failed:", e);
+      return null;
+    }
+  }
+
+  async function refreshTicker() {
+    const games = await fetchLiveScores();
+    if (games !== null) {
+      track.innerHTML = buildTickerHTML(games);
+      const duration = Math.max(20, games.length * 5);
+      track.style.animationDuration = duration + "s";
+    }
+  }
+
+  // Initial load + refresh every 2 minutes
+  refreshTicker();
+  setInterval(refreshTicker, 2 * 60 * 1000);
+}
+
+// ── Force Odds Snapshot (AJAX — stays on page) ───────────────────────────────
+async function forceOddsSnapshot(){
+  const btn    = document.getElementById("forceOddsBtn");
+  const status = document.getElementById("forceOddsStatus");
+  if(!btn) return;
+
+  btn.disabled = true;
+  btn.textContent = "⏳ Requesting snapshot…";
+  if(status) status.textContent = "";
+
+  try{
+    const res = await fetch("/force-odds");
+    if(res.ok){
+      let secs = 70;
+      if(status){
+        status.style.color = "var(--green)";
+        status.textContent = `✓ Snapshot started — dashboard refreshes in ${secs}s`;
+        const timer = setInterval(() => {
+          secs--;
+          if(secs <= 0){
+            clearInterval(timer);
+            location.reload(true);
+          } else {
+            status.textContent = `✓ Snapshot started — dashboard refreshes in ${secs}s`;
+          }
+        }, 1000);
+      } else {
+        setTimeout(() => location.reload(true), 70000);
+      }
+    } else {
+      if(status){ status.style.color="var(--red)"; status.textContent="Request failed — try again in a moment."; }
+      btn.disabled = false;
+      btn.textContent = "🔄 Pull Odds Snapshot Now";
+    }
+  } catch(e){
+    if(status){ status.style.color="var(--red)"; status.textContent="Could not reach server."; }
+    btn.disabled = false;
+    btn.textContent = "🔄 Pull Odds Snapshot Now";
+  }
+}
+
+// ── Sharp Action Tab ──────────────────────────────────────────────────────────
+function renderSharpAction(){
+  const el = document.getElementById("sharpActionContent");
+  if(!DATA_MOVEMENT || DATA_MOVEMENT.length === 0){
+    el.innerHTML = `<div class="sharp-empty">
+      <div style="font-size:2rem;margin-bottom:16px">📊</div>
+      <div style="color:var(--text);font-size:1.1rem;font-weight:700;margin-bottom:8px">No Line Movement Data Yet</div>
+      <div style="color:var(--sub);font-size:.88rem;max-width:420px;margin:0 auto;line-height:1.7">
+        Sharp money tracking needs two odds snapshots to compare — the 6am pipeline takes the first one,
+        then the server checks every 2 hours (8am–10pm ET).<br><br>
+        If you're seeing this mid-day, hit the button below to pull a fresh snapshot right now.
+        Line movement will appear on the next dashboard refresh (~60 seconds).
+      </div>
+      <div style="margin-top:24px">
+        <button onclick="forceOddsSnapshot()" id="forceOddsBtn" style="display:inline-block;padding:10px 26px;
+          background:linear-gradient(135deg,var(--green),#00b248);border-radius:24px;
+          color:#000;font-weight:800;font-size:.88rem;border:none;cursor:pointer;font-family:inherit">
+          🔄 Pull Odds Snapshot Now
+        </button>
+        <div id="forceOddsStatus" style="margin-top:12px;color:var(--sub);font-size:.82rem"></div>
+      </div>
+    </div>`;
     return;
   }
-  // Build items twice so the loop is seamless
-  let html = "";
-  for(let pass=0; pass<2; pass++){
-    DATA_SCORES.forEach(s=>{
-      const awayWon  = parseInt(s.away_score) > parseInt(s.home_score);
-      const liveStyle= s.is_live ? "color:#ff6b35;animation:pulse 1.5s infinite" : "";
-      const liveClass= s.is_live ? "ticker-live" : "ticker-final";
-      html += `
-        <div class="ticker-item">
-          <span class="${awayWon?'ticker-score win':'ticker-score loss'}">${s.away_city} ${s.away_score}</span>
-          <span style="color:var(--sub)">@</span>
-          <span class="${!awayWon?'ticker-score win':'ticker-score loss'}">${s.home_city} ${s.home_score}</span>
-          <span class="${liveClass}" style="${liveStyle}">${s.label}</span>
-        </div>`;
-    });
-  }
-  track.innerHTML = html;
-  // Adjust animation speed based on number of items
-  const duration = Math.max(20, DATA_SCORES.length * 5);
-  track.style.animationDuration = duration + "s";
+
+  const fmtO = o => (!o && o !== 0) ? "—" : (o > 0 ? `+${Math.round(o)}` : `${Math.round(o)}`);
+  const fmtSnap = t => {
+    if(!t) return "—";
+    try{
+      const d = new Date(t.endsWith("Z") ? t : t+"Z");
+      return d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",timeZone:"America/New_York"}) + " ET";
+    } catch(e){ return t; }
+  };
+
+  let html = `<div class="sharp-explain-box">
+    <strong style="color:var(--text)">What is sharp money?</strong>
+    Professional bettors — called "sharps" — place large, well-researched bets.
+    When a line moves significantly, it signals where pros are putting their money.
+    Sportsbook signals: <span style="color:#ef5350;font-weight:700">STEAM</span> = 8+ point move,
+    <span style="color:#ffa726;font-weight:700">DRIFT</span> = 3–7 points.
+    Kalshi signals: <span style="color:#ef5350;font-weight:700">STEAM</span> = 5+ pp probability shift,
+    <span style="color:#ffa726;font-weight:700">DRIFT</span> = 2–4 pp.
+    <span style="color:#42a5f5;font-weight:700">Kalshi</span> is a regulated prediction market — it often moves before sportsbooks adjust.
+    When both sources agree, that's the highest-conviction signal.
+  </div>`;
+
+  DATA_MOVEMENT.forEach(mv => {
+    const awayNick = mv.away ? mv.away.split(" ").slice(-1)[0] : mv.away;
+    const homeNick = mv.home ? mv.home.split(" ").slice(-1)[0] : mv.home;
+    const mlSig    = mv.ml_signal    || "";
+    const totSig   = mv.total_signal || "";
+    const hasML    = mlSig === "STEAM" || mlSig === "DRIFT";
+    const hasTot   = totSig === "STEAM" || totSig === "DRIFT";
+    const dominant = (mlSig === "STEAM" || totSig === "STEAM") ? "STEAM" : "DRIFT";
+
+    const sigBadge = dominant === "STEAM"
+      ? `<span class="sharp-badge sharp-badge-steam">🔥 STEAM — Heavy Sharp Action</span>`
+      : `<span class="sharp-badge sharp-badge-drift">📈 DRIFT — Notable Movement</span>`;
+
+    // Moneyline odds comparison table
+    let oddsHtml = "";
+    if(hasML){
+      const awayMove = mv.ml_away_move || 0;
+      const homeMove = mv.ml_home_move || 0;
+      const awayMoveColor = Math.abs(awayMove) >= 8 ? "#ef5350" : Math.abs(awayMove) >= 3 ? "#ffa726" : "var(--sub)";
+      const homeMoveColor = Math.abs(homeMove) >= 8 ? "#ef5350" : Math.abs(homeMove) >= 3 ? "#ffa726" : "var(--sub)";
+      const awayDir = awayMove > 0 ? "↑" : awayMove < 0 ? "↓" : "";
+      const homeDir = homeMove > 0 ? "↑" : homeMove < 0 ? "↓" : "";
+      oddsHtml = `<div class="sharp-odds-grid">
+        <div class="sharp-odds-box">
+          <div class="sharp-odds-team-lbl">${mv.away}</div>
+          <div class="sharp-odds-row">
+            <div class="sharp-odds-cell">
+              <div class="sharp-odds-cell-lbl">Opening</div>
+              <div class="sharp-odds-cell-num" style="color:var(--sub)">${fmtO(mv.ml_away_open)}</div>
+            </div>
+            <div class="sharp-odds-arrow">→</div>
+            <div class="sharp-odds-cell">
+              <div class="sharp-odds-cell-lbl">Current</div>
+              <div class="sharp-odds-cell-num" style="color:var(--text)">${fmtO(mv.ml_away_now)}</div>
+            </div>
+            <div class="sharp-odds-cell">
+              <div class="sharp-odds-cell-lbl">Move</div>
+              <div class="sharp-odds-cell-num" style="color:${awayMoveColor}">${awayDir}${Math.abs(awayMove)}</div>
+            </div>
+          </div>
+        </div>
+        <div class="sharp-odds-box">
+          <div class="sharp-odds-team-lbl">${mv.home}</div>
+          <div class="sharp-odds-row">
+            <div class="sharp-odds-cell">
+              <div class="sharp-odds-cell-lbl">Opening</div>
+              <div class="sharp-odds-cell-num" style="color:var(--sub)">${fmtO(mv.ml_home_open)}</div>
+            </div>
+            <div class="sharp-odds-arrow">→</div>
+            <div class="sharp-odds-cell">
+              <div class="sharp-odds-cell-lbl">Current</div>
+              <div class="sharp-odds-cell-num" style="color:var(--text)">${fmtO(mv.ml_home_now)}</div>
+            </div>
+            <div class="sharp-odds-cell">
+              <div class="sharp-odds-cell-lbl">Move</div>
+              <div class="sharp-odds-cell-num" style="color:${homeMoveColor}">${homeDir}${Math.abs(homeMove)}</div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // Total line movement row
+    let totalHtml = "";
+    if(hasTot){
+      const tdir   = (mv.total_move || 0) > 0 ? "▲" : "▼";
+      const tColor = totSig === "STEAM" ? "#ef5350" : "#ffa726";
+      const tSide  = (mv.total_move || 0) > 0 ? "Over" : "Under";
+      totalHtml = `<div class="sharp-total-row">
+        <span style="color:var(--sub);font-weight:600">Over/Under</span>
+        <span style="color:var(--sub)">${mv.total_open} → ${mv.total_now}</span>
+        <span style="color:${tColor};font-weight:800">${tdir} ${Math.abs(mv.total_move||0).toFixed(1)} pts (${totSig})</span>
+        <span style="color:var(--sub)">Heavy action on the ${tSide}</span>
+      </div>`;
+    }
+
+    // ── Kalshi market signal panel ─────────────────────────────────────────
+    let kalshiCardHtml = "";
+    const kSig   = mv.kalshi_signal || "";
+    const hasKal = kSig === "STEAM" || kSig === "DRIFT";
+    if(hasKal){
+      const kSharp    = mv.kalshi_sharp_side || "";
+      const kNick     = kSharp ? kSharp.split(" ").slice(-1)[0] : "";
+      const kMovePct  = mv.kalshi_away_move != null
+        ? Math.round(Math.abs(mv.kalshi_away_move) * 100) : 0;
+      const kSigColor = kSig === "STEAM" ? "#ef5350" : "#ffa726";
+      const kLabel    = kSig === "STEAM" ? "🔥 STEAM" : "📈 DRIFT";
+
+      const kAwayOpen = mv.kalshi_away_open != null ? Math.round(mv.kalshi_away_open * 100) + "%" : "—";
+      const kAwayNow  = mv.kalshi_away_now  != null ? Math.round(mv.kalshi_away_now  * 100) + "%" : "—";
+      const kHomeOpen = mv.kalshi_home_open != null ? Math.round(mv.kalshi_home_open * 100) + "%" : "—";
+      const kHomeNow  = mv.kalshi_home_now  != null ? Math.round(mv.kalshi_home_now  * 100) + "%" : "—";
+
+      // Kalshi vs sportsbook agreement
+      const sbSharp   = mv.sharp_side || "";
+      const sbNick    = sbSharp ? sbSharp.split(" ").slice(-1)[0].toLowerCase() : "";
+      const kMatch    = kNick && sbNick && kNick.toLowerCase() === sbNick;
+      const kMismatch = kNick && sbNick && kNick.toLowerCase() !== sbNick;
+      const agreeLbl  = kMatch
+        ? `<span style="background:rgba(105,240,174,.12);color:#69f0ae;border:1px solid rgba(105,240,174,.3);
+             padding:2px 8px;border-radius:4px;font-size:.68rem;font-weight:700">✓ Confirms sportsbook</span>`
+        : (kMismatch
+          ? `<span style="background:rgba(255,167,38,.1);color:#ffa726;border:1px solid rgba(255,167,38,.3);
+               padding:2px 8px;border-radius:4px;font-size:.68rem;font-weight:700">⚠ Diverges from sportsbook</span>`
+          : "");
+
+      kalshiCardHtml = `<div style="margin:12px 0;padding:12px;background:rgba(66,165,245,.07);
+        border:1px solid rgba(66,165,245,.25);border-radius:8px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+          <span style="color:#42a5f5;font-weight:800;font-size:.85rem">📊 Kalshi Prediction Market</span>
+          <span style="color:${kSigColor};font-weight:800;font-size:.82rem">${kLabel}</span>
+          ${agreeLbl}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.8rem">
+          <div style="background:rgba(66,165,245,.08);border-radius:6px;padding:8px;text-align:center">
+            <div style="color:var(--sub);font-size:.68rem;margin-bottom:4px">${mv.away}</div>
+            <div style="color:var(--sub)">${kAwayOpen}</div>
+            <div style="color:#42a5f5;font-size:.7rem">→</div>
+            <div style="color:var(--text);font-weight:700">${kAwayNow}</div>
+          </div>
+          <div style="background:rgba(66,165,245,.08);border-radius:6px;padding:8px;text-align:center">
+            <div style="color:var(--sub);font-size:.68rem;margin-bottom:4px">${mv.home}</div>
+            <div style="color:var(--sub)">${kHomeOpen}</div>
+            <div style="color:#42a5f5;font-size:.7rem">→</div>
+            <div style="color:var(--text);font-weight:700">${kHomeNow}</div>
+          </div>
+        </div>
+        ${kNick ? `<div style="margin-top:8px;color:var(--sub);font-size:.75rem">
+          Market shifted ${kMovePct}pp toward <strong style="color:var(--text)">${kSharp}</strong>
+          ${kSig === "STEAM" ? "— strong early signal before books adjust" : "— moderate market repricing"}
+        </div>` : ""}
+      </div>`;
+    }
+
+    // Bet call + model agreement
+    const sharp = mv.sharp_side || "";
+    let betCallHtml = "";
+    if(sharp && hasML){
+      const sharpNick  = sharp.split(" ").slice(-1)[0];
+      const gamePick   = DATA_PICKS.find(p => p.away === mv.away && p.home === mv.home && (p.type==="ML"||p.type==="RL"));
+      let modelNoteHtml = "";
+      if(gamePick){
+        const pickNick = gamePick.team ? gamePick.team.split(" ").slice(-1)[0] : "";
+        const agrees   = sharpNick.toLowerCase() === pickNick.toLowerCase();
+        modelNoteHtml  = agrees
+          ? `<span style="color:#69f0ae;font-weight:700;font-size:.78rem">✓ Our ${gamePick.tier} pick agrees</span>`
+          : `<span style="color:#ef9a9a;font-weight:700;font-size:.78rem">⚠ Our ${gamePick.tier} pick is ${gamePick.team} — use caution</span>`;
+      }
+      const urgency = dominant === "STEAM" ? "Strong Sharp Signal" : "Moderate Sharp Signal";
+      betCallHtml = `<div class="sharp-bet-call">
+        <div>
+          <div class="sharp-bet-call-lbl">${urgency}</div>
+          <div class="sharp-bet-call-text">Follow: Bet <span style="color:var(--green)">${sharp} ML</span></div>
+        </div>
+        ${modelNoteHtml}
+      </div>`;
+    } else if(hasTot){
+      const tBetSide = (mv.total_move || 0) > 0 ? "Over" : "Under";
+      const tLine    = mv.total_now || mv.total_open;
+      betCallHtml = `<div class="sharp-bet-call">
+        <div>
+          <div class="sharp-bet-call-lbl">${dominant === "STEAM" ? "Strong Sharp Signal" : "Moderate Sharp Signal"}</div>
+          <div class="sharp-bet-call-text">Follow: Bet <span style="color:var(--green)">${tBetSide} ${tLine}</span></div>
+        </div>
+      </div>`;
+    }
+
+    html += `<div class="sharp-action-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+        <div>
+          <div style="font-size:1.05rem;font-weight:800;color:var(--text)">${mv.away} @ ${mv.home}</div>
+          <div style="font-size:.72rem;color:var(--sub);margin-top:3px">
+            Compared: ${fmtSnap(mv.snap1_time)} vs ${fmtSnap(mv.snap2_time)}
+          </div>
+        </div>
+        ${sigBadge}
+      </div>
+      ${oddsHtml}
+      ${totalHtml}
+      ${kalshiCardHtml}
+      ${betCallHtml}
+    </div>`;
+  });
+
+  el.innerHTML = html;
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 renderTicker();
 renderYesterday();
 renderPicks();
+renderSharpMoney();
+renderSharpAction();
 renderParlays();
 renderSchedule();
 renderGames();
 renderProps();
 initTeamsTab();
+
+// Auto-reload every 15 minutes to pick up fresh odds, lineups, and scores
+// Only runs between 9am and midnight ET
+(function() {
+  const RELOAD_MS = 15 * 60 * 1000;
+  function scheduleReload() {
+    const now = new Date();
+    const etHour = new Date(now.toLocaleString("en-US", {timeZone: "America/New_York"})).getHours();
+    if (etHour >= 9 && etHour < 24) {
+      setTimeout(() => { location.reload(true); }, RELOAD_MS);
+    }
+  }
+  scheduleReload();
+})();
 </script>
 </body>
 </html>"""
@@ -2099,13 +3081,20 @@ initTeamsTab();
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser(description="MLB Picks HTML Dashboard")
-    parser.add_argument("--date", default=None)
-    parser.add_argument("--no-open", action="store_true", help="Don't auto-open browser")
-    args = parser.parse_args()
+def main(date=None, no_open=False):
+    # argparse is handled in __main__ block only — never called from here.
+    target = date or datetime.now().strftime("%Y-%m-%d")
 
-    target = args.date or datetime.now().strftime("%Y-%m-%d")
+    # ── Refresh odds before loading the model ────────────────────────────────
+    # Runs every time so total lines always reflect the current market, not
+    # whatever was in the CSV from when the pipeline last ran.
+    if not date:   # only refresh for today — backfill dates use historical data
+        try:
+            from scrapers.mlb_odds_scraper import run as run_odds
+            odds_result = run_odds()
+            log.info(f"Odds refreshed: {odds_result}")
+        except Exception as e:
+            log.warning(f"Odds refresh failed (non-fatal): {e}")
 
     from model.mlb_model import MLBModel
     from model.mlb_picks import generate_picks, build_parlays
@@ -2116,7 +3105,7 @@ def main():
 
     # score_today filters to upcoming games only — we also need all games for the schedule tab
     all_schedule = [g for g in model.schedule if g.get("game_date") == (
-        args.date or datetime.now().strftime("%Y-%m-%d")
+        date or datetime.now().strftime("%Y-%m-%d")
     )]
 
     scored, actual_date = model.score_today(target)
@@ -2156,29 +3145,62 @@ def main():
     schedule_json  = json.dumps(prep_schedule_view(schedule_games, today_scores, standings))
 
     # ── Refresh lineups + hitter stats before props ───────────────────────────
-    # Run every time run_picks_html.py is called so props stay current.
-    # Lineups typically confirm 1-3 hours before first pitch — this ensures
-    # we always have the freshest data regardless of when the pipeline last ran.
+    # Lineups refresh every run. Hitter stats only re-fetch if the file is
+    # missing or older than 2 hours — avoids the slow 270-player API call on
+    # every 10-minute cache refresh (the file persists within a deployment).
     try:
         from scrapers.mlb_lineup_scraper import run as run_lineups
         lineups = run_lineups(target_date=actual_date)
         confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
         log.info(f"Lineup refresh: {len(lineups)} games, {confirmed} confirmed")
         if confirmed > 0:
-            from scrapers.mlb_hitter_scraper import run as run_hitters
-            run_hitters(target_date=actual_date)
-            log.info("Hitter stats refreshed for props")
+            import time as _time
+            _stats_path = os.path.join(os.path.dirname(__file__), "data", "raw",
+                                       f"mlb_hitter_stats_{actual_date}.json")
+            _stats_age  = (_time.time() - os.path.getmtime(_stats_path)
+                           if os.path.exists(_stats_path) else float("inf"))
+            if _stats_age > 4 * 3600:   # Re-fetch if missing or older than 4 hours
+                from scrapers.mlb_hitter_scraper import run as run_hitters
+                run_hitters(target_date=actual_date)
+                log.info("Hitter stats refreshed for props")
+            else:
+                log.info(f"Hitter stats are {int(_stats_age/60)}m old — skipping re-fetch")
     except Exception as e:
         log.warning(f"Lineup refresh failed (non-fatal): {e}")
 
+    # Projected lineups (loaded early — needed for projected props below)
+    proj_lineups_data = load_projected_lineups(actual_date)
+
     # Player props (non-fatal — works only when lineups confirmed)
     try:
-        props      = score_all_props(actual_date)
-        props_json = json.dumps(prep_props(props))
-        log.info(f"Props generated: {len(props)} total")
+        props = score_all_props(actual_date)
+        log.info(f"Props generated: {len(props)} confirmed props")
     except Exception as e:
         log.warning(f"Props generation failed (non-fatal): {e}")
-        props_json = "[]"
+        props = []
+
+    # Projected props — fill in any teams that don't have confirmed props yet
+    try:
+        from model.mlb_props_model import score_projected_props
+        # Find teams that already have confirmed props
+        confirmed_games = {(p["away_team"], p["home_team"]) for p in props}
+        # Only run projected scoring if we have projected lineups AND some games are uncovered
+        if proj_lineups_data:
+            projected = score_projected_props(proj_lineups_data, actual_date)
+            # Merge: keep projected props only for games without confirmed props
+            added = 0
+            for p in projected:
+                key = (p.get("away_team", ""), p.get("home_team", ""))
+                if key not in confirmed_games:
+                    props.append(p)
+                    added += 1
+            if added:
+                log.info(f"Projected props added: {added} props for {len(set((p['away_team'],p['home_team']) for p in props if p.get('projected')))} games")
+    except Exception as e:
+        log.warning(f"Projected props generation failed (non-fatal): {e}")
+
+    props_json = json.dumps(prep_props(props))
+    log.info(f"Props total: {len(props)} ({sum(1 for p in props if not p.get('projected'))} confirmed, {sum(1 for p in props if p.get('projected'))} projected)")
 
     # Kalshi market data (optional — works only when API key configured)
     kalshi_data = load_kalshi(actual_date)
@@ -2195,64 +3217,10 @@ def main():
     yesterday_data = load_yesterday_analysis(actual_date)
     yesterday_json = json.dumps(yesterday_data)
 
-    # Serialize
-    picks_json       = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
-    games_json       = json.dumps(prep_games(scored))
-    p2_json          = json.dumps(prep_parlays(parlays_2))
-    p3_json          = json.dumps(prep_parlays(parlays_3))
-    scores_json      = json.dumps(prep_scores_ticker(today_scores))
-    team_sched_json  = json.dumps(prep_team_schedule(actual_date))
+    # Line movement (sharp money signals)
+    movement_data = load_line_movement(actual_date)
+    movement_json = json.dumps(movement_data)
 
-    html = (HTML
-            .replace("__DATE__",        actual_date)
-            .replace("__PICKS__",       picks_json)
-            .replace("__GAMES__",       games_json)
-            .replace("__P2__",          p2_json)
-            .replace("__P3__",          p3_json)
-            .replace("__SCORES__",      scores_json)
-            .replace("__PROPS__",       props_json)
-            .replace("__SCHEDULE__",    schedule_json)
-            .replace("__YESTERDAY__",   yesterday_json)
-            .replace("__TEAM_SCHED__",  team_sched_json))
-
-    os.makedirs(PICKS_DIR, exist_ok=True)
-    out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    # Always write a fixed-name copy so bookmarks never break
-    latest_path = os.path.join(PICKS_DIR, "mlb_picks_latest.html")
-    with open(latest_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    # Write CSV of picks so run_analysis.py can grade them tomorrow
-    import csv as _csv
-    csv_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.csv")
-    csv_fields = ["date", "game", "type", "label", "conf", "tier", "reasoning"]
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = _csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
-        writer.writeheader()
-        for p in picks:
-            writer.writerow({
-                "date":      actual_date,
-                "game":      p.get("game", ""),
-                "type":      p.get("type", ""),
-                "label":     p.get("label", ""),
-                "conf":      p.get("conf", ""),
-                "tier":      p.get("tier", ""),
-                "reasoning": p.get("reasoning", ""),
-            })
-
-    log.info(f"Dashboard saved: {out_path}")
-    log.info(f"Picks CSV: {csv_path} ({len(picks)} rows)")
-    log.info(f"Latest copy: {latest_path}")
-    log.info(f"{len(scored)} games | {len(picks)} picks | "
-             f"{len(parlays_2)} 2-leg parlays | {len(parlays_3)} 3-leg parlays")
-
-    if not args.no_open:
-        webbrowser.open(f"file:///{os.path.abspath(latest_path)}")
-        log.info("Opening in browser...")
-
-
-if __name__ == "__main__":
-    main()
+    # Serialize projected lineups (loaded earlier for props; reuse here for JS injection)
+    proj_lineups_json = json.dumps(proj_lineups_data)
+
