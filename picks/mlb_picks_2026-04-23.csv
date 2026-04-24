@@ -1,20 +1,18 @@
 date,game,type,label,conf,tier,reasoning
-2026-04-23,Milwaukee Brewers @ Detroit Tigers,ML,Detroit Tigers ML,0.8397,LOCK,Brandon Sproat ERA 5.13 [NEUTRAL] vs Tarik Skubal ERA 2.19 [NEUTRAL] | Recent: Milwaukee Brewers 4.0 RPG (57% W) | Detroit Tigers 4.4 RPG (75% W) | Line: Milwaukee Brewers +184 | Detroit Tigers -221
-2026-04-23,Atlanta Braves @ Washington Nationals,ML,Atlanta Braves ML,0.7674,LOCK,Chris Sale ERA 2.50 [NEUTRAL] vs Cade Cavalli ERA 3.72 [NEUTRAL] | Recent: Atlanta Braves 6.1 RPG (88% W) | Washington Nationals 4.7 RPG (33% W) | Line: Atlanta Braves -136 | Washington Nationals +115
-2026-04-23,Milwaukee Brewers @ Detroit Tigers,TOTAL,OVER 7.0,0.73,LOCK,Model projects 8.7 runs vs 7.0 line (1.7 run edge)
-2026-04-23,New York Yankees @ Boston Red Sox,ML,New York Yankees ML,0.7149,LOCK,Cam Schlittler ERA 2.90 [NEUTRAL] vs Brayan Bello ERA 3.40 [NEUTRAL] | Recent: New York Yankees 6.1 RPG (75% W) | Boston Red Sox 3.5 RPG (38% W) | Line: New York Yankees -153 | Boston Red Sox +129
-2026-04-23,San Diego Padres @ Colorado Rockies,ML,Colorado Rockies ML,0.7139,LOCK,Matt Waldron ERA 4.74 [COLD] (home SP TBD) | Recent: San Diego Padres 3.6 RPG (71% W) | Colorado Rockies 4.4 RPG (50% W) | Line: San Diego Padres -155 | Colorado Rockies +131 | Hitter park (117.0)
-2026-04-23,Philadelphia Phillies @ Chicago Cubs,ML,Chicago Cubs ML,0.7014,LOCK,Cristopher Sánchez ERA 2.66 [NEUTRAL] vs Edward Cabrera ERA 3.29 [NEUTRAL] | Recent: Philadelphia Phillies 3.1 RPG (12% W) | Chicago Cubs 7.2 RPG (88% W) | Line: Philadelphia Phillies -123 | Chicago Cubs +105
-2026-04-23,New York Yankees @ Boston Red Sox,TOTAL,OVER 8.0,0.6757,STRONG,Model projects 9.3 runs vs 8.0 line (1.3 run edge) | Elite pitching matchup (avg ERA 3.15)
-2026-04-23,Chicago White Sox @ Arizona Diamondbacks,TOTAL,OVER 9.0,0.6614,STRONG,Model projects 10.2 runs vs 9.0 line (1.2 run edge)
-2026-04-23,Milwaukee Brewers @ Detroit Tigers,RL,Detroit Tigers -1.5,0.6278,STRONG,ML conf 84% | Projected margin 2.4 runs | Detroit Tigers 75% W last 10
-2026-04-23,Minnesota Twins @ New York Mets,ML,Minnesota Twins ML,0.6234,STRONG,Joe Ryan ERA 3.40 [HOT] (home SP TBD) | Recent: Minnesota Twins 5.0 RPG (29% W) | New York Mets 1.9 RPG (14% W) | Line: Minnesota Twins -116 | New York Mets -22
-2026-04-23,San Diego Padres @ Colorado Rockies,TOTAL,OVER 11.0,0.6171,LEAN,Model projects 11.9 runs vs 11.0 line (0.9 run edge) | Coors-level hitter park (factor 117.0)
-2026-04-23,Chicago White Sox @ Arizona Diamondbacks,ML,Arizona Diamondbacks ML,0.5998,LEAN,Davis Martin ERA 4.23 [NEUTRAL] vs Michael Soroka ERA 4.42 [NEUTRAL] | Recent: Chicago White Sox 5.7 RPG (29% W) | Arizona Diamondbacks 6.6 RPG (71% W) | Line: Chicago White Sox +132 | Arizona Diamondbacks -156
-2026-04-23,Atlanta Braves @ Washington Nationals,RL,Atlanta Braves -1.5,0.5939,LEAN,ML conf 77% | Projected margin 2.6 runs | Atlanta Braves 88% W last 10
-2026-04-23,Minnesota Twins @ New York Mets,TOTAL,UNDER 8.0,0.5886,LEAN,Model projects 7.3 runs vs 8.0 line (0.7 run edge)
-2026-04-23,Los Angeles Dodgers @ San Francisco Giants,ML,Los Angeles Dodgers ML,0.5865,LEAN,Tyler Glasnow ERA 3.46 [NEUTRAL] vs Logan Webb ERA 3.18 [NEUTRAL] | Recent: Los Angeles Dodgers 5.2 RPG (62% W) | San Francisco Giants 3.9 RPG (57% W) | Line: Los Angeles Dodgers -157 | San Francisco Giants +134 | Pitcher park (95.0)
-2026-04-23,New York Yankees @ Boston Red Sox,RL,New York Yankees -1.5,0.5839,LEAN,ML conf 71% | Projected margin 2.5 runs | New York Yankees 75% W last 10
-2026-04-23,San Diego Padres @ Colorado Rockies,RL,Colorado Rockies -1.5,0.5831,LEAN,ML conf 71% | Projected margin 2.4 runs | Colorado Rockies 50% W last 10
-2026-04-23,Philadelphia Phillies @ Chicago Cubs,RL,Chicago Cubs -1.5,0.5731,LEAN,ML conf 70% | Projected margin 1.6 runs | Chicago Cubs 88% W last 10
-2026-04-23,Philadelphia Phillies @ Chicago Cubs,TOTAL,UNDER 9.0,0.5643,LEAN,Model projects 8.5 runs vs 9.0 line (0.5 run edge) | Elite pitching matchup (avg ERA 2.97)
+2026-04-23,Milwaukee Brewers @ Detroit Tigers,ML,Detroit Tigers ML,0.89,LOCK,Brandon Sproat ERA 5.13 [COLD] vs Tarik Skubal ERA 2.19 | Recent: Milwaukee Brewers 4.3 RPG (67% W) | Detroit Tigers 4.3 RPG (71% W)
+2026-04-23,Milwaukee Brewers @ Detroit Tigers,TOTAL,OVER 8.2,0.73,LOCK,Model projects 11.1 runs vs 8.2 line (2.9 run edge)
+2026-04-23,Chicago White Sox @ Arizona Diamondbacks,TOTAL,OVER 8.6,0.73,LOCK,Model projects 10.4 runs vs 8.6 line (1.8 run edge)
+2026-04-23,New York Yankees @ Boston Red Sox,ML,New York Yankees ML,0.7203,LOCK,Cam Schlittler ERA 2.90 vs Brayan Bello ERA 3.40 [COLD] | Recent: New York Yankees 6.4 RPG (71% W) | Boston Red Sox 3.9 RPG (43% W)
+2026-04-23,Philadelphia Phillies @ Chicago Cubs,ML,Chicago Cubs ML,0.7016,LOCK,Cristopher Sánchez ERA 2.66 [NEUTRAL] vs Edward Cabrera ERA 3.29 | Recent: Philadelphia Phillies 3.3 RPG (14% W) | Chicago Cubs 7.3 RPG (86% W)
+2026-04-23,Atlanta Braves @ Washington Nationals,ML,Atlanta Braves ML,0.7007,LOCK,Chris Sale ERA 2.50 [NEUTRAL] vs Cade Cavalli ERA 3.72 | Recent: Atlanta Braves 5.9 RPG (86% W) | Washington Nationals 4.5 RPG (38% W)
+2026-04-23,Milwaukee Brewers @ Detroit Tigers,RL,Detroit Tigers -1.5,0.7,LOCK,ML conf 89% | Projected margin 5.0 runs | Detroit Tigers 71% W last 10
+2026-04-23,Minnesota Twins @ New York Mets,ML,Minnesota Twins ML,0.6478,STRONG,Joe Ryan ERA 3.40 (home SP TBD) | Recent: Minnesota Twins 5.5 RPG (33% W) | New York Mets 1.7 RPG (0% W)
+2026-04-23,Chicago White Sox @ Arizona Diamondbacks,ML,Arizona Diamondbacks ML,0.6418,STRONG,Davis Martin ERA 4.23 vs Michael Soroka ERA 4.42 [NEUTRAL] | Recent: Chicago White Sox 5.5 RPG (33% W) | Arizona Diamondbacks 5.8 RPG (67% W)
+2026-04-23,New York Yankees @ Boston Red Sox,TOTAL,OVER 8.8,0.5986,LEAN,Model projects 9.6 runs vs 8.8 line (0.8 run edge) | Elite pitching matchup (avg ERA 3.15)
+2026-04-23,New York Yankees @ Boston Red Sox,RL,New York Yankees -1.5,0.5962,LEAN,ML conf 72% | Projected margin 2.7 runs | New York Yankees 71% W last 10
+2026-04-23,Minnesota Twins @ New York Mets,TOTAL,UNDER 8.2,0.5814,LEAN,Model projects 7.6 runs vs 8.2 line (0.6 run edge)
+2026-04-23,Philadelphia Phillies @ Chicago Cubs,RL,Chicago Cubs -1.5,0.5813,LEAN,ML conf 70% | Projected margin 1.7 runs | Chicago Cubs 86% W last 10
+2026-04-23,San Diego Padres @ Colorado Rockies,TOTAL,UNDER 9.9,0.58,LEAN,Model projects 9.3 runs vs 9.9 line (0.6 run edge) | Coors-level hitter park (factor 117.0)
+2026-04-23,Los Angeles Dodgers @ San Francisco Giants,ML,Los Angeles Dodgers ML,0.5763,LEAN,Tyler Glasnow ERA 3.46 vs Logan Webb ERA 3.18 | Recent: Los Angeles Dodgers 6.0 RPG (71% W) | San Francisco Giants 4.0 RPG (50% W) | Pitcher park (95.0)
+2026-04-23,Los Angeles Dodgers @ San Francisco Giants,TOTAL,UNDER 8.1,0.5686,LEAN,Model projects 7.5 runs vs 8.1 line (0.5 run edge) | Pitcher-friendly park (factor 95.0) | Elite pitching matchup (avg ERA 3.32)
+2026-04-23,Atlanta Braves @ Washington Nationals,RL,Atlanta Braves -1.5,0.5646,LEAN,ML conf 70% | Projected margin 2.0 runs | Atlanta Braves 86% W last 10
