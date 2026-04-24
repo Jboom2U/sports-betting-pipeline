@@ -397,7 +397,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
         lwr = lock.get("win_rate")
         findings.append(
             f"LOCK tier: {lock['wins']}-{lock['losses']} ({lwr*100:.1f}%) — "
-            f"{'✓ meeting expectations' if lwr and lwr >= 0.65 else '⚠ underperforming for highest-confidence tier'}"
+            f"{'[OK] meeting expectations' if lwr and lwr >= 0.65 else '[!] underperforming for highest-confidence tier'}"
         )
 
     # STRONG tier
@@ -406,7 +406,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
         swr = strong.get("win_rate")
         findings.append(
             f"STRONG tier: {strong['wins']}-{strong['losses']} ({swr*100:.1f}%) — "
-            f"{'✓ on track' if swr and swr >= 0.58 else '⚠ below 62% expected threshold'}"
+            f"{'[OK] on track' if swr and swr >= 0.58 else '[!] below 62% expected threshold'}"
         )
 
     # LEAN tier
@@ -415,7 +415,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
         lwr2 = lean.get("win_rate")
         findings.append(
             f"LEAN tier: {lean['wins']}-{lean['losses']} ({lwr2*100:.1f}%) — "
-            f"{'✓ solid for LEAN range' if lwr2 and lwr2 >= 0.52 else '⚠ consider filtering lowest-conf LEANs'}"
+            f"{'[OK] solid for LEAN range' if lwr2 and lwr2 >= 0.52 else '[!] consider filtering lowest-conf LEANs'}"
         )
 
     # OVER bias
@@ -423,7 +423,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
         owr = overs.get("win_rate", 0) or 0
         findings.append(
             f"OVERs: {overs['wins']}-{overs['losses']} ({owr*100:.1f}%) — "
-            f"{'⚠ OVER bias confirmed — model systematically projects too many runs' if owr < 0.45 else 'within range'}"
+            f"{'[!] OVER bias confirmed — model systematically projects too many runs' if owr < 0.45 else 'within range'}"
         )
 
     if unders.get("total", 0) >= 2:
@@ -436,7 +436,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
         twr = totals.get("win_rate", 0) or 0
         if twr < 0.40:
             findings.append(
-                "⚠ Totals model is significantly below breakeven — retune run-expectancy weights"
+                "[!] Totals model is significantly below breakeven — retune run-expectancy weights"
             )
 
     # ML performance
@@ -458,7 +458,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
     ]
     if heavy_losses:
         findings.append(
-            f"⚠ {len(heavy_losses)} heavy-favorite ML(s) lost (conf ≥72%) — "
+            f"[!] {len(heavy_losses)} heavy-favorite ML(s) lost (conf ≥72%) — "
             f"review juice vs edge before publishing high-confidence ML favorites"
         )
 
@@ -471,7 +471,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
     ]
     if tbd_losses:
         findings.append(
-            f"⚠ {len(tbd_losses)} TOTAL loss(es) on games with TBD starting pitchers — "
+            f"[!] {len(tbd_losses)} TOTAL loss(es) on games with TBD starting pitchers — "
             "suppress confidence or skip totals when SP is unknown"
         )
 
@@ -484,7 +484,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
     ]
     if thin_losses:
         findings.append(
-            f"⚠ {len(thin_losses)} thin-edge TOTAL loss(es) (<0.8 run edge) — "
+            f"[!] {len(thin_losses)} thin-edge TOTAL loss(es) (<0.8 run edge) — "
             "consider raising minimum edge threshold for publishing TOTAL picks"
         )
 
@@ -583,7 +583,7 @@ def print_report(date: str, graded_picks: list, metrics: dict,
     print(f"\n{'#':<4} {'Tier':<8} {'Type':<7} {'Label':<32} {'Conf':>6}  Result")
     print("-" * 65)
     for i, p in enumerate(graded_picks, 1):
-        result_icon = {"WIN": "✓", "LOSS": "✗", "PUSH": "—",
+        result_icon = {"WIN": "[OK]", "LOSS": "X", "PUSH": "—",
                        "NO_RESULT": "?"}.get(p["result"], "?")
         print(f"{i:<4} {p['tier']:<8} {p['type']:<7} {p['label']:<32} "
               f"{p['conf']*100:5.1f}%  {result_icon} {p['result']}")
@@ -715,7 +715,7 @@ def main():
                         help="Date to grade (YYYY-MM-DD). Defaults to yesterday.")
     parser.add_argument("--days", type=int, default=None,
                         help="Grade the last N days and print a rolling summary.")
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()  # parse_known_args ignores gunicorn/sys.argv noise when called inside Flask
 
     if args.days:
         # Rolling window
@@ -730,18 +730,4 @@ def main():
             print(f"\n{'='*65}")
             print(f"  {args.days}-DAY ROLLING SUMMARY")
             print(f"{'='*65}")
-            total_w = sum(r["metrics"]["overall"]["wins"]   for r in summaries)
-            total_l = sum(r["metrics"]["overall"]["losses"] for r in summaries)
-            total_p = sum(r["metrics"]["overall"]["profit"] for r in summaries)
-            total_s = sum(r["metrics"]["overall"]["staked"] for r in summaries)
-            wr = total_w / (total_w + total_l) if (total_w + total_l) > 0 else 0
-            roi = total_p / total_s if total_s > 0 else 0
-            print(f"  Record:  {total_w}-{total_l} ({wr*100:.1f}%)")
-            print(f"  Profit:  {total_p:+.2f}u  ROI: {roi*100:+.1f}%")
-    else:
-        target = args.date or (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        run(target)
-
-
-if __name__ == "__main__":
-    main()
+            total_w = sum
