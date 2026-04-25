@@ -271,9 +271,14 @@ def debug_odds():
     import os as _os
     diag = {}
     # Check API key visibility
-    key = _os.environ.get("ODDS_API_KEY", "")
+    key = _os.environ.get("ODDS_API_KEY", "").strip()
     diag["key_found"]   = bool(key)
     diag["key_preview"] = (key[:4] + "..." + key[-4:]) if len(key) > 8 else ("SET" if key else "MISSING")
+    # Dump all env var names that contain "odds", "api", or "key" (case-insensitive)
+    diag["env_vars_matching"] = [
+        k for k in _os.environ.keys()
+        if any(x in k.lower() for x in ["odds", "kalshi", "api_key", "apikey"])
+    ]
     # Run scraper
     try:
         from scrapers.mlb_odds_scraper import run as run_odds
