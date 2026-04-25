@@ -422,3 +422,16 @@ def run() -> dict:
                      f"ML: {m.get('ml_away_open')} -> {m.get('ml_away_now')} away | "
                      f"Sharp: {m.get('sharp_side','?')} | "
                      f"Total: {m.get('total_open')} -> {m.get('total_now')}")
+
+    # Save
+    save_snapshot(curr_snaps)
+    save_movement(movements, today)
+
+    log.info(f"Odds scraper complete | {len(curr_snaps)} snapshots | {len(movements)} movement records")
+    return {"snapshots": len(curr_snaps), "movements": len(movements)}
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(message)s")
+    run()
