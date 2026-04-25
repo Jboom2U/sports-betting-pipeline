@@ -265,6 +265,41 @@ def force_odds():
     return {"status": "ok", "message": "Odds snapshot started — dashboard will refresh automatically in ~60 seconds."}
 
 
+@app.route("/debug-odds")
+def debug_odds():
+    """Run odds scraper synchronously and return full diagnostic output."""
+    import os as _os
+    diag = {}
+    # Check API key visibility
+    key = _os.environ.get("ODDS_API_KEY", "")
+    diag["key_found"]   = bool(key)
+    diag["key_preview"] = (key[:4] + "..." + key[-4:]) if len(key) > 8 else ("SET" if key else "MISSING")
+    # Run scraper
+    try:
+        from scrapers.mlb_odds_scraper import run as run_odds
+        result = run_odds()
+        diag["scraper_result"] = result
+    except Exception as e:
+        import traceback
+        diag["scraper_error"] = str(e)
+        diag["traceback"]     = traceback.format_exc()
+    # Check what got saved
+    import csv as _csv
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    today = _dt.now(_ZI("America/New_York")).strftime("%Y-%m-%d")
+    odds_path = os.path.join(CLEAN_DIR, "mlb_odds_master.csv")
+    if os.path.exists(odds_path):
+        with open(odds_path) as f:
+            rows = [r for r in _csv.DictReader(f) if r.get("game_date") == today]
+        diag["rows_saved_today"] = len(rows)
+        diag["snap_times"] = list(set(r.get("snapshot_time","") for r in rows))
+    else:
+        diag["rows_saved_today"] = 0
+        diag["odds_file_exists"] = False
+    return diag
+
+
 @app.route("/health")
 def health():
     with _cache_lock:
