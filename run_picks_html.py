@@ -3223,4 +3223,75 @@ def main(date=None, no_open=False):
 
     # Serialize projected lineups (loaded earlier for props; reuse here for JS injection)
     proj_lineups_json = json.dumps(proj_lineups_data)
+
+    # Serialize all data for HTML template injection
+    picks_json      = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
+    games_json      = json.dumps(prep_games(scored))
+    p2_json         = json.dumps(prep_parlays(parlays_2))
+    p3_json         = json.dumps(prep_parlays(parlays_3))
+    scores_json     = json.dumps(prep_scores_ticker(today_scores))
+    team_sched_json = json.dumps(prep_team_schedule(actual_date))
+
+    html = (HTML
+            .replace("__DATE__",         actual_date)
+            .replace("__PICKS__",        picks_json)
+            .replace("__GAMES__",        games_json)
+            .replace("__P2__",           p2_json)
+            .replace("__P3__",           p3_json)
+            .replace("__SCORES__",       scores_json)
+            .replace("__PROPS__",        props_json)
+            .replace("__SCHEDULE__",     schedule_json)
+            .replace("__YESTERDAY__",    yesterday_json)
+            .replace("__MOVEMENT__",     movement_json)
+            .replace("__PROJ_LINEUPS__", proj_lineups_json)
+            .replace("__TEAM_SCHED__",   team_sched_json))
+
+    os.makedirs(PICKS_DIR, exist_ok=True)
+    out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    # Always write a fixed-name copy so bookmarks never break
+    latest_path = os.path.join(PICKS_DIR, "mlb_picks_latest.html")
+    with open(latest_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    # Write CSV of picks so run_analysis.py can grade them tomorrow
+    import csv as _csv
+    csv_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.csv")
+    csv_fields = ["date", "game", "type", "label", "conf", "tier", "reasoning"]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = _csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
+        writer.writeheader()
+        for p in picks:
+            writer.writerow({
+                "date":      actual_date,
+                "game":      p.get("game", ""),
+                "type":      p.get("type", ""),
+                "label":     p.get("label", ""),
+                "conf":      p.get("conf", ""),
+                "tier":      p.get("tier", ""),
+                "reasoning": p.get("reasoning", ""),
+            })
+
+    log.info(f"Dashboard saved: {out_path}")
+    log.info(f"Picks CSV: {csv_path} ({len(picks)} rows)")
+    log.info(f"Latest copy: {latest_path}")
+    log.info(f"{len(scored)} games | {len(picks)} picks | "
+             f"{len(parlays_2)} 2-leg parlays | {len(parlays_3)} 3-leg parlays")
+
+    if not no_open:
+        import webbrowser as _wb
+        _wb.open(f"file:///{os.path.abspath(latest_path)}")
+        log.info("Opening in browser...")
+
+    return html
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="MLB Picks HTML Dashboard")
+    parser.add_argument("--date", default=None, help="Date to generate (YYYY-MM-DD)")
+    parser.add_argument("--no-open", action="store_true", help="Don't open browser")
+    args, _ = parser.parse_known_args()
+    main(date=args.date, no_open=args.no_open)
 

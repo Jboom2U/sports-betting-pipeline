@@ -421,4 +421,4 @@ def run() -> dict:
             log.info(f"LINE MOVE [{sig}] {m['away_team']} @ {m['home_team']} | "
                      f"ML: {m.get('ml_away_open')} -> {m.get('ml_away_now')} away | "
                      f"Sharp: {m.get('sharp_side','?')} | "
-                     f"Total: {m.get('total_open')} -> {m.get('tot
+                     f"Total: {m.get('total_open')} -> {m.get('total_now')}")
