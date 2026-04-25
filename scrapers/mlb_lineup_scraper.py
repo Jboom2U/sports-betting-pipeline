@@ -152,7 +152,7 @@ def run(target_date: str = None) -> list[dict]:
         json.dump(lineups, f, indent=2)
 
     confirmed = sum(1 for g in lineups if g["lineup_confirmed"])
-    log.info(f"Lineups: {len(lineups)} games, {confirmed} confirmed → {out_path}")
+    log.info(f"Lineups: {len(lineups)} games, {confirmed} confirmed -> {out_path}")
     return lineups
 
 
@@ -164,6 +164,4 @@ if __name__ == "__main__":
         print(f"{g['away_team']} @ {g['home_team']} {conf}")
         if g["lineup_confirmed"]:
             for p in g["away_lineup"][:3]:
-                print(f"  {p['batting_order']}. {p['player_name']} ({p['position']}) "
-                      f"AVG:{p.get('avg',0):.3f} OPS:{p.get('ops',0):.3f} "
-                      f"HR:{p.get('hr',0)} HR/PA:{p.get('hr_per_pa',0):.4f}")
+                print(f"  {p['batting_order']}. {p['player_name']} ({p['pos']})")

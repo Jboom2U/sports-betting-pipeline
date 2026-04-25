@@ -765,6 +765,68 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     except (ValueError, TypeError):
                         pass
 
+    # ── Statcast quality-of-contact data (optional — non-fatal if missing) ──────
+    statcast: dict[str, dict] = {}
+    try:
+        from scrapers.mlb_statcast_scraper import load_statcast
+        statcast = load_statcast(min_pa=20)
+        if statcast:
+            log.info(f"Statcast loaded: {len(statcast)} batters")
+    except Exception:
+        pass  # Statcast not yet fetched — model runs without it
+
+    def _statcast_adjust(player_name: str, base_conf: float,
+                         prop_type: str) -> tuple[float, str]:
+        """
+        Apply a small Statcast-based confidence adjustment.
+        Returns (adjusted_conf, note_string).
+        Elite hard contact raises confidence by up to +0.03;
+        weak contact lowers it by up to -0.02.
+        """
+        sc = statcast.get(player_name.lower())
+        if not sc:
+            return base_conf, ""
+
+        adj  = 0.0
+        note = ""
+
+        barrel = sc.get("barrel_batted_rate")
+        hh_pct = sc.get("hard_hit_percent")
+        xba    = sc.get("xba")
+
+        if prop_type in ("HR", "TB"):
+            # Barrel rate matters most for power props
+            if barrel is not None:
+                if barrel >= 0.15:    # elite — top ~10%
+                    adj  += 0.025
+                    note  = f"elite barrel rate {barrel:.1%}"
+                elif barrel >= 0.10:  # above average
+                    adj  += 0.010
+                    note  = f"solid barrel rate {barrel:.1%}"
+                elif barrel <= 0.04:  # well below avg
+                    adj  -= 0.015
+                    note  = f"low barrel rate {barrel:.1%}"
+
+        if prop_type in ("HITS", "RBI", "R"):
+            # Hard hit % and xBA matter for contact props
+            if hh_pct is not None:
+                if hh_pct >= 50:      # top tier
+                    adj  += 0.015
+                    note  = f"{hh_pct:.0f}% hard contact"
+                elif hh_pct <= 30:    # below avg contact quality
+                    adj  -= 0.010
+                    note  = f"soft contact ({hh_pct:.0f}% hard hit)"
+            if xba is not None and not note:
+                if xba >= 0.290:
+                    adj  += 0.010
+                    note  = f"xBA .{int(xba*1000):03d} — makes quality contact"
+                elif xba <= 0.220:
+                    adj  -= 0.010
+                    note  = f"xBA .{int(xba*1000):03d} — struggles with quality contact"
+
+        adj_conf = min(0.97, max(0.01, base_conf + adj))
+        return adj_conf, note
+
     all_props = []
 
     for game in games:
@@ -786,15 +848,45 @@ def score_all_props(target_date: str = None) -> list[dict]:
         away_pitcher_opp = pitcher_opp_from_name(away_sp)
         home_pitcher_opp = pitcher_opp_from_name(home_sp)
 
+        def _finalize_prop(prop: dict | None, side: str) -> dict | None:
+            """Apply Statcast adjustment and return final prop or None."""
+            if prop is None:
+                return None
+            pname = prop.get("player_name", "")
+            ptype = prop.get("prop_type", "")
+            base  = prop.get("confidence", 0.0)
+            adj_conf, sc_note = _statcast_adjust(pname, base, ptype)
+            if sc_note:
+                prop["reasoning"] = prop.get("reasoning", "") + f" | Statcast: {sc_note}"
+                prop["confidence"] = round(adj_conf, 4)
+                # Re-tier after adjustment
+                if ptype == "HR":
+                    prop["tier"] = _hr_tier(adj_conf)
+                elif ptype == "TB":
+                    if adj_conf >= TB_LOCK_THRESH:        prop["tier"] = "LOCK"
+                    elif adj_conf >= TB_STRONG_THRESH:    prop["tier"] = "STRONG"
+                    elif adj_conf >= TB_LEAN_THRESH:      prop["tier"] = "LEAN"
+                    else: return None
+                elif ptype == "SB":
+                    if adj_conf >= SB_LOCK_THRESH:        prop["tier"] = "LOCK"
+                    elif adj_conf >= SB_STRONG_THRESH:    prop["tier"] = "STRONG"
+                    elif adj_conf >= SB_LEAN_THRESH:      prop["tier"] = "LEAN"
+                    else: return None
+                else:
+                    prop["tier"] = _tier(adj_conf)
+                if prop["tier"] == "SKIP":
+                    return None
+            return prop
+
         # ── Hitter props (away batters face home SP, home batters face away SP)
         for player in game.get("away_lineup", []):
-            hr_prop   = score_hr_prop(player, home_pitcher_opp, home_team,
-                                      is_home=False, weather=weather)
-            hits_prop = score_hits_prop(player, home_pitcher_opp, is_home=False)
-            tb_prop   = score_tb_prop(player, home_pitcher_opp, is_home=False)
-            rbi_prop  = score_rbi_prop(player, home_pitcher_opp, is_home=False)
-            r_prop    = score_runs_prop(player, home_pitcher_opp, is_home=False)
-            sb_prop   = score_sb_prop(player, home_pitcher_opp, is_home=False)
+            hr_prop   = _finalize_prop(score_hr_prop(player, home_pitcher_opp, home_team,
+                                      is_home=False, weather=weather), "away")
+            hits_prop = _finalize_prop(score_hits_prop(player, home_pitcher_opp, is_home=False), "away")
+            tb_prop   = _finalize_prop(score_tb_prop(player, home_pitcher_opp, is_home=False), "away")
+            rbi_prop  = _finalize_prop(score_rbi_prop(player, home_pitcher_opp, is_home=False), "away")
+            r_prop    = _finalize_prop(score_runs_prop(player, home_pitcher_opp, is_home=False), "away")
+            sb_prop   = _finalize_prop(score_sb_prop(player, home_pitcher_opp, is_home=False), "away")
             for prop in (hr_prop, hits_prop, tb_prop, rbi_prop, r_prop, sb_prop):
                 if prop:
                     all_props.append({
@@ -807,13 +899,13 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     })
 
         for player in game.get("home_lineup", []):
-            hr_prop   = score_hr_prop(player, away_pitcher_opp, home_team,
-                                      is_home=True, weather=weather)
-            hits_prop = score_hits_prop(player, away_pitcher_opp, is_home=True)
-            tb_prop   = score_tb_prop(player, away_pitcher_opp, is_home=True)
-            rbi_prop  = score_rbi_prop(player, away_pitcher_opp, is_home=True)
-            r_prop    = score_runs_prop(player, away_pitcher_opp, is_home=True)
-            sb_prop   = score_sb_prop(player, away_pitcher_opp, is_home=True)
+            hr_prop   = _finalize_prop(score_hr_prop(player, away_pitcher_opp, home_team,
+                                      is_home=True, weather=weather), "home")
+            hits_prop = _finalize_prop(score_hits_prop(player, away_pitcher_opp, is_home=True), "home")
+            tb_prop   = _finalize_prop(score_tb_prop(player, away_pitcher_opp, is_home=True), "home")
+            rbi_prop  = _finalize_prop(score_rbi_prop(player, away_pitcher_opp, is_home=True), "home")
+            r_prop    = _finalize_prop(score_runs_prop(player, away_pitcher_opp, is_home=True), "home")
+            sb_prop   = _finalize_prop(score_sb_prop(player, away_pitcher_opp, is_home=True), "home")
             for prop in (hr_prop, hits_prop, tb_prop, rbi_prop, r_prop, sb_prop):
                 if prop:
                     all_props.append({
@@ -868,6 +960,251 @@ def score_all_props(target_date: str = None) -> list[dict]:
     log.info(f"Props scored: {len(all_props)} total — {type_summary} | "
              f"{sum(1 for p in all_props if p['tier']=='LOCK')} LOCKs | "
              f"{sum(1 for p in all_props if p['tier']=='STRONG')} STRONGs")
+    return all_props
+
+
+def score_projected_props(projected_lineups: dict, target_date: str = None) -> list[dict]:
+    """
+    Score props for games where lineups haven't been officially confirmed yet,
+    using the most recent confirmed batting orders per team as a projection.
+
+    projected_lineups: dict keyed by full team name ->
+        { "players": [full player stat dicts], "date": "YYYY-MM-DD" }
+
+    Each returned prop is identical to score_all_props() output but includes:
+        "projected": True
+
+    Called during dashboard build when today's hitter stats file is absent or
+    contains unconfirmed games.  Confirmed props always take priority — callers
+    should only surface projected props for teams with no confirmed props today.
+    """
+    today = target_date or datetime.now().strftime("%Y-%m-%d")
+
+    if not projected_lineups:
+        return []
+
+    # ── Load supporting data (mirrors score_all_props setup) ─────────────────
+    _load_park_factors()
+
+    pitcher_stats: dict[str, dict] = {}
+    ps_path = os.path.join(DATA_DIR, "clean", "mlb_pitcher_stats_master.csv")
+    if os.path.exists(ps_path):
+        with open(ps_path, encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                pname = row.get("player_name", "").strip()
+                season = row.get("season", "")
+                if pname:
+                    if pname not in pitcher_stats or season > pitcher_stats[pname].get("season", ""):
+                        pitcher_stats[pname] = row
+
+    def pitcher_opp(sp_name: str) -> dict:
+        if not sp_name or sp_name == "TBD":
+            return {}
+        row = pitcher_stats.get(sp_name, {})
+        if not row:
+            return {}
+        def sf(v, d=0.0):
+            try: return float(v) if v else d
+            except: return d
+        ip   = sf(row.get("ip", row.get("innings_pitched", 0)))
+        hr   = sf(row.get("hr", row.get("home_runs", 0)))
+        h    = sf(row.get("h",  row.get("hits", 0)))
+        k    = sf(row.get("so", row.get("strikeouts", 0)))
+        bb   = sf(row.get("bb", row.get("walks", 0)))
+        era  = sf(row.get("era", 4.20))
+        whip = sf(row.get("whip", 1.30))
+        k9   = sf(row.get("k9", row.get("k_per_9", 0)))
+        hr9  = round((hr / ip) * 9, 3) if ip > 5 else 1.20
+        h9   = round((h  / ip) * 9, 3) if ip > 5 else 8.50
+        bb9  = round((bb / ip) * 9, 3) if ip > 5 else 3.20
+        if k9 == 0 and ip > 5:
+            k9 = round((k / ip) * 9, 3)
+        return {"era": era, "whip": whip, "hr_per_9": hr9,
+                "h_per_9": h9, "k_per_9": k9, "bb_per_9": bb9}
+
+    team_k_rate: dict[str, float] = {}
+    for fname in ("mlb_team_hitting_master.csv", "mlb_team_stats_master.csv"):
+        ts_path = os.path.join(DATA_DIR, "clean", fname)
+        if os.path.exists(ts_path):
+            with open(ts_path, encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    tname = row.get("team_name", "").strip()
+                    if not tname or tname in team_k_rate:
+                        continue
+                    try:
+                        kr = float(row.get("strikeout_rate", 0) or 0)
+                        if kr == 0:
+                            so  = float(row.get("strikeouts", row.get("so", 0)) or 0)
+                            pa  = float(row.get("plate_appearances", row.get("pa", 1)) or 1)
+                            ab  = float(row.get("at_bats", row.get("ab", 1)) or 1)
+                            denom = pa if pa > ab else ab
+                            kr  = so / denom if denom > 0 else 0.220
+                        team_k_rate[tname] = kr
+                    except (ValueError, ZeroDivisionError):
+                        team_k_rate[tname] = 0.220
+            break
+
+    weather_data: dict[int, dict] = {}
+    w_path = os.path.join(DATA_DIR, "clean", "mlb_weather_master.csv")
+    if os.path.exists(w_path):
+        with open(w_path, encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if row.get("game_date") == today:
+                    try:
+                        gid = int(row.get("game_id", 0))
+                        weather_data[gid] = row
+                    except (ValueError, TypeError):
+                        pass
+
+    # Schedule: game_id + pitchers + team names
+    sched_path = os.path.join(DATA_DIR, "clean", "mlb_schedule_master.csv")
+    today_games: list[dict] = []
+    if os.path.exists(sched_path):
+        with open(sched_path, encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if row.get("game_date") == today:
+                    try:
+                        gid = int(row.get("game_id", 0))
+                    except (ValueError, TypeError):
+                        gid = 0
+                    today_games.append({
+                        "game_id":   gid,
+                        "away_team": row.get("away_team", ""),
+                        "home_team": row.get("home_team", ""),
+                        "away_sp":   row.get("away_probable_pitcher", "TBD"),
+                        "home_sp":   row.get("home_probable_pitcher", "TBD"),
+                    })
+
+    statcast: dict[str, dict] = {}
+    try:
+        from scrapers.mlb_statcast_scraper import load_statcast
+        statcast = load_statcast(min_pa=20)
+    except Exception:
+        pass
+
+    def _sc_adjust(player_name: str, base_conf: float, prop_type: str):
+        sc = statcast.get(player_name.lower())
+        if not sc:
+            return base_conf, ""
+        adj, note = 0.0, ""
+        barrel = sc.get("barrel_batted_rate")
+        hh_pct = sc.get("hard_hit_percent")
+        xba    = sc.get("xba")
+        if prop_type in ("HR", "TB"):
+            if barrel is not None:
+                if barrel >= 0.15:   adj += 0.025; note = f"elite barrel rate {barrel:.1%}"
+                elif barrel >= 0.10: adj += 0.010; note = f"solid barrel rate {barrel:.1%}"
+                elif barrel <= 0.04: adj -= 0.015; note = f"low barrel rate {barrel:.1%}"
+        if prop_type in ("HITS", "RBI", "R"):
+            if hh_pct is not None:
+                if hh_pct >= 50:     adj += 0.015; note = f"{hh_pct:.0f}% hard contact"
+                elif hh_pct <= 30:   adj -= 0.010; note = f"soft contact ({hh_pct:.0f}% hard hit)"
+            if xba is not None and not note:
+                if xba >= 0.290:     adj += 0.010; note = f"xBA .{int(xba*1000):03d}"
+                elif xba <= 0.220:   adj -= 0.010; note = f"xBA .{int(xba*1000):03d}"
+        return min(0.97, max(0.01, base_conf + adj)), note
+
+    def _fin(prop, sc_note=""):
+        if prop is None:
+            return None
+        if sc_note:
+            prop["reasoning"] = prop.get("reasoning", "") + f" | Statcast: {sc_note}"
+        prop["projected"] = True
+        return prop
+
+    all_props: list[dict] = []
+
+    for g in today_games:
+        away_team = g["away_team"]
+        home_team = g["home_team"]
+        game_id   = g["game_id"]
+        game_str  = f"{away_team} @ {home_team}"
+
+        proj_away = projected_lineups.get(away_team)
+        proj_home = projected_lineups.get(home_team)
+        if not proj_away and not proj_home:
+            continue  # no projected lineups for either team — skip
+
+        weather  = weather_data.get(game_id)
+        away_opp = pitcher_opp(g["away_sp"])   # away batters face home SP
+        home_opp = pitcher_opp(g["home_sp"])   # home batters face away SP
+
+        for side, lineup_data, pitcher_opp_data, is_home in [
+            ("away", proj_away, home_opp, False),
+            ("home", proj_home, away_opp, True),
+        ]:
+            if not lineup_data:
+                continue
+            team = away_team if side == "away" else home_team
+
+            for player in lineup_data.get("players", []):
+                pname = player.get("player_name", player.get("name", ""))
+                # Score all hitter prop types
+                hr_adj,   hr_note   = _sc_adjust(pname, 0, "HR")
+                hits_adj, hits_note = _sc_adjust(pname, 0, "HITS")
+                tb_adj,   tb_note   = _sc_adjust(pname, 0, "TB")
+                rbi_adj,  rbi_note  = _sc_adjust(pname, 0, "RBI")
+                r_adj,    r_note    = _sc_adjust(pname, 0, "R")
+                sb_adj,   sb_note   = _sc_adjust(pname, 0, "SB")
+
+                for prop, note in [
+                    (score_hr_prop(player, pitcher_opp_data, team, is_home=is_home, weather=weather), hr_note),
+                    (score_hits_prop(player, pitcher_opp_data, is_home=is_home), hits_note),
+                    (score_tb_prop(player, pitcher_opp_data, is_home=is_home), tb_note),
+                    (score_rbi_prop(player, pitcher_opp_data, is_home=is_home), rbi_note),
+                    (score_runs_prop(player, pitcher_opp_data, is_home=is_home), r_note),
+                    (score_sb_prop(player, pitcher_opp_data, is_home=is_home), sb_note),
+                ]:
+                    if prop:
+                        if note:
+                            prop["reasoning"] = prop.get("reasoning", "") + f" | Statcast: {note}"
+                        prop["projected"] = True
+                        all_props.append({
+                            "game":      game_str,
+                            "game_id":   game_id,
+                            "away_team": away_team,
+                            "home_team": home_team,
+                            "side":      side,
+                            **prop,
+                        })
+
+        # ── Pitcher K props (projected) ──────────────────────────────────────
+        for sp_name, opp_team in ((g.get("away_sp",""), home_team), (g.get("home_sp",""), away_team)):
+            if not sp_name or sp_name == "TBD":
+                continue
+            sp_row = pitcher_stats.get(sp_name, {})
+            if not sp_row:
+                continue
+            opp_kr = team_k_rate.get(opp_team, 0.220)
+            k9  = float(sp_row.get("k9", sp_row.get("k_per_9", 0)) or 0)
+            exp = (k9 / 9.0) * 5.5
+            line = round(exp * 2) / 2
+            k_prop = score_k_prop(
+                pitcher_name=sp_name,
+                pitcher_stats=sp_row,
+                opp_team_k_rate=opp_kr,
+                innings_expected=5.5,
+                line=line,
+                weather=weather_data.get(game_id),
+            )
+            if k_prop:
+                k_prop["projected"] = True
+                all_props.append({
+                    "game":      game_str,
+                    "game_id":   game_id,
+                    "away_team": away_team,
+                    "home_team": home_team,
+                    "side":      "pitcher",
+                    **k_prop,
+                })
+
+    all_props.sort(key=lambda x: x["confidence"], reverse=True)
+    by_type = {}
+    for p in all_props:
+        by_type.setdefault(p["prop_type"], 0)
+        by_type[p["prop_type"]] += 1
+    type_summary = " | ".join(f"{k}:{v}" for k, v in sorted(by_type.items()))
+    log.info(f"Projected props scored: {len(all_props)} — {type_summary}")
     return all_props
 
 
