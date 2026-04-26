@@ -3048,17 +3048,21 @@ function renderSharpAction(){
   el.innerHTML = html;
 }
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
+// ── Boot ─────────────────────────────────────────────────────────────────────
+// Render critical above-fold content immediately, defer heavy tabs
 renderTicker();
 renderYesterday();
 renderPicks();
-renderSharpMoney();
-renderSharpAction();
-renderParlays();
-renderSchedule();
-renderGames();
-renderProps();
-initTeamsTab();
+// Defer heavy renders so browser doesn't block on initial paint
+setTimeout(() => {
+  renderSharpMoney();
+  renderSharpAction();
+  renderParlays();
+  renderSchedule();
+  renderGames();
+  renderProps();
+  initTeamsTab();
+}, 0);
 
 // Auto-reload every 15 minutes to pick up fresh odds, lineups, and scores
 // Only runs between 9am and midnight ET
@@ -3109,6 +3113,19 @@ def main(date=None, no_open=False):
     )]
 
     scored, actual_date = model.score_today(target)
+
+    # Deduplicate scored games by (away_team, home_team) — schedule CSV sometimes has duplicate rows
+    seen_games = set()
+    deduped = []
+    for g in scored:
+        key = (g.get("away_team", ""), g.get("home_team", ""))
+        if key not in seen_games:
+            seen_games.add(key)
+            deduped.append(g)
+    if len(deduped) < len(scored):
+        log.warning(f"Removed {len(scored) - len(deduped)} duplicate game(s) from scored list")
+    scored = deduped
+
     if not scored and not all_schedule:
         log.warning(f"No games found for {target}. Run python run_pipeline.py first.")
         return None   # let app.py serve the "check back soon" page — never sys.exit inside Flask
