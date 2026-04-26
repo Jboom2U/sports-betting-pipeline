@@ -11,6 +11,7 @@ Output: data/raw/mlb_hitter_stats_YYYY-MM-DD.json
 """
 
 import os, json, logging, time, requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 log = logging.getLogger(__name__)
@@ -216,11 +217,17 @@ def run(target_date: str = None) -> dict:
                 if pid:
                     hitter_ids.add(pid)
 
-    log.info(f"Fetching full hitter stats for {len(hitter_ids)} players")
+    log.info(f"Fetching full hitter stats for {len(hitter_ids)} players (parallel)")
     hitter_stats = {}
-    for pid in hitter_ids:
-        hitter_stats[pid] = fetch_hitter_full(pid)
-        time.sleep(0.1)
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        future_to_pid = {pool.submit(fetch_hitter_full, pid): pid for pid in hitter_ids}
+        for future in as_completed(future_to_pid):
+            pid = future_to_pid[future]
+            try:
+                hitter_stats[pid] = future.result()
+            except Exception as e:
+                log.warning(f"Hitter fetch failed for player {pid}: {e}")
+                hitter_stats[pid] = {"player_id": pid}
 
     # Merge stats back into lineup structure
     enriched = []
@@ -249,12 +256,15 @@ def run(target_date: str = None) -> dict:
                         if pid and pid.isdigit():
                             pitcher_ids.add(int(pid))
 
-    log.info(f"Fetching pitcher opponent stats for {len(pitcher_ids)} pitchers")
+    log.info(f"Fetching pitcher opponent stats for {len(pitcher_ids)} pitchers (parallel)")
     pitcher_opp = []
-    for pid in pitcher_ids:
-        stats = fetch_pitcher_opponent_stats(pid)
-        pitcher_opp.append(stats)
-        time.sleep(0.15)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(fetch_pitcher_opponent_stats, pid): pid for pid in pitcher_ids}
+        for future in as_completed(futures):
+            try:
+                pitcher_opp.append(future.result())
+            except Exception as e:
+                log.warning(f"Pitcher opp fetch failed: {e}")
 
     output = {"hitters": enriched, "pitcher_opp": pitcher_opp}
     out_path = os.path.join(DATA_DIR, f"mlb_hitter_stats_{today}.json")
@@ -264,9 +274,3 @@ def run(target_date: str = None) -> dict:
     log.info(f"Hitter stats saved -> {out_path}")
     return output
 
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    result = run()
-    print(f"Hitters: {len(result['hitters'])} games")
-    print(f"Pitcher opp stats: {len(result['pitcher_opp'])} pitchers")

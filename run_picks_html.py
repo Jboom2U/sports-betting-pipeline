@@ -3105,6 +3105,18 @@ def main(date=None, no_open=False):
         date or datetime.now().strftime("%Y-%m-%d")
     )]
 
+    # Deduplicate all_schedule — schedule CSV can accumulate duplicate rows across pipeline runs
+    seen_sched = set()
+    deduped_sched = []
+    for g in all_schedule:
+        key = (g.get("away_team", ""), g.get("home_team", ""))
+        if key not in seen_sched:
+            seen_sched.add(key)
+            deduped_sched.append(g)
+    if len(deduped_sched) < len(all_schedule):
+        log.warning(f"Removed {len(all_schedule) - len(deduped_sched)} duplicate game(s) from all_schedule")
+    all_schedule = deduped_sched
+
     scored, actual_date = model.score_today(target)
 
     # Deduplicate scored games by (away_team, home_team) — schedule CSV sometimes has duplicate rows
