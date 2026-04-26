@@ -404,8 +404,20 @@ def run() -> dict:
         except Exception:
             return ct[:10]
 
-    today_games = [g for g in games if _game_et_date(g) == today]
-    log.info(f"Found {len(today_games)} games today out of {len(games)} total")
+    now_utc = datetime.now(timezone.utc)
+
+    def _game_started(g):
+        ct = g.get("commence_time", "")
+        if not ct:
+            return False
+        try:
+            dt = datetime.strptime(ct, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            return dt <= now_utc   # game has already started
+        except Exception:
+            return False
+
+    today_games = [g for g in games if _game_et_date(g) == today and not _game_started(g)]
+    log.info(f"Found {len(today_games)} pre-game games today out of {len(games)} total")
 
     # Parse snapshots
     curr_snaps = [parse_game(g, snapshot_time) for g in today_games]
