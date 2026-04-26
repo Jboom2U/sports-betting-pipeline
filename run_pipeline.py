@@ -26,19 +26,44 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(log_file),
+        logging.FileHandler(log_file, encoding="utf-8"),
         logging.StreamHandler(sys.stdout)
     ]
 )
 log = logging.getLogger(__name__)
 
+# ── Single-instance lock — prevents Windows Task Scheduler double-runs ────────
+LOCK_FILE = os.path.join(LOG_DIR, "pipeline.lock")
 
-def main():
-    parser = argparse.ArgumentParser(description="MLB Betting Data Pipeline")
-    parser.add_argument("--date", type=str, default=None,
-                        help="Override date for backfill (YYYY-MM-DD). Defaults to yesterday.")
-    args = parser.parse_args()
+def _acquire_lock() -> bool:
+    """Return True if this process acquired the run lock, False if already running."""
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE) as f:
+                pid = int(f.read().strip())
+            # Check if that PID is still alive
+            import signal
+            try:
+                os.kill(pid, 0)   # signal 0 = check existence only
+                log.warning(f"Pipeline already running (PID {pid}) — aborting duplicate run")
+                return False
+            except (OSError, ProcessLookupError):
+                pass  # PID is dead — stale lock, safe to overwrite
+        except Exception:
+            pass
+    with open(LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+    return True
 
+def _release_lock():
+    try:
+        os.remove(LOCK_FILE)
+    except Exception:
+        pass
+
+
+def main(date=None):
+    # argparse is handled in __main__ block only — never called from here.
     log.info("=" * 60)
     log.info(f"PIPELINE START | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info("=" * 60)
@@ -46,11 +71,11 @@ def main():
     # ── Step 1: Scrape ────────────────────────────────────────────────────────
     try:
         from scrapers.mlb_scraper import run as scrape
-        if args.date:
+        if date:
             # Backfill: override YESTERDAY in scraper
             import scrapers.mlb_scraper as scraper_module
-            scraper_module.YESTERDAY = args.date
-            scraper_module.TODAY     = args.date
+            scraper_module.YESTERDAY = date
+            scraper_module.TODAY     = date
             scraper_module.TIMESTAMP = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         counts = scrape()
         log.info(f"Scrape complete: {counts}")
@@ -61,9 +86,9 @@ def main():
     # ── Step 2: Normalize + Append ────────────────────────────────────────────
     try:
         from normalize.mlb_normalize import run as normalize
-        if args.date:
+        if date:
             import normalize.mlb_normalize as norm_module
-            norm_module.TODAY = args.date
+            norm_module.TODAY = date
         normalize()
         log.info("Normalize + append complete")
     except Exception as e:
@@ -126,7 +151,15 @@ def main():
     except Exception as e:
         log.warning(f"Recent starts fetch failed (non-fatal): {e}")
 
-    # ── Step 5: Bullpen stats ──────────────────────────────────────────────────
+    # ── Step 5: Statcast quality-of-contact metrics ───────────────────────────
+    try:
+        from scrapers.mlb_statcast_scraper import run as run_statcast
+        sc_result = run_statcast()
+        log.info(f"Statcast: {sc_result}")
+    except Exception as e:
+        log.warning(f"Statcast fetch failed (non-fatal): {e}")
+
+    # ── Step 6: Bullpen stats ──────────────────────────────────────────────────
     try:
         from scrapers.mlb_bullpen_scraper import run as run_bullpen
         from normalize.mlb_bullpen_normalize import run as normalize_bullpen
@@ -153,10 +186,26 @@ def main():
     except Exception as e:
         log.warning(f"Lineup/hitter fetch failed (non-fatal): {e}")
 
+    # ── Step 7: Grade yesterday's picks ──────────────────────────────────────
+    try:
+        from run_analysis import main as run_analysis
+        run_analysis()
+        log.info("Yesterday's picks graded — analysis JSON written")
+    except Exception as e:
+        log.warning(f"Analysis grader failed (non-fatal): {e}")
+
     log.info("=" * 60)
     log.info("PIPELINE COMPLETE")
     log.info("=" * 60)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="MLB Betting Data Pipeline")
+    parser.add_argument("--date", type=str, default=None)
+    args = parser.parse_args()
+    if not _acquire_lock():
+        sys.exit(0)   # Another instance is running — exit cleanly
+    try:
+        main(date=args.date)
+    finally:
+        _release_lock()

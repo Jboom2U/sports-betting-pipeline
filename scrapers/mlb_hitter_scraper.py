@@ -261,7 +261,7 @@ def run(target_date: str = None) -> dict:
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2)
 
-    log.info(f"Hitter stats saved → {out_path}")
+    log.info(f"Hitter stats saved -> {out_path}")
     return output
 
 
