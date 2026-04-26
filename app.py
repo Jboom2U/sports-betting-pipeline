@@ -182,9 +182,13 @@ def _generate() -> str:
     return html or "<h1>No picks available yet — check back soon.</h1>"
 
 
+GENERATION_TIMEOUT = 4 * 60   # 4 minutes — if generation hangs past this, force-unblock
+
+
 def _regenerate_in_background():
     """Kick off a background thread to refresh the cache without blocking requests."""
     def _worker():
+        started = time.time()
         try:
             # Mid-day odds snapshot — every 2 hours between 8am-10pm ET
             # Builds the line movement data that powers the Sharp Money panel
@@ -198,7 +202,7 @@ def _regenerate_in_background():
                 _cache["html"] = html
                 _cache["generated_at"] = time.time()
                 _cache["generating"] = False
-            log.info("Background cache refresh complete.")
+            log.info(f"Background cache refresh complete in {int(time.time()-started)}s.")
         except Exception as e:
             log.error(f"Background generation failed: {e}", exc_info=True)
             with _cache_lock:
@@ -209,6 +213,17 @@ def _regenerate_in_background():
             with _cache_lock:
                 _cache["generating"] = False
 
+    def _watchdog(worker_thread):
+        """Kill the generating flag if the worker hangs past GENERATION_TIMEOUT."""
+        worker_thread.join(timeout=GENERATION_TIMEOUT)
+        if worker_thread.is_alive():
+            log.error(
+                f"Generation worker exceeded {GENERATION_TIMEOUT}s — force-clearing generating flag. "
+                "Stale cache will be served until next refresh."
+            )
+            with _cache_lock:
+                _cache["generating"] = False
+
     with _cache_lock:
         if _cache["generating"]:
             return
@@ -216,6 +231,8 @@ def _regenerate_in_background():
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
+    w = threading.Thread(target=_watchdog, args=(t,), daemon=True)
+    w.start()
 
 
 def get_cached_html() -> str:
@@ -308,6 +325,26 @@ def debug_odds():
         diag["rows_saved_today"] = 0
         diag["odds_file_exists"] = False
     return diag
+
+
+@app.route("/unstick")
+def unstick():
+    """
+    Emergency reset — force-clears the generating flag and resets the cache timer.
+    Use this if the dashboard is stuck on 'warming up' and won't recover on its own.
+    Visit /unstick then wait ~30 seconds and reload the home page.
+    """
+    with _cache_lock:
+        was_generating = _cache["generating"]
+        _cache["generating"] = False
+        _cache["generated_at"] = 0   # forces a fresh regeneration
+    log.warning(f"/unstick called — generating was {was_generating}, cache reset.")
+    _regenerate_in_background()
+    return {
+        "status": "ok",
+        "was_stuck": was_generating,
+        "message": "Cache reset. Dashboard is regenerating — reload the home page in ~60 seconds.",
+    }
 
 
 @app.route("/health")

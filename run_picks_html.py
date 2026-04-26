@@ -3089,16 +3089,9 @@ def main(date=None, no_open=False):
     # argparse is handled in __main__ block only — never called from here.
     target = date or datetime.now().strftime("%Y-%m-%d")
 
-    # ── Refresh odds before loading the model ────────────────────────────────
-    # Runs every time so total lines always reflect the current market, not
-    # whatever was in the CSV from when the pipeline last ran.
-    if not date:   # only refresh for today — backfill dates use historical data
-        try:
-            from scrapers.mlb_odds_scraper import run as run_odds
-            odds_result = run_odds()
-            log.info(f"Odds refreshed: {odds_result}")
-        except Exception as e:
-            log.warning(f"Odds refresh failed (non-fatal): {e}")
+    # NOTE: Odds snapshot is handled by app.py _run_odds_snapshot() before
+    # this function is called — do NOT call run_odds() here or it runs twice,
+    # doubles hang time, and burns API quota.
 
     from model.mlb_model import MLBModel
     from model.mlb_picks import generate_picks, build_parlays
