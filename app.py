@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, redirect
+from flask_compress import Compress
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -28,6 +29,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
+Compress(app)   # gzip all responses — shrinks 570KB HTML to ~80KB
 
 BASE_DIR  = os.path.dirname(__file__)
 CLEAN_DIR = os.path.join(BASE_DIR, "data", "clean")
