@@ -3110,8 +3110,8 @@ def main(date=None, no_open=False):
 
     scored, actual_date = model.score_today(target)
     if not scored and not all_schedule:
-        print(f"No games found for {target}. Run python run_pipeline.py first.")
-        sys.exit(0)
+        log.warning(f"No games found for {target}. Run python run_pipeline.py first.")
+        return None   # let app.py serve the "check back soon" page — never sys.exit inside Flask
 
     # Fetch live scores FIRST — filter finished games before generating picks
     today_scores = fetch_live_scores(actual_date)

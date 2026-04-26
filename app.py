@@ -201,6 +201,11 @@ def _regenerate_in_background():
             log.error(f"Background generation failed: {e}", exc_info=True)
             with _cache_lock:
                 _cache["generating"] = False
+        except BaseException as e:
+            # Catches SystemExit, KeyboardInterrupt, etc. — always unblock the cache
+            log.error(f"Background generation killed by BaseException: {e}")
+            with _cache_lock:
+                _cache["generating"] = False
 
     with _cache_lock:
         if _cache["generating"]:
