@@ -1,0 +1,16 @@
+date,game,type,label,conf,tier,reasoning
+2026-04-27,Miami Marlins @ Los Angeles Dodgers,ML,Los Angeles Dodgers ML,0.8869,LOCK,Chris Paddack ERA 5.48 [NEUTRAL] vs Yoshinobu Yamamoto ERA 2.65 [NEUTRAL] | Recent: Miami Marlins 4.7 RPG (44% W) | Los Angeles Dodgers 5.0 RPG (70% W) | Line: Miami Marlins +246 | Los Angeles Dodgers -302
+2026-04-27,New York Yankees @ Texas Rangers,ML,New York Yankees ML,0.7474,LOCK,Max Fried ERA 2.99 [NEUTRAL] vs Jack Leiter ERA 3.75 [COLD] | Recent: New York Yankees 5.0 RPG (70% W) | Texas Rangers 4.2 RPG (40% W) | Line: New York Yankees -180 | Texas Rangers +151
+2026-04-27,Tampa Bay Rays @ Cleveland Guardians,ML,Cleveland Guardians ML,0.7328,LOCK,Steven Matz ERA 5.00 [NEUTRAL] vs Parker Messick ERA 2.65 [HOT] | Recent: Tampa Bay Rays 4.9 RPG (67% W) | Cleveland Guardians 4.1 RPG (40% W) | Line: Tampa Bay Rays +119 | Cleveland Guardians -140
+2026-04-27,Los Angeles Angels @ Chicago White Sox,TOTAL,OVER 9.0,0.73,LOCK,Model projects 10.8 runs vs 9.0 line (1.8 run edge) | Weak pitching matchup (avg ERA 5.60)
+2026-04-27,Miami Marlins @ Los Angeles Dodgers,RL,Los Angeles Dodgers -1.5,0.6655,STRONG,ML conf 89% | Projected margin 3.0 runs | Los Angeles Dodgers 70% W last 10
+2026-04-27,Chicago Cubs @ San Diego Padres,TOTAL,OVER 8.0,0.6429,STRONG,Model projects 9.1 runs vs 8.0 line (1.1 run edge) | Pitcher-friendly park (factor 96.0)
+2026-04-27,Miami Marlins @ Los Angeles Dodgers,TOTAL,OVER 8.0,0.6429,STRONG,Model projects 9.1 runs vs 8.0 line (1.1 run edge)
+2026-04-27,Seattle Mariners @ Minnesota Twins,TOTAL,OVER 8.0,0.64,STRONG,Model projects 9.1 runs vs 8.0 line (1.1 run edge)
+2026-04-27,Boston Red Sox @ Toronto Blue Jays,TOTAL,OVER 7.0,0.6357,STRONG,Model projects 8.0 runs vs 7.0 line (1.0 run edge)
+2026-04-27,New York Yankees @ Texas Rangers,TOTAL,OVER 8.0,0.6086,LEAN,Model projects 8.8 runs vs 8.0 line (0.8 run edge) | Elite pitching matchup (avg ERA 3.37)
+2026-04-27,Los Angeles Angels @ Chicago White Sox,ML,Chicago White Sox ML,0.6006,LEAN,Jack Kochanowicz ERA 6.99 [NEUTRAL] (home SP TBD) | Recent: Los Angeles Angels 6.0 RPG (40% W) | Chicago White Sox 4.9 RPG (40% W) | Line: Los Angeles Angels -119 | Chicago White Sox +21
+2026-04-27,Tampa Bay Rays @ Cleveland Guardians,RL,Cleveland Guardians -1.5,0.5742,LEAN,ML conf 73% | Projected margin 1.5 runs | Cleveland Guardians 40% W last 10
+2026-04-27,New York Yankees @ Texas Rangers,RL,New York Yankees -1.5,0.5699,LEAN,ML conf 75% | Projected margin 2.1 runs | New York Yankees 70% W last 10
+2026-04-27,St. Louis Cardinals @ Pittsburgh Pirates,ML,Pittsburgh Pirates ML,0.5628,LEAN,Dustin May ERA 5.45 [NEUTRAL] (home SP TBD) | Recent: St. Louis Cardinals 4.8 RPG (56% W) | Pittsburgh Pirates 4.1 RPG (40% W) | Line: St. Louis Cardinals +113 | Pittsburgh Pirates -132
+2026-04-27,Seattle Mariners @ Minnesota Twins,ML,Minnesota Twins ML,0.5603,LEAN,Luis Castillo ERA 3.89 [COLD] (home SP TBD) | Recent: Seattle Mariners 3.9 RPG (50% W) | Minnesota Twins 5.3 RPG (20% W) | Line: Seattle Mariners -139 | Minnesota Twins +118
