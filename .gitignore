@@ -15,3 +15,12 @@ data/raw/
 # Keep clean master files in version control
 # data/clean/ is intentionally NOT ignored
 # picks/ is intentionally tracked so HTML dashboards are served via GitHub Pages
+
+# Private keys — never commit
+kalshi_private.pem
+*.pem
+
+# Data files — large and change daily, use object storage instead
+data/clean/
+picks/*.csv
+picks/*.html

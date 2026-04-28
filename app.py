@@ -28,6 +28,16 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# ── Persistence layer (non-fatal — works without DATABASE_URL / STORAGE_*) ────
+try:
+    from db.schema import create_all as _db_create_all
+    from db.pipeline_log import pipeline_ran_today as _db_pipeline_ran_today
+    from db.csv_sync import download_all as _csv_download, storage_available as _storage_ok
+    _DB_AVAILABLE = True
+except ImportError as _e:
+    log.warning(f"db/ module not importable: {_e} — falling back to file-based checks.")
+    _DB_AVAILABLE = False
+
 app = Flask(__name__)
 Compress(app)   # gzip all responses — shrinks 570KB HTML to ~80KB
 
@@ -58,7 +68,17 @@ p{color:#aaa;margin-top:8px;font-size:14px}</style></head><body>
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 def _needs_pipeline_run() -> bool:
-    """Check if today's foundational data is missing — if so, pipeline must run first."""
+    """
+    Check if today's pipeline needs to run.
+    Uses DB check when available, falls back to pipeline_run_date.txt.
+    """
+    if _DB_AVAILABLE:
+        try:
+            return not _db_pipeline_ran_today()
+        except Exception as e:
+            log.warning(f"DB pipeline check failed, using file fallback: {e}")
+
+    # File-based fallback
     today = datetime.now(ET).strftime("%Y-%m-%d")
     marker = os.path.join(BASE_DIR, "data", "pipeline_run_date.txt")
     if os.path.exists(marker):
@@ -69,7 +89,11 @@ def _needs_pipeline_run() -> bool:
 
 
 def _mark_pipeline_ran():
-    """Write today's date as the pipeline run marker."""
+    """
+    Mark the pipeline as run today.
+    DB write is handled inside run_pipeline.main() via pipeline_log.
+    This keeps the legacy file marker as a fallback.
+    """
     today = datetime.now(ET).strftime("%Y-%m-%d")
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
     with open(os.path.join(BASE_DIR, "data", "pipeline_run_date.txt"), "w") as f:
@@ -605,14 +629,46 @@ def _start_daily_scheduler():
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 def warm_cache():
-    """On startup: run pipeline if today's data is missing, then build dashboard."""
+    """
+    On startup:
+    1. Create DB schema (idempotent — safe every boot)
+    2. Download CSVs from object storage (so model has data after a fresh deploy)
+    3. Run pipeline if today's data is missing
+    4. Build dashboard cache
+    """
     def _warm():
         time.sleep(2)   # let Flask finish binding first
+
+        # ── Step 1: DB schema ─────────────────────────────────────────────────
+        if _DB_AVAILABLE:
+            try:
+                _db_create_all()
+            except Exception as e:
+                log.warning(f"DB schema init failed (non-fatal): {e}")
+
+        # ── Step 2: CSV sync download ─────────────────────────────────────────
+        if _DB_AVAILABLE:
+            try:
+                if _storage_ok():
+                    log.info("Object storage detected — downloading CSV snapshots...")
+                    n = _csv_download()
+                    if n > 0:
+                        log.info(f"Startup CSV sync: {n} file(s) downloaded from storage.")
+                    else:
+                        log.info("CSV sync: local files are current (nothing to download).")
+                else:
+                    log.debug("Object storage not configured — skipping CSV sync.")
+            except Exception as e:
+                log.warning(f"Startup CSV sync failed (non-fatal): {e}")
+
+        # ── Step 3: Pipeline ──────────────────────────────────────────────────
         if _needs_pipeline_run():
             log.info("No pipeline data for today — running full pipeline on startup...")
             _run_full_pipeline()
         else:
             log.info("Today's pipeline data exists — skipping full pipeline run.")
+
+        # ── Step 4: Dashboard cache ───────────────────────────────────────────
         log.info("Warming dashboard cache...")
         _regenerate_in_background()
 

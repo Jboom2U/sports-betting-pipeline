@@ -3,3 +3,7 @@ python-dotenv>=1.0.0
 flask>=3.0.0
 flask-compress>=1.14
 gunicorn>=21.2
+
+# Persistence layer
+psycopg2-binary>=2.9.9   # PostgreSQL driver (Railway DB)
+boto3>=1.34.0             # S3-compatible object storage (Cloudflare R2 or Railway)

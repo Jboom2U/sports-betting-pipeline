@@ -14,6 +14,23 @@ import logging
 import argparse
 from datetime import datetime
 
+# ── Persistence helpers (non-fatal — work without DATABASE_URL / STORAGE_*) ───
+try:
+    from db.pipeline_log import mark_pipeline_started, mark_pipeline_complete, mark_pipeline_failed
+    from db.picks_store import save_picks, save_scored_games
+    from db.csv_sync import upload_all as csv_upload_all, storage_available
+    _DB_AVAILABLE = True
+except ImportError as _e:
+    _DB_AVAILABLE = False
+    # Define no-ops so the rest of the file doesn't need if-guards everywhere
+    def mark_pipeline_started():     pass
+    def mark_pipeline_complete():    pass
+    def mark_pipeline_failed(n=""): pass
+    def save_picks(p, d):            return 0
+    def save_scored_games(g, d):     return 0
+    def csv_upload_all():            return 0
+    def storage_available():         return False
+
 # ── Add project root to path ──────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -67,6 +84,8 @@ def main(date=None):
     log.info("=" * 60)
     log.info(f"PIPELINE START | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info("=" * 60)
+
+    mark_pipeline_started()
 
     # ── Step 1: Scrape ────────────────────────────────────────────────────────
     try:
@@ -193,6 +212,45 @@ def main(date=None):
         log.info("Yesterday's picks graded — analysis JSON written")
     except Exception as e:
         log.warning(f"Analysis grader failed (non-fatal): {e}")
+
+    # ── Step 8: Score today's games and save picks to DB ─────────────────────
+    # We score here (after all scrapers have run) so picks saved to DB reflect
+    # the freshest data. run_picks_html.py will score again when building HTML —
+    # that's fine, scoring is fast and idempotent.
+    try:
+        today_str = datetime.now().strftime("%Y-%m-%d") if not date else date
+        from model.mlb_model import MLBModel
+        from model.mlb_picks import generate_picks
+
+        _model = MLBModel()
+        _model.load()
+        scored_games, actual_date = _model.score_today(target_date=today_str)
+
+        if scored_games:
+            picks = generate_picks(scored_games)
+            n_picks = save_picks(picks, actual_date)
+            n_games = save_scored_games(scored_games, actual_date)
+            log.info(
+                f"DB: {n_picks} picks + {n_games} scored games saved for {actual_date}."
+            )
+        else:
+            log.info("No scored games — nothing to save to DB.")
+    except Exception as e:
+        log.warning(f"DB picks/scored_games save failed (non-fatal): {e}")
+
+    # ── Step 9: Mark pipeline complete in DB ──────────────────────────────────
+    mark_pipeline_complete()
+
+    # ── Step 10: Upload CSVs to object storage ────────────────────────────────
+    try:
+        if storage_available():
+            log.info("Uploading CSV snapshots to object storage...")
+            n_uploaded = csv_upload_all()
+            log.info(f"CSV sync upload complete: {n_uploaded} file(s).")
+        else:
+            log.debug("Object storage not configured — skipping CSV upload.")
+    except Exception as e:
+        log.warning(f"CSV upload failed (non-fatal): {e}")
 
     log.info("=" * 60)
     log.info("PIPELINE COMPLETE")
