@@ -95,6 +95,7 @@ class MLBModel:
         self.bullpen         = {}   # team_name -> stats_dict (current season)
         self.lineups         = {}   # game_id -> {away_lineup, home_lineup, confirmed}
         self.umpires         = {}   # game_id -> umpire enriched dict
+        self.pitcher_statcast = {}  # pitcher_name_lower -> statcast stat dict
         self._loaded         = False
 
     # ── Data Loading ──────────────────────────────────────────────────────────
@@ -230,6 +231,14 @@ class MLBModel:
             log.info(f"Lineups loaded: {len(self.lineups)} games "
                      f"({sum(1 for g in self.lineups.values() if g.get('lineup_confirmed'))} confirmed)")
 
+        # Pitcher Statcast stuff metrics (xwOBA against, whiff%, velocity)
+        try:
+            from scrapers.mlb_statcast_pitcher_scraper import load_pitcher_statcast
+            self.pitcher_statcast = load_pitcher_statcast()
+            log.info(f"Pitcher Statcast loaded: {len(self.pitcher_statcast)} pitchers")
+        except Exception as e:
+            log.debug(f"Pitcher Statcast not available (non-fatal): {e}")
+
         # Umpire assignments for today
         ump_file = os.path.join(raw_dir, f"mlb_umpires_{today_str}.json")
         if os.path.exists(ump_file):
@@ -249,7 +258,8 @@ class MLBModel:
         log.info(f"Loaded: {len(self.pitchers)} pitchers | {len(self.team_hitting)} teams | "
                  f"{len(self.park_factors)} parks | {len(self.scores)} historical games | "
                  f"{len(self.weather)} weather | {len(self.bullpen)} bullpens | "
-                 f"{len(self.lineups)} lineups | {len(self.umpires)} umpires")
+                 f"{len(self.lineups)} lineups | {len(self.umpires)} umpires | "
+                 f"{len(self.pitcher_statcast)} pitcher Statcast")
 
     # ── Pitcher Lookup ────────────────────────────────────────────────────────
     def get_pitcher(self, name: str, is_home: bool) -> dict:
@@ -781,6 +791,32 @@ class MLBModel:
         BP_SHARE  = 0.40
         blended_era = SP_SHARE * era_sp + BP_SHARE * bp_era
         suppression = blended_era / LEAGUE["era"]
+
+        # ── Pitcher Statcast stuff adjustment ─────────────────────────────────
+        # xwOBA against is the most reliable contact-quality metric.
+        # A pitcher with xwOBA=0.280 (elite) is genuinely better than ERA implies;
+        # one at 0.350 is worse. We blend 25% Statcast, 75% ERA-based suppression.
+        LEAGUE_XWOBA   = 0.315   # MLB average xwOBA against, 2023-2025
+        STUFF_WEIGHT   = 0.25    # how much Statcast adjusts suppression
+        LEAGUE_WHIFF   = 25.0    # MLB average whiff%, 2023-2025
+        WHIFF_WEIGHT   = 0.10    # secondary signal weight
+
+        sc = self.pitcher_statcast.get((pitcher_name or "").lower(), {})
+        xwoba = sc.get("xwoba")
+        whiff = sc.get("whiff_percent")
+
+        stuff_mult = 1.0
+        if xwoba is not None and xwoba > 0:
+            xwoba_factor = xwoba / LEAGUE_XWOBA
+            # Blend: suppression = (1 - STUFF_WEIGHT) * ERA-based + STUFF_WEIGHT * xwoba-adjusted
+            stuff_mult = 1 - STUFF_WEIGHT + STUFF_WEIGHT * xwoba_factor
+        if whiff is not None and whiff > 0:
+            # High whiff = fewer hard contact opps → lower suppression multiplier
+            whiff_delta = (whiff - LEAGUE_WHIFF) / 100.0
+            stuff_mult -= whiff_delta * WHIFF_WEIGHT
+        # Cap total adjustment at ±15%
+        stuff_mult = max(0.85, min(1.15, stuff_mult))
+        suppression *= stuff_mult
 
         park_adj    = park_run_factor / 100.0
         loc_boost   = 1.02 if is_home else 1.0

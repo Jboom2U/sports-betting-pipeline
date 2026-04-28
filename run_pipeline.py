@@ -179,13 +179,21 @@ def main(date=None):
     except Exception as e:
         log.warning(f"Recent starts fetch failed (non-fatal): {e}")
 
-    # ── Step 5: Statcast quality-of-contact metrics ───────────────────────────
+    # ── Step 5: Statcast quality-of-contact metrics (batters) ─────────────────
     try:
         from scrapers.mlb_statcast_scraper import run as run_statcast
         sc_result = run_statcast()
-        log.info(f"Statcast: {sc_result}")
+        log.info(f"Statcast (batters): {sc_result}")
     except Exception as e:
-        log.warning(f"Statcast fetch failed (non-fatal): {e}")
+        log.warning(f"Statcast (batters) fetch failed (non-fatal): {e}")
+
+    # ── Step 5b: Statcast stuff metrics (pitchers) ─────────────────────────────
+    try:
+        from scrapers.mlb_statcast_pitcher_scraper import run as run_pitcher_statcast
+        psc_result = run_pitcher_statcast()
+        log.info(f"Statcast (pitchers): {psc_result}")
+    except Exception as e:
+        log.warning(f"Statcast (pitchers) fetch failed (non-fatal): {e}")
 
     # ── Step 6: Bullpen stats ──────────────────────────────────────────────────
     try:
