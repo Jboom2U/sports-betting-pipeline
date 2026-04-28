@@ -74,6 +74,14 @@ def main():
     except Exception as e:
         log.warning(f"Odds refresh failed (non-fatal): {e}")
 
+    # ── Step 1b: Refresh umpire assignments (can post/change up to game time) ──
+    try:
+        from scrapers.mlb_umpire_scraper import run as run_umps
+        ump_rows = run_umps(target_date=today)
+        log.info(f"Umpires refreshed: {len(ump_rows)} games")
+    except Exception as e:
+        log.warning(f"Umpire refresh failed (non-fatal): {e}")
+
     # ── Step 2: Refresh lineups + hitter stats ────────────────────────────────
     try:
         from scrapers.mlb_lineup_scraper import run as run_lineups

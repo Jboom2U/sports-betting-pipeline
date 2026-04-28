@@ -94,6 +94,7 @@ class MLBModel:
         self.schedule        = []   # upcoming schedule rows
         self.bullpen         = {}   # team_name -> stats_dict (current season)
         self.lineups         = {}   # game_id -> {away_lineup, home_lineup, confirmed}
+        self.umpires         = {}   # game_id -> umpire enriched dict
         self._loaded         = False
 
     # ── Data Loading ──────────────────────────────────────────────────────────
@@ -229,6 +230,17 @@ class MLBModel:
             log.info(f"Lineups loaded: {len(self.lineups)} games "
                      f"({sum(1 for g in self.lineups.values() if g.get('lineup_confirmed'))} confirmed)")
 
+        # Umpire assignments for today
+        ump_file = os.path.join(raw_dir, f"mlb_umpires_{today_str}.json")
+        if os.path.exists(ump_file):
+            with open(ump_file, encoding="utf-8") as f:
+                ump_data = json.load(f)
+            for g in ump_data:
+                gid = str(g.get("game_id", ""))
+                if gid:
+                    self.umpires[gid] = g
+            log.info(f"Umpires loaded: {len(self.umpires)} games")
+
         # Historical scores and upcoming schedule
         self.scores   = read_csv(os.path.join(CLEAN_DIR, "mlb_scores_master.csv"))
         self.schedule = read_csv(os.path.join(CLEAN_DIR, "mlb_schedule_master.csv"))
@@ -237,7 +249,7 @@ class MLBModel:
         log.info(f"Loaded: {len(self.pitchers)} pitchers | {len(self.team_hitting)} teams | "
                  f"{len(self.park_factors)} parks | {len(self.scores)} historical games | "
                  f"{len(self.weather)} weather | {len(self.bullpen)} bullpens | "
-                 f"{len(self.lineups)} lineup files")
+                 f"{len(self.lineups)} lineups | {len(self.umpires)} umpires")
 
     # ── Pitcher Lookup ────────────────────────────────────────────────────────
     def get_pitcher(self, name: str, is_home: bool) -> dict:
@@ -362,6 +374,9 @@ class MLBModel:
     # ── Weather Lookup ────────────────────────────────────────────────────────
     def get_weather(self, game_id: str) -> dict:
         return self.weather.get(str(game_id), {})
+
+    def get_ump(self, game_id: str) -> dict:
+        return self.umpires.get(str(game_id), {})
 
     # ── Odds and Line Movement Lookup ─────────────────────────────────────────
     def get_odds(self, away: str, home: str) -> dict:
@@ -840,6 +855,12 @@ class MLBModel:
                                  weather=weather, game_id=game_id_str, opp_team=away)
         exp_total = round(exp_away + exp_home, 2)
 
+        # Umpire adjustment — apply blended run tendency vs. league average
+        ump_data   = self.get_ump(game_id_str)
+        ump_factor = float(ump_data.get("ump_factor", 0.0))
+        ump_name   = ump_data.get("hp_ump", "Unknown")
+        exp_total  = round(exp_total + ump_factor, 2)
+
         # Pythagorean win probability
         e = PYTHAGOREAN_EXP
         raw_home_wp = (exp_home ** e) / (exp_home ** e + exp_away ** e)
@@ -999,6 +1020,11 @@ class MLBModel:
             "home_era_vs_lhb": sf(home_vs_lhb.get("era")),
             "home_era_vs_rhb": sf(home_vs_rhb.get("era")),
 
+            # Umpire
+            "hp_ump":         ump_name,
+            "ump_factor":     ump_factor,
+            "ump_rpg":        ump_data.get("ump_rpg", 9.0),
+
             # Weather
             "weather_flag":   weather.get("weather_flag", "NORMAL"),
             "wind_component": sf(weather.get("wind_component"), 0),
@@ -1132,7 +1158,7 @@ class MLBModel:
                 games = [g for g in self.schedule
                          if g.get("game_date") == target_date
                          and not self._game_is_over(g)]
-                log.info(f"All today's games done — using next slate: {target_date}")
+                log.info(f"All today's games done -- using next slate: {target_date}")
 
         log.info(f"Scoring {len(games)} upcoming games for {target_date}")
 
@@ -1144,4 +1170,3 @@ class MLBModel:
                 log.warning(f"Could not score game {game.get('game_id')}: {exc}")
 
         return scored, target_date
-        games     

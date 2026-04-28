@@ -131,7 +131,16 @@ def main(date=None):
     except Exception as e:
         log.warning(f"Weather fetch failed (non-fatal): {e}")
 
-    # ── Step 4: Today's probable pitcher recent starts ─────────────────────────
+    # ── Step 4b: Umpire assignments for today's games ──────────────────────────
+    try:
+        from scrapers.mlb_umpire_scraper import run as run_umps
+        today = datetime.now().strftime("%Y-%m-%d")
+        ump_rows = run_umps(target_date=today)
+        log.info(f"Umpires fetched: {len(ump_rows)} games")
+    except Exception as e:
+        log.warning(f"Umpire fetch failed (non-fatal): {e}")
+
+    # ── Step 4c: Today's probable pitcher recent starts ────────────────────────
     try:
         from scrapers.mlb_pitcher_scraper import fetch_all_recent_starts
         from normalize.mlb_pitcher_normalize import normalize_recent_starts
