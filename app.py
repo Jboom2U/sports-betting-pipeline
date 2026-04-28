@@ -178,19 +178,48 @@ def _run_odds_snapshot():
 
 def _needs_lineup_refresh() -> bool:
     """
-    Returns True if it's past 10am ET and we haven't fetched hitter stats today.
-    This catches the window after lineups post (~10-11am) but before the next full pipeline run.
+    Returns True if we should re-fetch lineups + hitter stats.
+    Checks:
+      1. Before 10am ET — skip (lineups not posted yet)
+      2. Hitter stats file missing — fetch immediately
+      3. Hitter stats file >4 hours old — re-fetch (catches Railway restarts)
+      4. Lineup JSON exists but has unconfirmed games — re-fetch until all confirmed
+         This is the key fix: file age alone misses the window between
+         "hitters fetched with no confirmed lineups" and "lineups actually post."
     """
     now   = datetime.now(ET)
     today = now.strftime("%Y-%m-%d")
     if now.hour < 10:
-        return False   # Too early — lineups aren't posted yet
-    stats_path = os.path.join(BASE_DIR, "data", "raw", f"mlb_hitter_stats_{today}.json")
+        return False   # Too early — lineups not posted yet
+
+    stats_path  = os.path.join(BASE_DIR, "data", "raw", f"mlb_hitter_stats_{today}.json")
+    lineup_path = os.path.join(BASE_DIR, "data", "raw", f"mlb_lineups_{today}.json")
+
     if not os.path.exists(stats_path):
-        return True    # File doesn't exist — lineups may have confirmed, try fetch
-    mtime = os.path.getmtime(stats_path)
+        return True    # Never fetched today
+
+    mtime     = os.path.getmtime(stats_path)
     age_hours = (time.time() - mtime) / 3600
-    return age_hours > 4   # Re-fetch if older than 4 hours (catches Railway restarts)
+    if age_hours > 4:
+        return True    # Stale — Railway restart or long gap
+
+    # Check if any games still have unconfirmed lineups — keep retrying until confirmed
+    if os.path.exists(lineup_path):
+        try:
+            import json as _json
+            with open(lineup_path, encoding="utf-8") as f:
+                lineups = _json.load(f)
+            total     = len(lineups)
+            confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
+            if total > 0 and confirmed < total:
+                # Only retry every 30 minutes once we have the file, not every cache cycle
+                if age_hours > 0.5:
+                    log.info(f"Lineup refresh needed: {confirmed}/{total} confirmed, file age {age_hours:.1f}h")
+                    return True
+        except Exception:
+            pass
+
+    return False
 
 
 def _run_lineup_refresh():

@@ -1511,9 +1511,16 @@ let filterType = "all", filterTier = "all", filterTeam = "";
 let showParlay = 2;
 
 // ── Init ─────────────────────────────────────────────────────────────────────
-document.getElementById("dateStr").textContent =
-  new Date(DATA_DATE + "T12:00:00").toLocaleDateString("en-US",
-    {weekday:"long",year:"numeric",month:"long",day:"numeric"});
+const _picksDate = new Date(DATA_DATE + "T12:00:00");
+const _today = new Date();
+_today.setHours(12,0,0,0);
+const _diffDays = Math.round((_picksDate - _today) / 86400000);
+const _dateLabel = _picksDate.toLocaleDateString("en-US",
+  {weekday:"long",year:"numeric",month:"long",day:"numeric"});
+const _tomorrowBadge = _diffDays === 1
+  ? ' <span style="background:#f59e0b;color:#000;font-size:.7rem;font-weight:700;padding:2px 10px;border-radius:10px;vertical-align:middle;margin-left:8px;letter-spacing:.05em">TOMORROW</span>'
+  : '';
+document.getElementById("dateStr").innerHTML = _dateLabel + _tomorrowBadge;
 
 document.getElementById("gameCount").textContent = DATA_GAMES.length;
 document.getElementById("pickCount").textContent = DATA_PICKS.length;
