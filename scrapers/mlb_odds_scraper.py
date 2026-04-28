@@ -118,7 +118,21 @@ def fetch_odds(api_key: str) -> list:
 
     remaining = resp.headers.get("x-requests-remaining", "?")
     used      = resp.headers.get("x-requests-used", "?")
-    log.info(f"Odds API | Used: {used} | Remaining: {remaining} of 500 free")
+
+    try:
+        rem_int = int(remaining)
+        if rem_int <= 0:
+            log.error(f"Odds API quota EXHAUSTED — 0 requests remaining. Resets on the 1st.")
+        elif rem_int <= 25:
+            log.warning(f"Odds API quota CRITICAL — only {rem_int} requests left of 500!")
+        elif rem_int <= 75:
+            log.warning(f"Odds API quota LOW — {rem_int} requests remaining of 500.")
+        elif rem_int <= 150:
+            log.warning(f"Odds API quota getting low — {rem_int} requests remaining of 500.")
+        else:
+            log.info(f"Odds API | Used: {used} | Remaining: {rem_int}/500")
+    except (ValueError, TypeError):
+        log.info(f"Odds API | Used: {used} | Remaining: {remaining}/500")
 
     return resp.json()
 
