@@ -661,6 +661,59 @@ def save_analysis(date: str, graded_picks: list, metrics: dict,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DB PERSISTENCE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def push_grades_to_db(graded_picks: list, date: str) -> int:
+    """
+    For each graded pick, find its matching row in the picks table and update
+    actual_result + scores.  Matches on (pick_date, pick_type, label) which is
+    unique per pick.  Skips picks with NO_RESULT (game not found in results).
+    Returns the number of picks successfully updated in the DB.
+    """
+    try:
+        from db.picks_store import get_picks, grade_pick as db_grade_pick
+    except ImportError:
+        log.debug("db package not available — skipping DB grade push")
+        return 0
+
+    db_picks = get_picks(date)
+    if not db_picks:
+        log.debug(f"No DB picks found for {date} — cannot push grades")
+        return 0
+
+    # Build lookup: (pick_type_upper, label_stripped) -> db_pick
+    db_index = {}
+    for dp in db_picks:
+        key = (dp["pick_type"].upper(), dp["label"].strip())
+        db_index[key] = dp
+
+    updated = 0
+    for gp in graded_picks:
+        result_str = gp.get("result", "")
+        if result_str not in ("WIN", "LOSS", "PUSH"):
+            continue  # skip NO_RESULT / unmatched
+
+        key = (gp["type"].upper(), gp["label"].strip())
+        dp  = db_index.get(key)
+        if dp is None:
+            log.debug(f"No DB match for pick {key} on {date}")
+            continue
+
+        result_game = gp.get("result_game") or {}
+        away_score  = result_game.get("away_score")
+        home_score  = result_game.get("home_score")
+
+        ok = db_grade_pick(dp["id"], result_str, away_score, home_score)
+        if ok:
+            updated += 1
+            log.debug(f"Graded DB pick {dp['id']} ({key[1]}) -> {result_str}")
+
+    log.info(f"DB grades pushed: {updated}/{len(graded_picks)} picks updated for {date}")
+    return updated
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -700,6 +753,9 @@ def run(date: str):
     print_report(date, graded, metrics, findings, recs)
     save_analysis(date, graded, metrics, findings, recs)
 
+    # Persist grades to PostgreSQL (non-fatal if DB unavailable)
+    push_grades_to_db(graded, date)
+
     return {
         "date":     date,
         "graded":   graded,
@@ -715,7 +771,7 @@ def main():
                         help="Date to grade (YYYY-MM-DD). Defaults to yesterday.")
     parser.add_argument("--days", type=int, default=None,
                         help="Grade the last N days and print a rolling summary.")
-    args, _ = parser.parse_known_args()  # parse_known_args ignores gunicorn/sys.argv noise when called inside Flask
+    args, _ = parser.parse_known_args()
 
     if args.days:
         # Rolling window
@@ -730,4 +786,20 @@ def main():
             print(f"\n{'='*65}")
             print(f"  {args.days}-DAY ROLLING SUMMARY")
             print(f"{'='*65}")
-            total_w = sum
+            total_w = sum(s["metrics"]["overall"]["wins"]   for s in summaries)
+            total_l = sum(s["metrics"]["overall"]["losses"] for s in summaries)
+            total_p = sum(s["metrics"]["overall"]["profit"] for s in summaries)
+            denom   = total_w + total_l
+            wr      = total_w / denom if denom > 0 else 0
+            print(f"  Overall: {total_w}-{total_l} ({wr*100:.1f}% WR) | "
+                  f"Profit: {total_p:+.2f}u across {len(summaries)} days graded")
+        else:
+            print("  No graded data found in this window.")
+
+    else:
+        target = args.date or (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        run(target)
+
+
+if __name__ == "__main__":
+    main()

@@ -17,7 +17,7 @@ import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import Flask, Response, redirect
+from flask import Flask, Response, redirect, request
 from flask_compress import Compress
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -110,6 +110,20 @@ def _run_full_pipeline():
         log.info("Pipeline complete.")
     except Exception as e:
         log.error(f"Pipeline failed: {e}", exc_info=True)
+
+    # Grade yesterday's picks and push results to DB (non-fatal)
+    yesterday = (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        from run_analysis import run as grade_picks
+        result = grade_picks(yesterday)
+        if result:
+            graded_count = len([p for p in result.get("graded", [])
+                                 if p.get("result") in ("WIN", "LOSS", "PUSH")])
+            log.info(f"Nightly grading complete: {graded_count} picks graded for {yesterday}")
+        else:
+            log.info(f"Nightly grading: no picks or results found for {yesterday}")
+    except Exception as e:
+        log.warning(f"Nightly grading failed (non-fatal): {e}")
 
 
 def _needs_odds_snapshot() -> bool:
@@ -599,7 +613,167 @@ function forceOdds(btn) {{
     return Response(html, content_type="text/html; charset=utf-8")
 
 
-# ── Scheduled 6am ET daily pipeline ──────────────────────────────────────────
+# ── Performance / backtesting routes ─────────────────────────────────────────
+
+@app.route("/performance")
+def performance():
+    """
+    JSON endpoint: rolling model accuracy by tier and pick type.
+    Query param: days=30 (default)
+    """
+    try:
+        days = int(request.args.get("days", 30))
+    except (TypeError, ValueError):
+        days = 30
+
+    try:
+        from db.picks_store import get_accuracy_summary
+        rows = get_accuracy_summary(days=days)
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+    if not rows:
+        return {"days": days, "rows": [], "message": "No graded picks in this window yet."}
+
+    total_wins   = sum(r.get("wins",   0) or 0 for r in rows)
+    total_losses = sum(r.get("losses", 0) or 0 for r in rows)
+    total_pushes = sum(r.get("pushes", 0) or 0 for r in rows)
+    denom        = total_wins + total_losses
+    overall_wr   = round(total_wins / denom, 3) if denom > 0 else None
+
+    return {
+        "days":    days,
+        "overall": {
+            "wins":     total_wins,
+            "losses":   total_losses,
+            "pushes":   total_pushes,
+            "win_rate": overall_wr,
+        },
+        "rows": rows,
+    }
+
+
+@app.route("/performance-html")
+def performance_html():
+    """Human-readable backtesting dashboard."""
+    try:
+        days = int(request.args.get("days", 30))
+    except (TypeError, ValueError):
+        days = 30
+
+    try:
+        from db.picks_store import get_accuracy_summary
+        rows = get_accuracy_summary(days=days) or []
+    except Exception as e:
+        rows = []
+
+    table_rows = ""
+    for r in rows:
+        wins    = r.get("wins",   0) or 0
+        losses  = r.get("losses", 0) or 0
+        pushes  = r.get("pushes", 0) or 0
+        pending = r.get("pending", 0) or 0
+        denom   = wins + losses
+        wr      = f"{wins/denom*100:.1f}%" if denom > 0 else "&mdash;"
+        avg_c   = f"{float(r.get('avg_conf') or 0)*100:.1f}%"
+        tier    = r.get('tier', '')
+        table_rows += (
+            f"<tr><td>{r.get('pick_type','')}</td>"
+            f"<td class='{tier}'>{tier}</td>"
+            f"<td>{wins}</td><td>{losses}</td><td>{pushes}</td>"
+            f"<td><strong>{wr}</strong></td>"
+            f"<td>{avg_c}</td>"
+            f"<td style='color:#8b949e'>{pending}</td></tr>\n"
+        )
+
+    total_w = sum(r.get("wins",   0) or 0 for r in rows)
+    total_l = sum(r.get("losses", 0) or 0 for r in rows)
+    total_p = sum(r.get("pushes", 0) or 0 for r in rows)
+    denom   = total_w + total_l
+    overall_wr_str = f"{total_w/denom*100:.1f}%" if denom > 0 else "&mdash;"
+
+    days_links = "".join(
+        f'<a href="/performance-html?days={d}" {"class=active" if d == days else ""}>{d}d</a>'
+        for d in [7, 14, 30, 60, 90]
+    )
+
+    empty_msg = (
+        "<p style='color:#8b949e'>No graded picks found yet. "
+        "Run <code>python run_analysis.py</code> to grade picks and push to DB.</p>"
+        if not rows else ""
+    )
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Statalizers — Model Performance</title>
+  <style>
+    body  {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+             background: #0d1117; color: #e6edf3; margin: 0; padding: 24px; }}
+    h1    {{ font-size: 1.4rem; margin-bottom: 4px; }}
+    .sub  {{ color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }}
+    .headline {{ display: flex; gap: 24px; margin-bottom: 28px; flex-wrap: wrap; }}
+    .stat {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+             padding: 14px 20px; min-width: 90px; }}
+    .stat .val {{ font-size: 1.6rem; font-weight: 700; }}
+    .stat .lbl {{ font-size: 0.75rem; color: #8b949e; margin-top: 2px; }}
+    table  {{ width: 100%; border-collapse: collapse; font-size: 0.875rem; }}
+    th     {{ background: #161b22; padding: 8px 12px; text-align: left;
+              border-bottom: 2px solid #30363d; color: #8b949e; font-weight: 600; }}
+    td     {{ padding: 8px 12px; border-bottom: 1px solid #21262d; }}
+    tr:hover td {{ background: #161b22; }}
+    .LOCK   {{ color: #ff7b72; font-weight: 700; }}
+    .STRONG {{ color: #ffa657; font-weight: 600; }}
+    .LEAN   {{ color: #79c0ff; }}
+    a {{ color: #58a6ff; text-decoration: none; }}
+    .days-links {{ margin-bottom: 20px; display: flex; gap: 8px; flex-wrap: wrap; }}
+    .days-links a {{ background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+                     padding: 4px 12px; font-size: 0.8rem; color: #e6edf3; }}
+    .days-links a.active {{ background: #1f6feb; border-color: #388bfd; color: #fff; }}
+    code {{ background: #161b22; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; }}
+  </style>
+</head>
+<body>
+  <h1>&#128202; Model Performance</h1>
+  <p class="sub">Last {days} days &mdash; graded picks only (PENDING excluded)</p>
+
+  <div class="days-links">{days_links}</div>
+
+  <div class="headline">
+    <div class="stat"><div class="val">{total_w}-{total_l}</div><div class="lbl">Record (W-L)</div></div>
+    <div class="stat"><div class="val">{overall_wr_str}</div><div class="lbl">Win Rate</div></div>
+    <div class="stat"><div class="val">{total_p}</div><div class="lbl">Pushes</div></div>
+    <div class="stat"><div class="val">{len(rows)}</div><div class="lbl">Segments</div></div>
+  </div>
+
+  {empty_msg}
+
+  <table>
+    <thead>
+      <tr>
+        <th>Type</th><th>Tier</th><th>W</th><th>L</th><th>Push</th>
+        <th>Win %</th><th>Avg Conf</th><th>Pending</th>
+      </tr>
+    </thead>
+    <tbody>
+      {table_rows}
+    </tbody>
+  </table>
+
+  <p style="margin-top: 24px; color: #8b949e; font-size: 0.8rem">
+    Source: PostgreSQL picks table &mdash;
+    <a href="/performance?days={days}">JSON</a> &mdash;
+    <a href="/">&#8592; Picks</a>
+  </p>
+</body>
+</html>"""
+
+    return Response(html, content_type="text/html; charset=utf-8")
+
+
+# ── Scheduled 6am ET daily pipeline ────────────────────────────────────────────
 def _seconds_until_6am_et() -> float:
     """Return seconds until next 6:00am Eastern Time."""
     now    = datetime.now(ET)
@@ -627,11 +801,11 @@ def _start_daily_scheduler():
     t.start()
 
 
-# ── Startup ───────────────────────────────────────────────────────────────────
+# ── Startup ────────────────────────────────────────────────────────────────────────────
 def warm_cache():
     """
     On startup:
-    1. Create DB schema (idempotent — safe every boot)
+    1. Create DB schema (idempotent -- safe every boot)
     2. Download CSVs from object storage (so model has data after a fresh deploy)
     3. Run pipeline if today's data is missing
     4. Build dashboard cache
@@ -639,36 +813,36 @@ def warm_cache():
     def _warm():
         time.sleep(2)   # let Flask finish binding first
 
-        # ── Step 1: DB schema ─────────────────────────────────────────────────
+        # ── Step 1: DB schema ────────────────────────────────────────────────────────────
         if _DB_AVAILABLE:
             try:
                 _db_create_all()
             except Exception as e:
                 log.warning(f"DB schema init failed (non-fatal): {e}")
 
-        # ── Step 2: CSV sync download ─────────────────────────────────────────
+        # ── Step 2: CSV sync download ─────────────────────────────────────────────────
         if _DB_AVAILABLE:
             try:
                 if _storage_ok():
-                    log.info("Object storage detected — downloading CSV snapshots...")
+                    log.info("Object storage detected -- downloading CSV snapshots...")
                     n = _csv_download()
                     if n > 0:
                         log.info(f"Startup CSV sync: {n} file(s) downloaded from storage.")
                     else:
                         log.info("CSV sync: local files are current (nothing to download).")
                 else:
-                    log.debug("Object storage not configured — skipping CSV sync.")
+                    log.debug("Object storage not configured -- skipping CSV sync.")
             except Exception as e:
                 log.warning(f"Startup CSV sync failed (non-fatal): {e}")
 
-        # ── Step 3: Pipeline ──────────────────────────────────────────────────
+        # ── Step 3: Pipeline ──────────────────────────────────────────────────────────────────
         if _needs_pipeline_run():
-            log.info("No pipeline data for today — running full pipeline on startup...")
+            log.info("No pipeline data for today -- running full pipeline on startup...")
             _run_full_pipeline()
         else:
-            log.info("Today's pipeline data exists — skipping full pipeline run.")
+            log.info("Today's pipeline data exists -- skipping full pipeline run.")
 
-        # ── Step 4: Dashboard cache ───────────────────────────────────────────
+        # ── Step 4: Dashboard cache ────────────────────────────────────────────────────────
         log.info("Warming dashboard cache...")
         _regenerate_in_background()
 
