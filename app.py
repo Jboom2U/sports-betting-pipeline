@@ -830,7 +830,105 @@ def _start_daily_scheduler():
     t.start()
 
 
-# ── Startup ────────────────────────────────────────────────────────────────────────────
+# ── Scheduled 11:30am ET afternoon refresh ──────────────────────────────────────────────
+def _seconds_until_1130am_et() -> float:
+    """Return seconds until next 11:30am Eastern Time."""
+    now    = datetime.now(ET)
+    target = now.replace(hour=11, minute=30, second=0, microsecond=0)
+    if now >= target:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+def _run_afternoon_refresh():
+    """Re-run lineup + hitter + odds + umpire + bullpen fatigue scrapers and rebuild dashboard."""
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    log.info("=== 11:30am ET afternoon refresh starting ===")
+
+    # Grade yesterday's picks first so Yesterday panel is ready
+    try:
+        yesterday = (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
+        from run_analysis import run as grade_picks
+        grade_picks(yesterday)
+        log.info(f"Afternoon grading complete: {yesterday}")
+    except Exception as e:
+        log.warning(f"Afternoon grading failed (non-fatal): {e}")
+
+    # Refresh odds
+    try:
+        from scrapers.mlb_odds_scraper import run as run_odds
+        run_odds()
+        log.info("Afternoon odds refresh complete")
+    except Exception as e:
+        log.warning(f"Afternoon odds refresh failed (non-fatal): {e}")
+
+    # Refresh umpires
+    try:
+        from scrapers.mlb_umpire_scraper import run as run_umps
+        run_umps(target_date=today)
+        log.info("Afternoon umpire refresh complete")
+    except Exception as e:
+        log.warning(f"Afternoon umpire refresh failed (non-fatal): {e}")
+
+    # Refresh bullpen fatigue
+    try:
+        from scrapers.mlb_bullpen_fatigue_scraper import run as run_fatigue
+        run_fatigue(target_date=today)
+        log.info("Afternoon bullpen fatigue refresh complete")
+    except Exception as e:
+        log.warning(f"Afternoon bullpen fatigue refresh failed (non-fatal): {e}")
+
+    # Refresh Kalshi + Polymarket snapshots
+    try:
+        from scrapers.mlb_kalshi_scraper import run as run_kalshi
+        run_kalshi(target_date=today)
+        log.info("Afternoon Kalshi refresh complete")
+    except Exception as e:
+        log.warning(f"Afternoon Kalshi refresh failed (non-fatal): {e}")
+
+    try:
+        from scrapers.mlb_polymarket_scraper import run as run_polymarket
+        run_polymarket(target_date=today)
+        log.info("Afternoon Polymarket refresh complete")
+    except Exception as e:
+        log.warning(f"Afternoon Polymarket refresh failed (non-fatal): {e}")
+
+    # Refresh lineups + hitter stats
+    try:
+        from scrapers.mlb_lineup_scraper import run as run_lineups
+        lineups = run_lineups(target_date=today)
+        confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
+        log.info(f"Afternoon lineups: {len(lineups)} games, {confirmed} confirmed")
+        if confirmed > 0:
+            from scrapers.mlb_hitter_scraper import run as run_hitters
+            run_hitters(target_date=today)
+            log.info("Afternoon hitter stats refreshed")
+        else:
+            log.info("No confirmed lineups yet at 11:30am — dashboard will retry automatically")
+    except Exception as e:
+        log.warning(f"Afternoon lineup/hitter refresh failed (non-fatal): {e}")
+
+    # Rebuild dashboard
+    with _cache_lock:
+        _cache["generated_at"] = 0
+    _regenerate_in_background()
+    log.info("=== Afternoon refresh complete — dashboard rebuilding ===")
+
+
+def _start_afternoon_scheduler():
+    """Background thread that runs the afternoon refresh at 11:30am ET every day."""
+    def _loop():
+        while True:
+            wait = _seconds_until_1130am_et()
+            log.info(f"Afternoon refresh scheduled in {wait/3600:.1f}h (11:30am ET).")
+            time.sleep(wait)
+            _run_afternoon_refresh()
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+
+
+# ── Startup ─────────────────────────────────────────────────────────────────────────────────────
 def warm_cache():
     """
     On startup:
@@ -842,14 +940,14 @@ def warm_cache():
     def _warm():
         time.sleep(2)   # let Flask finish binding first
 
-        # ── Step 1: DB schema ────────────────────────────────────────────────────────────
+        # ── Step 1: DB schema ──────────────────────────────────────────────────────────────────────────────────
         if _DB_AVAILABLE:
             try:
                 _db_create_all()
             except Exception as e:
                 log.warning(f"DB schema init failed (non-fatal): {e}")
 
-        # ── Step 2: CSV sync download ─────────────────────────────────────────────────
+        # ── Step 2: CSV sync download ─────────────────────────────────────────────────────────────────────────────
         if _DB_AVAILABLE:
             try:
                 if _storage_ok():
@@ -864,14 +962,14 @@ def warm_cache():
             except Exception as e:
                 log.warning(f"Startup CSV sync failed (non-fatal): {e}")
 
-        # ── Step 3: Pipeline ──────────────────────────────────────────────────────────────────
+        # ── Step 3: Pipeline ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
         if _needs_pipeline_run():
             log.info("No pipeline data for today -- running full pipeline on startup...")
             _run_full_pipeline()
         else:
             log.info("Today's pipeline data exists -- skipping full pipeline run.")
 
-        # ── Step 4: Dashboard cache ────────────────────────────────────────────────────────
+        # ── Step 4: Dashboard cache ──────────────────────────────────────────────────────────────────────────────────
         log.info("Warming dashboard cache...")
         _regenerate_in_background()
 
@@ -879,8 +977,9 @@ def warm_cache():
     t.start()
 
 
-# Start scheduler and warm cache whether run via gunicorn or directly
+# Start schedulers and warm cache whether run via gunicorn or directly
 _start_daily_scheduler()
+_start_afternoon_scheduler()
 warm_cache()
 
 if __name__ == "__main__":

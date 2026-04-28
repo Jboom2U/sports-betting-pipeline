@@ -97,6 +97,7 @@ class MLBModel:
         self.umpires          = {}   # game_id -> umpire enriched dict
         self.pitcher_statcast = {}   # pitcher_name_lower -> statcast stat dict
         self.bullpen_fatigue  = {}   # team_name -> fatigue dict
+        self.polymarket       = {}   # sorted (team_a, team_b) -> prob dict
         self._loaded         = False
 
     # ── Data Loading ──────────────────────────────────────────────────────────
@@ -259,6 +260,15 @@ class MLBModel:
                     self.umpires[gid] = g
             log.info(f"Umpires loaded: {len(self.umpires)} games")
 
+        # Polymarket implied probabilities
+        try:
+            from scrapers.mlb_polymarket_scraper import load_polymarket_for_date
+            today = datetime.now().strftime("%Y-%m-%d")
+            self.polymarket = load_polymarket_for_date(today)
+            log.info(f"Polymarket loaded: {len(self.polymarket)} games")
+        except Exception as e:
+            log.debug(f"Polymarket load skipped: {e}")
+
         # Historical scores and upcoming schedule
         self.scores   = read_csv(os.path.join(CLEAN_DIR, "mlb_scores_master.csv"))
         self.schedule = read_csv(os.path.join(CLEAN_DIR, "mlb_schedule_master.csv"))
@@ -269,7 +279,8 @@ class MLBModel:
                  f"{len(self.weather)} weather | {len(self.bullpen)} bullpens | "
                  f"{len(self.lineups)} lineups | {len(self.umpires)} umpires | "
                  f"{len(self.pitcher_statcast)} pitcher Statcast | "
-                 f"{len(self.bullpen_fatigue)} fatigue records")
+                 f"{len(self.bullpen_fatigue)} fatigue records | "
+                 f"{len(self.polymarket)} Polymarket games")
 
     # ── Pitcher Lookup ────────────────────────────────────────────────────────
     def get_pitcher(self, name: str, is_home: bool) -> dict:
@@ -995,6 +1006,46 @@ class MLBModel:
         ml_conf    = round(min(0.90, max(0.10, ml_conf_base + ml_adj)), 4)
         total_conf = round(min(0.82, max(0.10, total_conf_base + total_adj)), 4)
 
+        # ── Polymarket signal ─────────────────────────────────────────────────
+        poly_key  = tuple(sorted([away, home]))
+        poly_data = self.polymarket.get(poly_key, {})
+        poly_away_prob = poly_data.get("poly_away_prob")
+        poly_home_prob = poly_data.get("poly_home_prob")
+        poly_market_signal  = "NO_DATA"
+        poly_market_gap     = None
+        combined_away_prob  = None
+        combined_home_prob  = None
+
+        if poly_away_prob is not None:
+            try:
+                from scrapers.mlb_polymarket_scraper import get_market_divergence
+                from scrapers.mlb_kalshi_scraper import load_kalshi_for_date
+                kalshi_data = load_kalshi_for_date(game_date)
+                kalshi_game = kalshi_data.get(poly_key, {})
+                kalshi_away = kalshi_game.get("kalshi_away_prob")
+
+                if kalshi_away is not None:
+                    div = get_market_divergence(poly_away_prob, float(kalshi_away))
+                    poly_market_signal = div["market_signal"]
+                    poly_market_gap    = div["market_gap"]
+                    combined_away_prob = div["combined_away_prob"]
+                    combined_home_prob = div["combined_home_prob"]
+
+                    # CONFIRM: both markets agree → slight boost
+                    # DIVERGE: markets disagree → slight reduction
+                    if poly_market_signal == "CONFIRM":
+                        ml_adj    = round(ml_adj + 0.015, 4)
+                        total_adj = round(total_adj + 0.010, 4)
+                    elif poly_market_signal == "DIVERGE":
+                        ml_adj    = round(ml_adj - 0.015, 4)
+                        total_adj = round(total_adj - 0.010, 4)
+
+                    # Recompute final confidences with Polymarket adjustment
+                    ml_conf    = round(min(0.90, max(0.10, ml_conf_base + ml_adj)), 4)
+                    total_conf = round(min(0.82, max(0.10, total_conf_base + total_adj)), 4)
+            except Exception as _pe:
+                log.debug(f"Polymarket signal skipped for {away}@{home}: {_pe}")
+
         # Run line: only offer when one side has 60%+ ML confidence
         rl_threshold = 0.60
         if home_wp >= rl_threshold:
@@ -1081,6 +1132,14 @@ class MLBModel:
             "home_fatigue_tier": self.bullpen_fatigue.get(home, {}).get("fatigue_tier", "NORMAL"),
             "away_bp_pitches_1d": self.bullpen_fatigue.get(away, {}).get("pitches_1d", 0),
             "home_bp_pitches_1d": self.bullpen_fatigue.get(home, {}).get("pitches_1d", 0),
+
+            # Polymarket
+            "poly_away_prob":     poly_away_prob,
+            "poly_home_prob":     poly_home_prob,
+            "poly_market_signal": poly_market_signal,
+            "poly_market_gap":    poly_market_gap,
+            "combined_away_prob": combined_away_prob,
+            "combined_home_prob": combined_home_prob,
 
             # Weather
             "weather_flag":   weather.get("weather_flag", "NORMAL"),

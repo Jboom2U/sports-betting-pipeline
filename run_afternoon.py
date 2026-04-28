@@ -116,6 +116,14 @@ def main():
     except Exception as e:
         log.warning(f"Kalshi snapshot failed (non-fatal): {e}")
 
+    # ── Step 3b: Polymarket snapshot ─────────────────────────────────────────
+    try:
+        from scrapers.mlb_polymarket_scraper import run as run_polymarket
+        poly_result = run_polymarket(target_date=today)
+        log.info(f"Polymarket: {poly_result}")
+    except Exception as e:
+        log.warning(f"Polymarket snapshot failed (non-fatal): {e}")
+
     # ── Step 4: Regenerate HTML dashboard ────────────────────────────────────
     # run_picks_html.main() already re-runs lineup/hitter refresh internally,
     # but we do it above first so the data is warm before the model scores.

@@ -204,6 +204,14 @@ def main(date=None):
     except Exception as e:
         log.warning(f"Statcast (pitchers) fetch failed (non-fatal): {e}")
 
+    # ── Step 5c: Polymarket prediction market snapshot ────────────────────────
+    try:
+        from scrapers.mlb_polymarket_scraper import run as run_polymarket
+        poly_result = run_polymarket(target_date=today if 'today' in dir() else datetime.now().strftime("%Y-%m-%d"))
+        log.info(f"Polymarket: {poly_result}")
+    except Exception as e:
+        log.warning(f"Polymarket snapshot failed (non-fatal): {e}")
+
     # ── Step 6: Bullpen stats ──────────────────────────────────────────────────
     try:
         from scrapers.mlb_bullpen_scraper import run as run_bullpen
