@@ -82,6 +82,14 @@ def main():
     except Exception as e:
         log.warning(f"Umpire refresh failed (non-fatal): {e}")
 
+    # ── Step 1c: Refresh bullpen fatigue (workload accumulates through day) ────
+    try:
+        from scrapers.mlb_bullpen_fatigue_scraper import run as run_fatigue
+        fatigue_report = run_fatigue(target_date=today)
+        log.info(f"Bullpen fatigue refreshed: {len(fatigue_report)} teams")
+    except Exception as e:
+        log.warning(f"Bullpen fatigue refresh failed (non-fatal): {e}")
+
     # ── Step 2: Refresh lineups + hitter stats ────────────────────────────────
     try:
         from scrapers.mlb_lineup_scraper import run as run_lineups

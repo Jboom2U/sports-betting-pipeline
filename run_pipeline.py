@@ -140,6 +140,15 @@ def main(date=None):
     except Exception as e:
         log.warning(f"Umpire fetch failed (non-fatal): {e}")
 
+    # ── Step 4c: Bullpen fatigue (reliever workload last 3 days) ───────────────
+    try:
+        from scrapers.mlb_bullpen_fatigue_scraper import run as run_fatigue
+        today = datetime.now().strftime("%Y-%m-%d")
+        fatigue_report = run_fatigue(target_date=today)
+        log.info(f"Bullpen fatigue: {len(fatigue_report)} teams processed")
+    except Exception as e:
+        log.warning(f"Bullpen fatigue fetch failed (non-fatal): {e}")
+
     # ── Step 4c: Today's probable pitcher recent starts ────────────────────────
     try:
         from scrapers.mlb_pitcher_scraper import fetch_all_recent_starts
@@ -250,10 +259,8 @@ def main(date=None):
             log.info(
                 f"DB: {n_picks} picks + {n_games} scored games saved for {actual_date}."
             )
-        else:
-            log.info("No scored games — nothing to save to DB.")
     except Exception as e:
-        log.warning(f"DB picks/scored_games save failed (non-fatal): {e}")
+        log.warning(f"DB save failed (non-fatal): {e}")
 
     # ── Step 9: Mark pipeline complete in DB ──────────────────────────────────
     mark_pipeline_complete()
@@ -265,7 +272,7 @@ def main(date=None):
             n_uploaded = csv_upload_all()
             log.info(f"CSV sync upload complete: {n_uploaded} file(s).")
         else:
-            log.debug("Object storage not configured — skipping CSV upload.")
+            log.debug("Object storage not configured -- skipping CSV upload.")
     except Exception as e:
         log.warning(f"CSV upload failed (non-fatal): {e}")
 
@@ -279,7 +286,7 @@ if __name__ == "__main__":
     parser.add_argument("--date", type=str, default=None)
     args = parser.parse_args()
     if not _acquire_lock():
-        sys.exit(0)   # Another instance is running — exit cleanly
+        sys.exit(0)   # Another instance is running -- exit cleanly
     try:
         main(date=args.date)
     finally:

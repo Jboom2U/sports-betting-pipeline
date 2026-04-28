@@ -94,8 +94,9 @@ class MLBModel:
         self.schedule        = []   # upcoming schedule rows
         self.bullpen         = {}   # team_name -> stats_dict (current season)
         self.lineups         = {}   # game_id -> {away_lineup, home_lineup, confirmed}
-        self.umpires         = {}   # game_id -> umpire enriched dict
-        self.pitcher_statcast = {}  # pitcher_name_lower -> statcast stat dict
+        self.umpires          = {}   # game_id -> umpire enriched dict
+        self.pitcher_statcast = {}   # pitcher_name_lower -> statcast stat dict
+        self.bullpen_fatigue  = {}   # team_name -> fatigue dict
         self._loaded         = False
 
     # ── Data Loading ──────────────────────────────────────────────────────────
@@ -231,6 +232,14 @@ class MLBModel:
             log.info(f"Lineups loaded: {len(self.lineups)} games "
                      f"({sum(1 for g in self.lineups.values() if g.get('lineup_confirmed'))} confirmed)")
 
+        # Bullpen fatigue (reliever workload over last 3 days)
+        fatigue_file = os.path.join(raw_dir, f"mlb_bullpen_fatigue_{today_str}.json")
+        if os.path.exists(fatigue_file):
+            import json as _json
+            with open(fatigue_file, encoding="utf-8") as f:
+                self.bullpen_fatigue = _json.load(f)
+            log.info(f"Bullpen fatigue loaded: {len(self.bullpen_fatigue)} teams")
+
         # Pitcher Statcast stuff metrics (xwOBA against, whiff%, velocity)
         try:
             from scrapers.mlb_statcast_pitcher_scraper import load_pitcher_statcast
@@ -259,7 +268,8 @@ class MLBModel:
                  f"{len(self.park_factors)} parks | {len(self.scores)} historical games | "
                  f"{len(self.weather)} weather | {len(self.bullpen)} bullpens | "
                  f"{len(self.lineups)} lineups | {len(self.umpires)} umpires | "
-                 f"{len(self.pitcher_statcast)} pitcher Statcast")
+                 f"{len(self.pitcher_statcast)} pitcher Statcast | "
+                 f"{len(self.bullpen_fatigue)} fatigue records")
 
     # ── Pitcher Lookup ────────────────────────────────────────────────────────
     def get_pitcher(self, name: str, is_home: bool) -> dict:
@@ -783,6 +793,11 @@ class MLBModel:
         if opp_team:
             bp = self.get_bullpen(opp_team)
             bp_era = bp["era"]
+            # Apply fatigue adjustment to bullpen ERA
+            fatigue = self.bullpen_fatigue.get(opp_team, {})
+            fatigue_adj = float(fatigue.get("fatigue_adj", 0.0))
+            if fatigue_adj != 0.0:
+                bp_era = bp_era * (1.0 + fatigue_adj)
         else:
             bp_era = LEAGUE["era"]
 
@@ -1060,6 +1075,12 @@ class MLBModel:
             "hp_ump":         ump_name,
             "ump_factor":     ump_factor,
             "ump_rpg":        ump_data.get("ump_rpg", 9.0),
+
+            # Bullpen fatigue
+            "away_fatigue_tier": self.bullpen_fatigue.get(away, {}).get("fatigue_tier", "NORMAL"),
+            "home_fatigue_tier": self.bullpen_fatigue.get(home, {}).get("fatigue_tier", "NORMAL"),
+            "away_bp_pitches_1d": self.bullpen_fatigue.get(away, {}).get("pitches_1d", 0),
+            "home_bp_pitches_1d": self.bullpen_fatigue.get(home, {}).get("pitches_1d", 0),
 
             # Weather
             "weather_flag":   weather.get("weather_flag", "NORMAL"),
