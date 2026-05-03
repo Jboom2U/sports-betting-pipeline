@@ -237,6 +237,9 @@ def prep_picks(picks, kalshi_data: dict = None):
             "kalshi_signal":  kalshi_signal,
             # Kelly Criterion
             "kelly_pct":      kelly_pct,
+            # Total line range (for line shopping)
+            "total_line_min": gd.get("total_line_min"),
+            "total_line_max": gd.get("total_line_max"),
         })
     return out
 
@@ -1077,6 +1080,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   border-radius:4px;border-left:2px solid rgba(76,175,80,.4)}
 .kelly-note{opacity:.55;font-style:italic;font-size:.67rem}
 
+.line-shop-row{font-size:.72rem;color:var(--sub);margin:5px 0 2px;padding:4px 8px;
+  background:rgba(66,165,245,.07);border-radius:4px;border-left:2px solid rgba(66,165,245,.4)}
+.line-shop-tip{opacity:.7;font-style:italic}
+
 .pick-reasoning{
   font-size:.74rem;color:var(--sub);line-height:1.5;
   border-top:1px solid var(--border);padding-top:8px;margin-top:4px;
@@ -1584,6 +1591,16 @@ function renderPicks(){
       <span class="fav-badge fav-${p.fav_tier||'NEUTRAL'}">${favLabel}</span>
     </div>`;
 
+    // Line shopping range — shown on TOTAL picks when books disagree
+    let lineShopHtml = "";
+    if(p.type === "TOTAL" && p.total_line_min != null && p.total_line_max != null
+       && p.total_line_min !== p.total_line_max){
+      const bestFor = p.label && p.label.startsWith("OVER")
+        ? `Shop for ${p.total_line_min} (lowest line = best for OVER)`
+        : `Shop for ${p.total_line_max} (highest line = best for UNDER)`;
+      lineShopHtml = `<div class="line-shop-row">📊 Books: <strong>${p.total_line_min}–${p.total_line_max}</strong> &nbsp;<span class="line-shop-tip">${bestFor}</span></div>`;
+    }
+
     // Kelly Criterion sizing
     const kellyHtml = (p.kelly_pct > 0)
       ? `<div class="kelly-row">💰 Bet sizing: ~<strong>${p.kelly_pct}%</strong> of bankroll <span class="kelly-note">(Half-Kelly at -110)</span></div>`
@@ -1670,6 +1687,7 @@ function renderPicks(){
         ${warnHtml}
         ${kalshiHtml}
         ${moveHtml}
+        ${lineShopHtml}
         ${kellyHtml}
         <div class="pick-reasoning">${p.reasoning}</div>
         <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">

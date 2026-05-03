@@ -58,6 +58,8 @@ SNAPSHOT_FIELDNAMES = [
     "rl_away_line", "rl_away_price", "rl_home_line", "rl_home_price",
     # Totals consensus
     "total_line", "total_over_price", "total_under_price",
+    # Total line range across books (for line shopping display)
+    "total_line_min", "total_line_max",
     # Book count
     "books_used",
     # DraftKings specific (softest public book — best for value spotting)
@@ -145,6 +147,14 @@ def _avg(prices: list) -> float | None:
     return round(sum(prices) / len(prices)) if prices else None
 
 
+def _avg_half(values: list) -> float | None:
+    """Average rounded to nearest 0.5 — correct for total lines (always in 0.5 increments)."""
+    values = [v for v in values if v is not None]
+    if not values:
+        return None
+    return round(sum(values) / len(values) * 2) / 2
+
+
 def parse_game(game: dict, snapshot_time: str) -> dict:
     """Parse one game from Odds API response into a flat snapshot row."""
     home   = game.get("home_team", "")
@@ -212,7 +222,12 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
     books_used    = max(len(ml_away_prices), 1)
     cons_ml_away  = _avg(ml_away_prices)
     cons_ml_home  = _avg(ml_home_prices)
-    cons_total    = _avg(total_lines)
+    cons_total    = _avg_half(total_lines)   # rounded to nearest 0.5, not integer
+
+    # Line range across books — used for line shopping display on pick cards
+    unique_totals  = sorted(set(v for v in total_lines if v is not None))
+    total_line_min = unique_totals[0]  if unique_totals else None
+    total_line_max = unique_totals[-1] if unique_totals else None
 
     # Discrepancy: DK price minus consensus (positive = DK is softer = more value)
     def _disc(dk, cons):
@@ -237,6 +252,8 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
         "total_line":       cons_total,
         "total_over_price": _avg(over_prices),
         "total_under_price":_avg(under_prices),
+        "total_line_min":   total_line_min,
+        "total_line_max":   total_line_max,
         "books_used":       books_used,
         "dk_ml_away":       dk_ml_away,
         "dk_ml_home":       dk_ml_home,

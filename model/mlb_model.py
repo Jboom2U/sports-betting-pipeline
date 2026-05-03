@@ -1151,9 +1151,11 @@ class MLBModel:
             "has_roof":       weather.get("roof", False),
 
             # Odds and line movement
-            "ml_away_odds":   sf(odds_snap.get("ml_away")),
-            "ml_home_odds":   sf(odds_snap.get("ml_home")),
-            "total_odds_line":sf(odds_snap.get("total_line")),
+            "ml_away_odds":     sf(odds_snap.get("ml_away")),
+            "ml_home_odds":     sf(odds_snap.get("ml_home")),
+            "total_odds_line":  sf(odds_snap.get("total_line")),
+            "total_line_min":   sf(odds_snap.get("total_line_min")),
+            "total_line_max":   sf(odds_snap.get("total_line_max")),
             "ml_signal":      movement.get("ml_signal", "NO_DATA"),
             "total_signal":   movement.get("total_signal", "NO_DATA"),
             "sharp_side":     movement.get("sharp_side", ""),
