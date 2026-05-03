@@ -206,6 +206,13 @@ def prep_picks(picks, kalshi_data: dict = None):
                     else:
                         kalshi_signal = "DISAGREE"
 
+        # ── Kelly Criterion (Half-Kelly at -110 standard juice) ─────────────
+        # b = net units won per unit staked; at -110 you win 100 for every 110 risked
+        _b = 100 / 110   # 0.9091
+        _p = p["conf"]   # raw probability 0-1 (before percentage conversion)
+        _kelly_full = (_b * _p - (1 - _p)) / _b
+        kelly_pct = round(max(0.0, _kelly_full * 0.5) * 100, 1)   # Half-Kelly
+
         out.append({
             "type":           ptype,
             "label":          p["label"],
@@ -228,6 +235,8 @@ def prep_picks(picks, kalshi_data: dict = None):
             # Kalshi
             "kalshi_prob":    kalshi_prob,
             "kalshi_signal":  kalshi_signal,
+            # Kelly Criterion
+            "kelly_pct":      kelly_pct,
         })
     return out
 
@@ -1063,6 +1072,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .pct-STRONG{color:var(--blue)}
 .pct-LEAN  {color:var(--green)}
 
+.kelly-row{display:flex;align-items:center;gap:6px;font-size:.72rem;color:var(--sub);
+  margin:6px 0 2px;padding:4px 8px;background:rgba(76,175,80,.07);
+  border-radius:4px;border-left:2px solid rgba(76,175,80,.4)}
+.kelly-note{opacity:.55;font-style:italic;font-size:.67rem}
+
 .pick-reasoning{
   font-size:.74rem;color:var(--sub);line-height:1.5;
   border-top:1px solid var(--border);padding-top:8px;margin-top:4px;
@@ -1570,6 +1584,11 @@ function renderPicks(){
       <span class="fav-badge fav-${p.fav_tier||'NEUTRAL'}">${favLabel}</span>
     </div>`;
 
+    // Kelly Criterion sizing
+    const kellyHtml = (p.kelly_pct > 0)
+      ? `<div class="kelly-row">💰 Bet sizing: ~<strong>${p.kelly_pct}%</strong> of bankroll <span class="kelly-note">(Half-Kelly at -110)</span></div>`
+      : "";
+
     // Kalshi signal
     let kalshiHtml = "";
     if(p.kalshi_prob !== null && p.kalshi_prob !== undefined){
@@ -1651,6 +1670,7 @@ function renderPicks(){
         ${warnHtml}
         ${kalshiHtml}
         ${moveHtml}
+        ${kellyHtml}
         <div class="pick-reasoning">${p.reasoning}</div>
         <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
           <span class="toggle-arrow">▶</span> View Player Props for this game
