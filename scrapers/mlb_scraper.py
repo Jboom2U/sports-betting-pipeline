@@ -1,7 +1,7 @@
 """
 mlb_scraper.py
 Pulls scores, standings, player stats, and injuries from the free MLB Stats API.
-No API key required. Runs daily at 4am via Windows Task Scheduler.
+No API key required. Runs daily at 6am ET via Railway scheduler.
 """
 
 import requests

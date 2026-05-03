@@ -1,23 +1,18 @@
 """
 run_afternoon.py
-Second daily run — scheduled at 11:30 AM ET via Windows Task Scheduler.
+Second daily run — scheduled at 11:30 AM ET via Railway scheduler (app.py background thread).
 
 Purpose:
-    The 4 AM pipeline runs before lineups are posted (1-3 hrs before first pitch),
-    so DATA_PROPS is always empty in the morning HTML. This script re-runs the
-    lineup + hitter scrapers and regenerates the HTML once lineups are live.
+    The 6am pipeline runs before lineups are posted (4-5 hrs before first pitch),
+    so player props are sparse in the morning. This script re-runs the lineup +
+    hitter scrapers and regenerates the dashboard once lineups are live.
 
-    Also re-snapshots odds (lines move throughout the morning) and runs the
-    Kalshi scraper if configured.
+    Also re-snapshots odds (lines move throughout the morning), umpires, bullpen
+    fatigue, Kalshi, and Polymarket.
 
 Usage:
-    python run_afternoon.py               # today
+    python run_afternoon.py               # manual trigger if needed
     python run_afternoon.py --no-open     # don't open browser
-
-Schedule:
-    Windows Task Scheduler → Action: python run_afternoon.py
-    Trigger: Daily at 11:30 AM
-    Same working directory as mlb_pipeline.bat
 """
 
 import sys

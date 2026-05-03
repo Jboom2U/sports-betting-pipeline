@@ -465,32 +465,33 @@ def status():
     today = now.strftime("%Y-%m-%d")
 
     # ── Pipeline last run ────────────────────────────────────────────────────
-    # Pipeline runs on Windows (Task Scheduler) not on Railway — check for today's
-    # committed data files as a proxy for "did the pipeline run today"
-    marker = os.path.join(BASE_DIR, "data", "pipeline_run_date.txt")
-    sched_path = os.path.join(CLEAN_DIR, "mlb_schedule_master.csv")
-    if os.path.exists(marker):
-        with open(marker) as f:
-            pipeline_date = f.read().strip()
-        pipeline_ok    = pipeline_date == today
-        pipeline_label = f"Ran today ({pipeline_date})" if pipeline_ok else f"Last ran {pipeline_date}"
-    elif os.path.exists(sched_path):
-        # Check if schedule data contains today's games (proxy for pipeline ran today)
+    # Pipeline runs on Railway at 6am ET daily. Check DB first (authoritative),
+    # then fall back to schedule CSV check.
+    pipeline_ok    = None
+    pipeline_label = "Scheduled for 6am ET — data pending"
+
+    if _DB_AVAILABLE:
         try:
-            with open(sched_path, encoding="utf-8") as f:
-                has_today = any(r.get("game_date") == today for r in _csv.DictReader(f))
-            if has_today:
+            if _db_pipeline_ran_today():
                 pipeline_ok    = True
-                pipeline_label = f"Ran today (via schedule data)"
+                pipeline_label = f"Ran today on Railway ✓"
             else:
                 pipeline_ok    = False
-                pipeline_label = "Runs on Windows at 4am — data pending"
+                pipeline_label = "Scheduled for 6am ET — data pending"
         except Exception:
-            pipeline_ok    = None
-            pipeline_label = "Runs on Windows at 4am"
-    else:
-        pipeline_ok    = None
-        pipeline_label = "Runs on Windows at 4am"
+            pass   # fall through to CSV check
+
+    if pipeline_ok is None:
+        # DB unavailable — fall back to schedule CSV as proxy
+        sched_path = os.path.join(CLEAN_DIR, "mlb_schedule_master.csv")
+        if os.path.exists(sched_path):
+            try:
+                with open(sched_path, encoding="utf-8") as f:
+                    has_today = any(r.get("game_date") == today for r in _csv.DictReader(f))
+                pipeline_ok    = has_today
+                pipeline_label = "Ran today on Railway ✓" if has_today else "Scheduled for 6am ET — data pending"
+            except Exception:
+                pipeline_label = "Scheduled for 6am ET — status unknown"
 
     # ── Odds snapshots today ─────────────────────────────────────────────────
     odds_path  = os.path.join(CLEAN_DIR, "mlb_odds_master.csv")

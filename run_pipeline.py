@@ -1,7 +1,7 @@
 """
 run_pipeline.py
 Single entry point for the MLB data pipeline.
-Called by Windows Task Scheduler at 4am daily.
+Runs daily at 6am ET via Railway scheduler (app.py background thread).
 
 Usage:
     python run_pipeline.py
@@ -49,7 +49,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── Single-instance lock — prevents Windows Task Scheduler double-runs ────────
+# ── Single-instance lock — prevents accidental double-runs ───────────────────
 LOCK_FILE = os.path.join(LOG_DIR, "pipeline.lock")
 
 def _acquire_lock() -> bool:
@@ -270,10 +270,10 @@ def main(date=None):
     except Exception as e:
         log.warning(f"DB save failed (non-fatal): {e}")
 
-    # ── Step 9: Mark pipeline complete in DB ──────────────────────────────────
-    mark_pipeline_complete()
-
-    # ── Step 10: Upload CSVs to object storage ────────────────────────────────
+    # ── Step 9: Upload CSVs to object storage FIRST ──────────────────────────
+    # IMPORTANT: Upload before marking pipeline complete so that if the upload
+    # fails or the container is killed, the DB won't show "complete" and the
+    # next startup will retry — guaranteeing R2 always has fresh schedule data.
     try:
         if storage_available():
             log.info("Uploading CSV snapshots to object storage...")
@@ -283,6 +283,9 @@ def main(date=None):
             log.debug("Object storage not configured -- skipping CSV upload.")
     except Exception as e:
         log.warning(f"CSV upload failed (non-fatal): {e}")
+
+    # ── Step 10: Mark pipeline complete in DB (after upload succeeds) ─────────
+    mark_pipeline_complete()
 
     log.info("=" * 60)
     log.info("PIPELINE COMPLETE")
