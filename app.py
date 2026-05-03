@@ -414,6 +414,35 @@ def unstick():
     }
 
 
+@app.route("/force-pipeline")
+def force_pipeline():
+    """
+    Emergency pipeline trigger — runs the full data pipeline on THIS Railway container.
+    Use when the DB says pipeline ran today but the schedule data is missing/corrupt.
+    Dashboard rebuilds automatically when the pipeline finishes (~10-15 min).
+    Visit /force-pipeline, wait 15 minutes, then reload the home page.
+    """
+    def _worker():
+        log.warning("/force-pipeline triggered — running full pipeline regardless of DB state.")
+        _run_full_pipeline()
+        # Force dashboard rebuild with fresh data
+        with _cache_lock:
+            _cache["generated_at"] = 0
+        _regenerate_in_background()
+        log.warning("/force-pipeline complete — dashboard rebuilding.")
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return {
+        "status": "ok",
+        "message": (
+            "Full pipeline started on Railway container. "
+            "Wait ~15 minutes then reload statalizers.com. "
+            "Check /status to monitor progress."
+        ),
+    }
+
+
 @app.route("/health")
 def health():
     with _cache_lock:
