@@ -676,38 +676,33 @@ function forceOdds(btn) {{
 
 @app.route("/performance")
 def performance():
-    """
-    JSON endpoint: rolling model accuracy by tier and pick type.
-    Query param: days=30 (default)
-    """
+    """Browser → visual dashboard. API clients (Accept: application/json) → JSON."""
+    accept = request.headers.get("Accept", "")
+    if "text/html" in accept:
+        from flask import redirect
+        return redirect("/performance-html", code=302)
+
+    # JSON API path (backward compatible)
     try:
         days = int(request.args.get("days", 30))
     except (TypeError, ValueError):
         days = 30
-
     try:
         from db.picks_store import get_accuracy_summary
         rows = get_accuracy_summary(days=days)
     except Exception as e:
         return {"error": str(e)}, 500
-
     if not rows:
         return {"days": days, "rows": [], "message": "No graded picks in this window yet."}
-
     total_wins   = sum(r.get("wins",   0) or 0 for r in rows)
     total_losses = sum(r.get("losses", 0) or 0 for r in rows)
     total_pushes = sum(r.get("pushes", 0) or 0 for r in rows)
     denom        = total_wins + total_losses
     overall_wr   = round(total_wins / denom, 3) if denom > 0 else None
-
     return {
         "days":    days,
-        "overall": {
-            "wins":     total_wins,
-            "losses":   total_losses,
-            "pushes":   total_pushes,
-            "win_rate": overall_wr,
-        },
+        "overall": {"wins": total_wins, "losses": total_losses,
+                    "pushes": total_pushes, "win_rate": overall_wr},
         "rows": rows,
     }
 
@@ -726,39 +721,91 @@ def performance_html():
     except Exception as e:
         rows = []
 
-    table_rows = ""
-    for r in rows:
-        wins    = r.get("wins",   0) or 0
-        losses  = r.get("losses", 0) or 0
-        pushes  = r.get("pushes", 0) or 0
-        pending = r.get("pending", 0) or 0
-        denom   = wins + losses
-        wr      = f"{wins/denom*100:.1f}%" if denom > 0 else "&mdash;"
-        avg_c   = f"{float(r.get('avg_conf') or 0)*100:.1f}%"
-        tier    = r.get('tier', '')
-        table_rows += (
-            f"<tr><td>{r.get('pick_type','')}</td>"
-            f"<td class='{tier}'>{tier}</td>"
-            f"<td>{wins}</td><td>{losses}</td><td>{pushes}</td>"
-            f"<td><strong>{wr}</strong></td>"
-            f"<td>{avg_c}</td>"
-            f"<td style='color:#8b949e'>{pending}</td></tr>\n"
-        )
-
+    # ── Aggregate stats ───────────────────────────────────────────────────────
     total_w = sum(r.get("wins",   0) or 0 for r in rows)
     total_l = sum(r.get("losses", 0) or 0 for r in rows)
     total_p = sum(r.get("pushes", 0) or 0 for r in rows)
     denom   = total_w + total_l
-    overall_wr_str = f"{total_w/denom*100:.1f}%" if denom > 0 else "&mdash;"
+    overall_wr_str = f"{total_w/denom*100:.1f}%" if denom > 0 else "—"
 
+    # Break-even at -110 is 52.4%
+    breakeven = 52.4
+    wr_float  = (total_w / denom * 100) if denom > 0 else 0
+    edge_str  = f"+{wr_float - breakeven:.1f}%" if wr_float >= breakeven else f"{wr_float - breakeven:.1f}%"
+    edge_color = "#3fb950" if wr_float >= breakeven else "#f85149"
+
+    # ── Day toggle links ──────────────────────────────────────────────────────
     days_links = "".join(
-        f'<a href="/performance-html?days={d}" {"class=active" if d == days else ""}>{d}d</a>'
+        '<a href="/performance-html?days={d}" {cls}>{d}d</a>'.format(
+            d=d, cls='class="active"' if d == days else ""
+        )
         for d in [7, 14, 30, 60, 90]
     )
 
+    # ── Tier bar chart data ───────────────────────────────────────────────────
+    TIER_ORDER = ["LOCK", "STRONG", "LEAN", "TOSSUP"]
+    TIER_COLOR = {"LOCK": "#ffc107", "STRONG": "#42a5f5", "LEAN": "#66bb6a", "TOSSUP": "#a09ae0"}
+
+    tier_agg = {}
+    for r in rows:
+        t = r.get("tier", "")
+        if t not in tier_agg:
+            tier_agg[t] = {"wins": 0, "losses": 0, "avg_conf": 0, "n": 0}
+        tier_agg[t]["wins"]    += r.get("wins",   0) or 0
+        tier_agg[t]["losses"]  += r.get("losses", 0) or 0
+        tier_agg[t]["avg_conf"] += float(r.get("avg_conf") or 0)
+        tier_agg[t]["n"]       += 1
+
+    tier_bars_html = ""
+    for t in TIER_ORDER:
+        if t not in tier_agg: continue
+        td = tier_agg[t]
+        d2 = td["wins"] + td["losses"]
+        wr2 = td["wins"] / d2 * 100 if d2 > 0 else 0
+        bar_w = max(4, min(100, wr2))
+        color = TIER_COLOR.get(t, "#888")
+        record = f"{td['wins']}-{td['losses']}"
+        wr_label = f"{wr2:.1f}%"
+        tier_bars_html += f"""
+        <div class="tier-bar-row">
+          <div class="tier-bar-label" style="color:{color}">{t}</div>
+          <div class="tier-bar-track">
+            <div class="tier-bar-fill" style="width:{bar_w}%;background:{color}"></div>
+            <div class="tier-bar-be"></div>
+          </div>
+          <div class="tier-bar-stat">{wr_label} &nbsp;<span class="tier-bar-record">({record})</span></div>
+        </div>"""
+
+    # ── Detail table rows ─────────────────────────────────────────────────────
+    primary_rows = ""
+    secondary_rows = ""
+    for t in TIER_ORDER:
+        tier_rows = [r for r in rows if r.get("tier") == t]
+        for r in tier_rows:
+            wins    = r.get("wins",   0) or 0
+            losses  = r.get("losses", 0) or 0
+            pushes  = r.get("pushes", 0) or 0
+            pending = r.get("pending", 0) or 0
+            d3      = wins + losses
+            wr3     = f"{wins/d3*100:.1f}%" if d3 > 0 else "—"
+            avg_c   = f"{float(r.get('avg_conf') or 0)*100:.1f}%"
+            color   = TIER_COLOR.get(t, "#8b949e")
+            row_html = (
+                f"<tr><td style='color:{color};font-weight:600'>{t}</td>"
+                f"<td>{r.get('pick_type','')}</td>"
+                f"<td style='color:#3fb950'>{wins}</td>"
+                f"<td style='color:#f85149'>{losses}</td>"
+                f"<td style='color:#8b949e'>{pushes}</td>"
+                f"<td><strong>{wr3}</strong></td>"
+                f"<td style='color:#8b949e'>{avg_c}</td></tr>\n"
+            )
+            if t in ("LOCK", "STRONG"):
+                primary_rows += row_html
+            else:
+                secondary_rows += row_html
+
     empty_msg = (
-        "<p style='color:#8b949e'>No graded picks found yet. "
-        "Run <code>python run_analysis.py</code> to grade picks and push to DB.</p>"
+        "<p style='color:#8b949e;padding:20px 0'>No graded picks yet for this window.</p>"
         if not rows else ""
     )
 
@@ -767,65 +814,112 @@ def performance_html():
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Statalizers — Model Performance</title>
+  <title>Statalizers — Performance</title>
   <style>
-    body  {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-             background: #0d1117; color: #e6edf3; margin: 0; padding: 24px; }}
-    h1    {{ font-size: 1.4rem; margin-bottom: 4px; }}
-    .sub  {{ color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }}
-    .headline {{ display: flex; gap: 24px; margin-bottom: 28px; flex-wrap: wrap; }}
-    .stat {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-             padding: 14px 20px; min-width: 90px; }}
-    .stat .val {{ font-size: 1.6rem; font-weight: 700; }}
-    .stat .lbl {{ font-size: 0.75rem; color: #8b949e; margin-top: 2px; }}
-    table  {{ width: 100%; border-collapse: collapse; font-size: 0.875rem; }}
-    th     {{ background: #161b22; padding: 8px 12px; text-align: left;
-              border-bottom: 2px solid #30363d; color: #8b949e; font-weight: 600; }}
-    td     {{ padding: 8px 12px; border-bottom: 1px solid #21262d; }}
-    tr:hover td {{ background: #161b22; }}
-    .LOCK   {{ color: #ff7b72; font-weight: 700; }}
-    .STRONG {{ color: #ffa657; font-weight: 600; }}
-    .LEAN   {{ color: #79c0ff; }}
-    a {{ color: #58a6ff; text-decoration: none; }}
-    .days-links {{ margin-bottom: 20px; display: flex; gap: 8px; flex-wrap: wrap; }}
-    .days-links a {{ background: #21262d; border: 1px solid #30363d; border-radius: 6px;
-                     padding: 4px 12px; font-size: 0.8rem; color: #e6edf3; }}
-    .days-links a.active {{ background: #1f6feb; border-color: #388bfd; color: #fff; }}
-    code {{ background: #161b22; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; }}
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         background:#0d1117;color:#e6edf3;padding:28px 24px;max-width:900px;margin:0 auto}}
+    h1{{font-size:1.3rem;font-weight:600;margin-bottom:4px}}
+    .sub{{color:#8b949e;font-size:.83rem;margin-bottom:20px}}
+    .days-nav{{display:flex;gap:6px;margin-bottom:24px;flex-wrap:wrap}}
+    .days-nav a{{background:#161b22;border:1px solid #30363d;border-radius:20px;
+                padding:5px 14px;font-size:.78rem;color:#8b949e;text-decoration:none;transition:all .15s}}
+    .days-nav a:hover{{border-color:#58a6ff;color:#58a6ff}}
+    .days-nav a.active{{background:#1f6feb;border-color:#388bfd;color:#fff;font-weight:600}}
+    .stat-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:28px}}
+    .stat-card{{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px 16px}}
+    .stat-val{{font-size:1.5rem;font-weight:700;line-height:1}}
+    .stat-lbl{{font-size:.72rem;color:#8b949e;margin-top:5px}}
+    .section-title{{font-size:.72rem;font-weight:600;color:#8b949e;text-transform:uppercase;
+                    letter-spacing:.06em;margin:0 0 12px}}
+    .chart-card{{background:#161b22;border:1px solid #30363d;border-radius:10px;
+                 padding:16px 20px;margin-bottom:20px}}
+    .tier-bar-row{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}
+    .tier-bar-label{{width:58px;font-size:.78rem;font-weight:600;flex-shrink:0}}
+    .tier-bar-track{{flex:1;height:12px;background:#21262d;border-radius:6px;position:relative;overflow:visible}}
+    .tier-bar-fill{{height:100%;border-radius:6px;transition:width .4s}}
+    .tier-bar-be{{position:absolute;top:-3px;bottom:-3px;left:52.4%;width:1px;
+                  background:rgba(255,255,255,.2)}}
+    .tier-bar-stat{{font-size:.78rem;font-weight:600;width:56px;text-align:right;flex-shrink:0}}
+    .tier-bar-record{{color:#8b949e;font-weight:400}}
+    .table-card{{background:#161b22;border:1px solid #30363d;border-radius:10px;
+                 overflow:hidden;margin-bottom:20px}}
+    .table-card table{{width:100%;border-collapse:collapse;font-size:.83rem}}
+    .table-card th{{padding:10px 14px;text-align:left;border-bottom:1px solid #30363d;
+                    color:#8b949e;font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em}}
+    .table-card td{{padding:9px 14px;border-bottom:1px solid #21262d}}
+    .table-card tr:last-child td{{border-bottom:none}}
+    .table-card tr:hover td{{background:#0d1117}}
+    .secondary-section{{margin-top:24px}}
+    .secondary-toggle{{cursor:pointer;display:flex;align-items:center;gap:6px;
+                       color:#8b949e;font-size:.78rem;margin-bottom:10px;user-select:none}}
+    .secondary-toggle:hover{{color:#e6edf3}}
+    .secondary-body{{display:none}}
+    .secondary-body.open{{display:block}}
+    .back-link{{color:#58a6ff;font-size:.8rem;text-decoration:none;display:inline-flex;
+                align-items:center;gap:4px;margin-top:20px}}
+    .back-link:hover{{text-decoration:underline}}
+    .be-note{{font-size:.72rem;color:#8b949e;margin-top:8px}}
   </style>
 </head>
 <body>
-  <h1>&#128202; Model Performance</h1>
-  <p class="sub">Last {days} days &mdash; graded picks only (PENDING excluded)</p>
-
-  <div class="days-links">{days_links}</div>
-
-  <div class="headline">
-    <div class="stat"><div class="val">{total_w}-{total_l}</div><div class="lbl">Record (W-L)</div></div>
-    <div class="stat"><div class="val">{overall_wr_str}</div><div class="lbl">Win Rate</div></div>
-    <div class="stat"><div class="val">{total_p}</div><div class="lbl">Pushes</div></div>
-    <div class="stat"><div class="val">{len(rows)}</div><div class="lbl">Segments</div></div>
+  <div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+    <h1>📊 Model Performance</h1>
+    <a href="/" class="back-link">← Back to Picks</a>
   </div>
+  <p class="sub">Last {days} days — graded picks only</p>
+
+  <div class="days-nav">{days_links}</div>
 
   {empty_msg}
 
-  <table>
-    <thead>
-      <tr>
-        <th>Type</th><th>Tier</th><th>W</th><th>L</th><th>Push</th>
-        <th>Win %</th><th>Avg Conf</th><th>Pending</th>
-      </tr>
-    </thead>
-    <tbody>
-      {table_rows}
-    </tbody>
-  </table>
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-val">{total_w}–{total_l}</div>
+      <div class="stat-lbl">Overall Record</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val">{overall_wr_str}</div>
+      <div class="stat-lbl">Win Rate</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:{edge_color}">{edge_str}</div>
+      <div class="stat-lbl">Edge vs Break-even</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val">{total_p}</div>
+      <div class="stat-lbl">Pushes</div>
+    </div>
+  </div>
 
-  <p style="margin-top: 24px; color: #8b949e; font-size: 0.8rem">
-    Source: PostgreSQL picks table &mdash;
-    <a href="/performance?days={days}">JSON</a> &mdash;
-    <a href="/">&#8592; Picks</a>
-  </p>
+  <div class="chart-card">
+    <div class="section-title">Win rate by tier</div>
+    {tier_bars_html}
+    <div class="be-note">Vertical line = break-even at 52.4% (standard -110 juice)</div>
+  </div>
+
+  <div class="table-card">
+    <div class="section-title" style="padding:12px 14px 0">Lock &amp; Strong — Primary Picks</div>
+    <table>
+      <thead><tr><th>Tier</th><th>Type</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th></tr></thead>
+      <tbody>{primary_rows if primary_rows else "<tr><td colspan='7' style='color:#8b949e;padding:14px'>No data yet</td></tr>"}</tbody>
+    </table>
+  </div>
+
+  <div class="secondary-section">
+    <div class="secondary-toggle" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.arr').textContent=this.nextElementSibling.classList.contains('open')?'▼':'▶'">
+      <span class="arr">▶</span> Lean &amp; Toss Up — Tracking Data
+    </div>
+    <div class="secondary-body">
+      <div class="table-card">
+        <table>
+          <thead><tr><th>Tier</th><th>Type</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th></tr></thead>
+          <tbody>{secondary_rows if secondary_rows else "<tr><td colspan='7' style='color:#8b949e;padding:14px'>No data yet</td></tr>"}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>"""
 

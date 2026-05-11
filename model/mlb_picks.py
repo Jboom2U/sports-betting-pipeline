@@ -5,8 +5,9 @@ Converts scored games into ranked individual picks and parlay recommendations.
 Confidence tiers:
   LOCK   68%+  (strongest model signal)
   STRONG 62-68%
-  LEAN   55-62%
-  PASS   <55%  (not included in output)
+  LEAN   52-62%
+  TOSSUP 48-52% (shown for coverage, no Kelly recommendation)
+  PASS   <48%  (not included in output)
 
 Parlay rules:
   - Minimum 57% per leg
@@ -24,7 +25,8 @@ log = logging.getLogger(__name__)
 
 LOCK_THRESH   = 0.68
 STRONG_THRESH = 0.62
-LEAN_THRESH   = 0.55
+LEAN_THRESH   = 0.52
+TOSSUP_THRESH = 0.48
 PARLAY_MIN    = 0.57   # minimum per-leg confidence for parlay inclusion
 
 # Approximate payout at -110 per leg (American odds)
@@ -38,6 +40,7 @@ def tier(conf: float) -> str:
     if conf >= LOCK_THRESH:   return "LOCK"
     if conf >= STRONG_THRESH: return "STRONG"
     if conf >= LEAN_THRESH:   return "LEAN"
+    if conf >= TOSSUP_THRESH: return "TOSSUP"
     return "PASS"
 
 
@@ -45,11 +48,12 @@ def stars(conf: float) -> str:
     if conf >= LOCK_THRESH:   return "★★★"
     if conf >= STRONG_THRESH: return "★★ "
     if conf >= LEAN_THRESH:   return "★  "
+    if conf >= TOSSUP_THRESH: return "≈  "
     return "   "
 
 
 def tier_emoji(t: str) -> str:
-    return {"LOCK": "🔒", "STRONG": "⭐⭐", "LEAN": "⭐", "PASS": "—"}.get(t, "")
+    return {"LOCK": "🔒", "STRONG": "⭐⭐", "LEAN": "⭐", "TOSSUP": "≈", "PASS": "—"}.get(t, "")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +62,8 @@ def tier_emoji(t: str) -> str:
 def generate_picks(scored_games: list) -> list:
     """
     Convert scored games into a flat sorted list of individual picks.
-    Only includes picks at or above LEAN threshold.
+    Includes picks down to TOSSUP threshold (48%). TOSSUP picks are shown
+    for coverage only — no Kelly recommendation, no parlay inclusion.
     """
     picks = []
 
@@ -67,11 +72,15 @@ def generate_picks(scored_games: list) -> list:
 
         # ── Moneyline ──────────────────────────────────────────────────────
         ml_conf = g["ml_conf"]
-        if ml_conf >= LEAN_THRESH:
+        if ml_conf >= TOSSUP_THRESH:
+            # opp_team: whichever team is NOT the ml_team
+            ml_team = g["ml_team"]
+            opp_team = g["home_team"] if ml_team == g["away_team"] else g["away_team"]
             picks.append({
                 "type":       "ML",
-                "label":      f"{g['ml_team']} ML",
-                "team":       g["ml_team"],
+                "label":      f"{ml_team} ML",
+                "team":       ml_team,
+                "opp_team":   opp_team,
                 "side":       g["ml_side"],
                 "conf":       ml_conf,
                 "tier":       tier(ml_conf),
@@ -86,12 +95,15 @@ def generate_picks(scored_games: list) -> list:
 
         # ── Totals ─────────────────────────────────────────────────────────
         tot_conf = g["total_conf"]
-        if tot_conf >= LEAN_THRESH:
+        if tot_conf >= TOSSUP_THRESH:
+            total_pick = g["total_pick"]
+            opp_side = "UNDER" if total_pick == "OVER" else "OVER"
             picks.append({
                 "type":       "TOTAL",
-                "label":      f"{g['total_pick']} {g['total_line']}",
-                "team":       g["total_pick"],
-                "side":       g["total_pick"].lower(),
+                "label":      f"{total_pick} {g['total_line']}",
+                "team":       total_pick,
+                "opp_team":   opp_side,
+                "side":       total_pick.lower(),
                 "conf":       tot_conf,
                 "tier":       tier(tot_conf),
                 "stars":      stars(tot_conf),
@@ -105,11 +117,14 @@ def generate_picks(scored_games: list) -> list:
 
         # ── Run Line ───────────────────────────────────────────────────────
         rl_conf = g["rl_conf"]
-        if rl_conf >= LEAN_THRESH and g["rl_team"]:
+        if rl_conf >= TOSSUP_THRESH and g["rl_team"]:
+            rl_team = g["rl_team"]
+            opp_team = g["home_team"] if rl_team == g["away_team"] else g["away_team"]
             picks.append({
                 "type":       "RL",
                 "label":      g["rl_pick"],
-                "team":       g["rl_team"],
+                "team":       rl_team,
+                "opp_team":   opp_team,
                 "side":       "rl",
                 "conf":       rl_conf,
                 "tier":       tier(rl_conf),

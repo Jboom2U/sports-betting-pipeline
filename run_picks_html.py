@@ -235,11 +235,14 @@ def prep_picks(picks, kalshi_data: dict = None):
             # Kalshi
             "kalshi_prob":    kalshi_prob,
             "kalshi_signal":  kalshi_signal,
-            # Kelly Criterion
-            "kelly_pct":      kelly_pct,
+            # Kelly Criterion (0 for TOSSUP picks)
+            "kelly_pct":      kelly_pct if p["tier"] != "TOSSUP" else 0,
             # Total line range (for line shopping)
             "total_line_min": gd.get("total_line_min"),
             "total_line_max": gd.get("total_line_max"),
+            # Opponent info for TOSSUP card split display
+            "opp_team":       p.get("opp_team", ""),
+            "opp_conf":       round((1 - p["conf"]) * 100, 1),
         })
     return out
 
@@ -1043,7 +1046,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .inline-props-empty{font-size:.74rem;color:var(--sub);padding:6px 0;font-style:italic}
 .pick-card.tier-LOCK  {border-top:3px solid var(--gold)}
 .pick-card.tier-STRONG{border-top:3px solid var(--blue)}
-.pick-card.tier-LEAN  {border-top:3px solid var(--green)}
+.pick-card.tier-LEAN  {border-top:3px solid var(--green);opacity:.82}
+.pick-card.tier-TOSSUP{border-left:3px solid rgba(127,119,221,.75);border-radius:0 8px 8px 0;opacity:.78}
 .pick-card.hidden{display:none}
 
 .pick-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
@@ -1060,6 +1064,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .tb-LOCK  {background:rgba(255,193,7,.15);color:var(--gold);border:1px solid rgba(255,193,7,.3)}
 .tb-STRONG{background:rgba(66,165,245,.15);color:var(--blue);border:1px solid rgba(66,165,245,.3)}
 .tb-LEAN  {background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.3)}
+.tb-TOSSUP{background:rgba(127,119,221,.12);color:#a09ae0;border:1px solid rgba(127,119,221,.3)}
 
 .pick-label{font-size:1.08rem;font-weight:700;color:var(--text);margin-bottom:4px}
 .pick-game{font-size:.78rem;color:var(--sub);margin-bottom:12px}
@@ -1070,10 +1075,20 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .bar-LOCK  {background:linear-gradient(90deg,#e65100,var(--gold))}
 .bar-STRONG{background:linear-gradient(90deg,#0d47a1,var(--blue))}
 .bar-LEAN  {background:linear-gradient(90deg,#1b5e20,var(--green))}
+.bar-TOSSUP{background:rgba(127,119,221,.45)}
 .conf-pct{font-size:.95rem;font-weight:700;white-space:nowrap}
 .pct-LOCK  {color:var(--gold)}
 .pct-STRONG{color:var(--blue)}
 .pct-LEAN  {color:var(--green)}
+.pct-TOSSUP{color:#a09ae0}
+.tossup-split{display:flex;gap:8px;margin:10px 0 6px}
+.tossup-side{flex:1;padding:8px 10px;border-radius:6px;
+  border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03)}
+.tossup-side.favored{border-color:rgba(127,119,221,.4);background:rgba(127,119,221,.08)}
+.tossup-team{font-size:.8rem;font-weight:600;color:var(--text)}
+.tossup-pct-fav{font-size:.75rem;color:#a09ae0;margin-top:2px}
+.tossup-pct-other{font-size:.75rem;color:var(--sub);margin-top:2px}
+.tossup-note{font-size:.7rem;color:var(--sub);font-style:italic;margin-top:4px}
 
 .kelly-row{display:flex;align-items:center;gap:6px;font-size:.72rem;color:var(--sub);
   margin:6px 0 2px;padding:4px 8px;background:rgba(76,175,80,.07);
@@ -1378,6 +1393,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <div class="stat-pill">Picks <span id="pickCount">—</span></div>
     <div class="stat-pill">Locks <span id="lockCount">—</span></div>
     <div class="stat-pill">Top Pick <span id="topPick">—</span></div>
+    <a href="/performance" class="status-link">📊 Performance</a>
     <a href="/status" class="status-link">⚙ Status</a>
     <button id="refreshBtn" onclick="doRefresh()">
       <svg id="refreshIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1412,6 +1428,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock — Best Bets</button>
     <button class="filter-btn" data-group="tier" data-val="STRONG">⭐⭐ Strong</button>
     <button class="filter-btn" data-group="tier" data-val="LEAN">⭐ Lean — Watch Only</button>
+    <button class="filter-btn" data-group="tier" data-val="TOSSUP">≈ Toss Up</button>
   </div>
   <div class="search-wrap">
     <input class="search-input" id="teamSearch" placeholder="Search team…" type="text"/>
@@ -1669,11 +1686,41 @@ function renderPicks(){
       </div>`;
     }
 
+    // TOSSUP cards get a special split layout
+    if(p.tier === "TOSSUP") {
+      const typeLabel = p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type;
+      grid.innerHTML += `
+        <div class="pick-card tier-TOSSUP" data-type="${p.type}" data-tier="TOSSUP">
+          <div class="pick-top">
+            <span class="pick-type-badge badge-${p.type}">${typeLabel}</span>
+            <span class="tier-badge tb-TOSSUP">≈ TOSS UP</span>
+          </div>
+          <div class="pick-label">${p.game}</div>
+          <div class="pick-game">Model has no clear edge — shown for coverage</div>
+          <div class="tossup-split">
+            <div class="tossup-side favored">
+              <div class="tossup-team">${p.team}</div>
+              <div class="tossup-pct-fav">${p.conf}% — slight lean</div>
+            </div>
+            <div class="tossup-side">
+              <div class="tossup-team">${p.opp_team}</div>
+              <div class="tossup-pct-other">${p.opp_conf}%</div>
+            </div>
+          </div>
+          <div class="tossup-note">No bet sizing — check sharp action tab before considering</div>
+          <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
+            <span class="toggle-arrow">▶</span> View Player Props for this game
+          </div>
+          <div class="pick-card-props-panel">
+            ${buildInlineProps(p.away, p.home)}
+          </div>
+        </div>`;
+    } else {
     grid.innerHTML += `
       <div class="pick-card tier-${p.tier}" data-type="${p.type}" data-tier="${p.tier}">
         <div class="pick-top">
           <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
-          <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
+          <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}${p.tier==="LEAN"?" — thin edge":""}</span>
         </div>
         <div class="pick-label">${p.label}</div>
         <div class="pick-game">${p.game}</div>
@@ -1697,13 +1744,14 @@ function renderPicks(){
           ${buildInlineProps(p.away, p.home)}
         </div>
       </div>`;
+    }
   });
   document.getElementById("pickResults").innerHTML =
     `Showing <b>${visible}</b> of <b>${DATA_PICKS.length}</b> picks`;
   if(visible===0) grid.innerHTML = `<div class="empty">No picks match the current filters.</div>`;
 }
 
-function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":"⭐"; }
+function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":t==="TOSSUP"?"≈":"⭐"; }
 
 // ── Inline props for pick card ────────────────────────────────────────────────
 function buildInlineProps(away, home){
@@ -3275,16 +3323,10 @@ def main(date=None, no_open=False):
         # Try to run Kalshi scraper on-the-fly if key is available
         try:
             from scrapers.mlb_kalshi_scraper import run as run_kalshi
-            run_kalshi(target_date=actual_date)
-            kalshi_data = load_kalshi(actual_date)
+            kalshi_data = run_kalshi(target_date=actual_date)
         except Exception:
-            pass  # Kalshi not configured — skip silently
+            pass
 
-    # Yesterday's analysis (for dashboard panel)
-    yesterday_data = load_yesterday_analysis(actual_date)
-    yesterday_json = json.dumps(yesterday_data)
-
-    # Line movement (sharp money signals)
     movement_data = load_line_movement(actual_date)
     movement_json = json.dumps(movement_data)
 
@@ -3361,4 +3403,3 @@ if __name__ == "__main__":
     parser.add_argument("--no-open", action="store_true", help="Don't open browser")
     args, _ = parser.parse_known_args()
     main(date=args.date, no_open=args.no_open)
-
