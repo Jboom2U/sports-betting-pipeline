@@ -3330,6 +3330,10 @@ def main(date=None, no_open=False):
     movement_data = load_line_movement(actual_date)
     movement_json = json.dumps(movement_data)
 
+    # Yesterday's analysis panel
+    yesterday_data = load_yesterday_analysis(actual_date)
+    yesterday_json = json.dumps(yesterday_data)
+
     # Serialize projected lineups (loaded earlier for props; reuse here for JS injection)
     proj_lineups_json = json.dumps(proj_lineups_data)
 
