@@ -3326,6 +3326,9 @@ def main(date=None, no_open=False):
             kalshi_data = run_kalshi(target_date=actual_date)
         except Exception:
             pass
+    # Guard: scraper run() returns a result string, not a dict — normalize to dict
+    if not isinstance(kalshi_data, dict):
+        kalshi_data = {}
 
     movement_data = load_line_movement(actual_date)
     movement_json = json.dumps(movement_data)
