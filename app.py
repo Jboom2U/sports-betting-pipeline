@@ -339,16 +339,21 @@ def _picks_html_from_db() -> "str | None":
         return None
 
 
-def _generate() -> str:
-    """Run the dashboard HTML generator and return the HTML string."""
+def _generate() -> "str | None":
+    """
+    Run the dashboard HTML generator and return the full HTML string, or None
+    when no upcoming games are found (e.g. after today's games have all started).
+    Returning None lets the caller decide whether to keep the existing cache rather
+    than replacing a rich dashboard with a stripped-down fallback page.
+    """
     log.info("Generating dashboard...")
     from run_picks_html import main as build_html
     html = build_html(date=None, no_open=True)
     if html:
         log.info("Dashboard generation complete.")
         return html
-    log.info("Dashboard generation returned None — falling back to DB picks.")
-    return _picks_html_from_db() or "<h1>No picks available yet — check back soon.</h1>"
+    log.info("Dashboard generation returned None — today's games have started or no schedule found.")
+    return None
 
 
 GENERATION_TIMEOUT = 4 * 60   # 4 minutes — if generation hangs past this, force-unblock
@@ -368,10 +373,25 @@ def _regenerate_in_background():
                 _run_lineup_refresh()
             html = _generate()
             with _cache_lock:
-                _cache["html"] = html
+                if html is not None:
+                    # Fresh full dashboard — update the cache.
+                    _cache["html"] = html
+                    log.info(f"Background cache refresh complete in {int(time.time()-started)}s.")
+                elif _cache["html"] is not None:
+                    # main() returned None (games started / no upcoming slate) but we
+                    # already have the rich morning dashboard in cache — keep it so the
+                    # site stays populated all day without reverting to a stripped-down page.
+                    log.info(
+                        "Dashboard generation returned None — preserving existing cached "
+                        f"dashboard ({int(time.time()-started)}s). Site stays populated."
+                    )
+                else:
+                    # Nothing in cache and nothing generated — last resort DB fallback.
+                    fallback = _picks_html_from_db()
+                    _cache["html"] = fallback or "<h1>No picks available yet — check back soon.</h1>"
+                    log.info("No cache and no dashboard — serving DB fallback picks page.")
                 _cache["generated_at"] = time.time()
                 _cache["generating"] = False
-            log.info(f"Background cache refresh complete in {int(time.time()-started)}s.")
         except Exception as e:
             log.error(f"Background generation failed: {e}", exc_info=True)
             with _cache_lock:
