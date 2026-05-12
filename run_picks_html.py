@@ -3238,7 +3238,29 @@ def main(date=None, no_open=False):
                 log.info(f"All today's games started — serving saved picks from {_candidate}")
                 with open(_candidate, encoding="utf-8") as _f:
                     return _f.read()
-        log.info(f"No saved picks on disk for {target} — returning None for _generate() DB fallback")
+        # File not on disk (ephemeral Railway container) — try R2
+        log.info(f"No saved picks HTML on disk for {target} — attempting R2 download")
+        try:
+            from db.csv_sync import _get_client, _bucket
+            import tempfile as _tempfile
+            client = _get_client()
+            if client is not None:
+                for _r2_key in [f"picks/mlb_picks_{target}.html", "picks/mlb_picks_latest.html"]:
+                    try:
+                        with _tempfile.NamedTemporaryFile(suffix=".html", delete=False) as _tmp:
+                            _tmp_path = _tmp.name
+                        client.download_file(_bucket(), _r2_key, _tmp_path)
+                        with open(_tmp_path, encoding="utf-8") as _f:
+                            _html = _f.read()
+                        os.unlink(_tmp_path)
+                        if _html:
+                            log.info(f"Served picks HTML from R2 key: {_r2_key}")
+                            return _html
+                    except Exception:
+                        continue
+        except Exception as _e:
+            log.warning(f"R2 picks HTML download failed (non-fatal): {_e}")
+        log.info(f"No picks HTML found on disk or R2 for {target} — returning None")
         return None
 
     if not scored and not all_schedule:
@@ -3410,6 +3432,16 @@ def main(date=None, no_open=False):
     log.info(f"Dashboard saved: {out_path}")
     log.info(f"Picks CSV: {csv_path} ({len(picks)} rows)")
     log.info(f"Latest copy: {latest_path}")
+
+    # Upload the picks HTML to R2 so it survives Railway restarts.
+    # Non-fatal — pipeline continues even if storage is unavailable.
+    try:
+        from db.csv_sync import upload_file as _upload_file
+        _upload_file(out_path,    f"picks/mlb_picks_{actual_date}.html")
+        _upload_file(latest_path, "picks/mlb_picks_latest.html")
+        log.info(f"Picks HTML uploaded to R2 (picks/mlb_picks_{actual_date}.html)")
+    except Exception as _e:
+        log.warning(f"R2 HTML upload failed (non-fatal): {_e}")
     log.info(f"{len(scored)} games | {len(picks)} picks | "
              f"{len(parlays_2)} 2-leg parlays | {len(parlays_3)} 3-leg parlays")
 
