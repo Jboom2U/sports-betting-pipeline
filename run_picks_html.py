@@ -3224,6 +3224,22 @@ def main(date=None, no_open=False):
         log.warning(f"Removed {len(scored) - len(deduped)} duplicate game(s) from scored list")
     scored = deduped
 
+    # If score_today pivoted to a future date (all today's games started/finished),
+    # or today's schedule exists but no upcoming games remain, today's picks are
+    # locked in. Return the morning-generated HTML so the dashboard stays
+    # populated all day even after first pitch — read-only, no re-scoring.
+    _today_games_done = (actual_date != target) or (not scored and bool(all_schedule))
+    if _today_games_done:
+        for _candidate in [
+            os.path.join(PICKS_DIR, f"mlb_picks_{target}.html"),
+            os.path.join(PICKS_DIR, "mlb_picks_latest.html"),
+        ]:
+            if os.path.exists(_candidate):
+                log.info(f"All today's games started — serving saved picks from {_candidate}")
+                with open(_candidate, encoding="utf-8") as _f:
+                    return _f.read()
+        log.info(f"No saved picks found for {target} — proceeding to generate (may be blank)")
+
     if not scored and not all_schedule:
         log.warning(f"No games found for {target}. Run python run_pipeline.py first.")
         return None   # let app.py serve the "check back soon" page — never sys.exit inside Flask
