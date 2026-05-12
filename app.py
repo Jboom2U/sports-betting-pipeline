@@ -809,7 +809,13 @@ def performance_html():
         if not rows else ""
     )
 
-
+    try:
+        from db.picks_store import get_prop_accuracy, get_player_prop_accuracy
+        prop_rows        = get_prop_accuracy(days=days) or []
+        player_prop_rows = get_player_prop_accuracy(days=days) or []
+    except Exception:
+        prop_rows        = []
+        player_prop_rows = []
 
     # -- Props section HTML ---------------------------------------------------
     _BREAKEVEN = 52.4
