@@ -240,13 +240,115 @@ def _run_lineup_refresh():
 
 
 # ── Dashboard generation ──────────────────────────────────────────────────────
+
+def _picks_html_from_db() -> "str | None":
+    """
+    Query the DB for the most recent picks date, load those picks, and return
+    a minimal dark-themed HTML page with a date banner.  Returns None if the
+    DB is unavailable or no picks exist yet.
+    """
+    try:
+        from db.connection import db_conn
+        from db.picks_store import get_picks
+
+        with db_conn() as conn:
+            if conn is None:
+                return None
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT MAX(pick_date) FROM picks WHERE pick_date <= CURRENT_DATE"
+            )
+            row = cur.fetchone()
+            if not row or not row[0]:
+                return None
+            latest_date = str(row[0])
+
+        picks = get_picks(latest_date)
+        if not picks:
+            return None
+
+        # Prefer forward-looking (PENDING) picks; fall back to all picks for that date
+        display = [p for p in picks if p.get("actual_result") == "PENDING"] or picks
+
+        TIER_ORDER = ["LOCK", "STRONG", "LEAN", "TOSSUP"]
+        TIER_COLOR = {"LOCK": "#ffc107", "STRONG": "#42a5f5", "LEAN": "#66bb6a", "TOSSUP": "#a09ae0"}
+
+        cards_html = ""
+        for tier in TIER_ORDER:
+            for p in [x for x in display if x.get("tier") == tier]:
+                color    = TIER_COLOR.get(tier, "#8b949e")
+                conf_pct = f"{float(p.get('conf') or 0)*100:.1f}%"
+                raw_rsn  = p.get("reasoning") or ""
+                reasoning = raw_rsn[:220] + ("…" if len(raw_rsn) > 220 else "")
+                res = p.get("actual_result", "PENDING")
+                res_color = {"WIN": "#3fb950", "LOSS": "#f85149", "PUSH": "#8b949e"}.get(res, "#8b949e")
+                res_badge = (
+                    f'<span style="color:{res_color};font-weight:700;font-size:.75rem;margin-left:8px">{res}</span>'
+                    if res not in ("PENDING", None) else ""
+                )
+                cards_html += (
+                    f'<div style="background:#161b22;border:1px solid #30363d;'
+                    f'border-left:3px solid {color};border-radius:8px;padding:14px 16px;margin-bottom:10px">'
+                    f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+                    f'<span style="color:{color};font-weight:700;font-size:.8rem">{tier}</span>'
+                    f'<span style="color:#8b949e;font-size:.75rem">{p.get("pick_type","").upper()}</span>'
+                    f'<span style="color:#e6edf3;font-size:.8rem;margin-left:auto;font-weight:600">{conf_pct}</span>'
+                    f'{res_badge}</div>'
+                    f'<div style="color:#e6edf3;font-weight:600;margin-bottom:2px">{p.get("label","")}</div>'
+                    f'<div style="color:#8b949e;font-size:.8rem;margin-bottom:6px">{p.get("game","")}</div>'
+                    f'<div style="color:#8b949e;font-size:.75rem;line-height:1.5">{reasoning}</div>'
+                    f'</div>'
+                )
+
+        today_str  = datetime.now(ET).strftime("%Y-%m-%d")
+        is_today   = (latest_date == today_str)
+        banner_msg = (
+            f"Today's picks — {latest_date} &nbsp;·&nbsp; Picks lock once games start"
+            if is_today else
+            f"Showing picks from {latest_date} &nbsp;·&nbsp; Next pipeline run at 6 am ET loads today's picks"
+        )
+
+        return (
+            "<!DOCTYPE html><html lang='en'><head>"
+            "<meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>Statalizers — {latest_date}</title>"
+            "<style>"
+            "*{box-sizing:border-box;margin:0;padding:0}"
+            "body{background:#0d1117;color:#e6edf3;"
+            "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "min-height:100vh;padding:0 0 40px}"
+            ".banner{background:#1c2128;border-bottom:1px solid #30363d;"
+            "padding:10px 20px;font-size:.85rem;color:#8b949e;text-align:center}"
+            ".banner strong{color:#ffc107}"
+            ".wrap{max-width:820px;margin:24px auto;padding:0 16px}"
+            "h1{font-size:1.3rem;font-weight:700;margin-bottom:4px}"
+            ".sub{color:#8b949e;font-size:.8rem;margin-bottom:20px}"
+            "</style></head><body>"
+            f"<div class='banner'>⚾ Statalizers &nbsp;|&nbsp; <strong>{banner_msg}</strong>"
+            f" &nbsp;|&nbsp; {len(display)} picks</div>"
+            "<div class='wrap'>"
+            f"<h1>MLB Picks</h1>"
+            f"<p class='sub'>{latest_date}</p>"
+            + (cards_html or "<p style='color:#8b949e'>No picks to display.</p>")
+            + "</div></body></html>"
+        )
+
+    except Exception as e:
+        log.warning(f"_picks_html_from_db failed: {e}")
+        return None
+
+
 def _generate() -> str:
     """Run the dashboard HTML generator and return the HTML string."""
     log.info("Generating dashboard...")
     from run_picks_html import main as build_html
     html = build_html(date=None, no_open=True)
-    log.info("Dashboard generation complete.")
-    return html or "<h1>No picks available yet — check back soon.</h1>"
+    if html:
+        log.info("Dashboard generation complete.")
+        return html
+    log.info("Dashboard generation returned None — falling back to DB picks.")
+    return _picks_html_from_db() or "<h1>No picks available yet — check back soon.</h1>"
 
 
 GENERATION_TIMEOUT = 4 * 60   # 4 minutes — if generation hangs past this, force-unblock

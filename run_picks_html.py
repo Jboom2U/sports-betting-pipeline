@@ -3238,7 +3238,8 @@ def main(date=None, no_open=False):
                 log.info(f"All today's games started — serving saved picks from {_candidate}")
                 with open(_candidate, encoding="utf-8") as _f:
                     return _f.read()
-        log.info(f"No saved picks found for {target} — proceeding to generate (may be blank)")
+        log.info(f"No saved picks on disk for {target} — returning None for _generate() DB fallback")
+        return None
 
     if not scored and not all_schedule:
         log.warning(f"No games found for {target}. Run python run_pipeline.py first.")
