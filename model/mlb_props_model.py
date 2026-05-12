@@ -104,6 +104,49 @@ def _hr_tier(conf: float) -> str:
     return "SKIP"
 
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRAILING HIT RATE BLEND
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _apply_trailing_hit_rate(player_name: str, prop_type: str, line,
+                              base_conf: float, days: int = 30) -> tuple[float, float | None]:
+    """
+    Blend model base confidence with player's trailing hit rate.
+    Returns (adjusted_conf, trailing_hit_rate_or_None).
+
+    Only applied when >= 5 graded results exist for this player/prop/line.
+    Blend: 0.70 * base_conf + 0.30 * trailing_hit_rate
+    Bonus +2% if trailing >= 0.65; penalty -3% if trailing <= 0.40.
+    Cap: [0.40, 0.92].
+    """
+    try:
+        from db.picks_store import get_player_trailing_hit_rate
+        thr = get_player_trailing_hit_rate(player_name, prop_type, line, days=days)
+    except Exception:
+        return base_conf, None
+
+    if thr is None:
+        return base_conf, None
+
+    blended = 0.70 * base_conf + 0.30 * thr
+    if thr >= 0.65:
+        blended += 0.02
+    elif thr <= 0.40:
+        blended -= 0.03
+
+    blended = max(0.40, min(0.92, blended))
+
+    if abs(blended - base_conf) >= 0.005:
+        log.info(
+            f"Trailing hit rate for {player_name} {prop_type} {line}: "
+            f"{thr:.1%} (last {days}d) | conf {base_conf:.1%} -> {blended:.1%}"
+        )
+
+    return round(blended, 4), thr
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HOME RUN PROPS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -849,11 +892,12 @@ def score_all_props(target_date: str = None) -> list[dict]:
         home_pitcher_opp = pitcher_opp_from_name(home_sp)
 
         def _finalize_prop(prop: dict | None, side: str) -> dict | None:
-            """Apply Statcast adjustment and return final prop or None."""
+            """Apply Statcast + trailing hit rate adjustments; return final prop or None."""
             if prop is None:
                 return None
             pname = prop.get("player_name", "")
             ptype = prop.get("prop_type", "")
+            line  = prop.get("line", 0)
             base  = prop.get("confidence", 0.0)
             adj_conf, sc_note = _statcast_adjust(pname, base, ptype)
             if sc_note:
@@ -876,6 +920,13 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     prop["tier"] = _tier(adj_conf)
                 if prop["tier"] == "SKIP":
                     return None
+            # Apply trailing hit rate blend (non-fatal — returns base_conf unchanged if no history)
+            final_conf, thr = _apply_trailing_hit_rate(pname, ptype, line, prop["confidence"])
+            prop["confidence"] = final_conf
+            prop["trailing_hit_rate"] = thr
+            if thr is not None:
+                hits_n = round(thr * 30)  # approximate count out of 30d window
+                prop["reasoning"] = prop.get("reasoning", "") + f" | Hit {thr:.0%} last 30d"
             return prop
 
         # ── Hitter props (away batters face home SP, home batters face away SP)

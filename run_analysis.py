@@ -713,6 +713,167 @@ def push_grades_to_db(graded_picks: list, date: str) -> int:
     return updated
 
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROP GRADING
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PROP_STAT_MAP = {
+    "HR":   ("batting",  "homeRuns"),
+    "HITS": ("batting",  "hits"),
+    "TB":   ("batting",  "totalBases"),
+    "RBI":  ("batting",  "rbi"),
+    "R":    ("batting",  "runs"),
+    "SB":   ("batting",  "stolenBases"),
+    "K":    ("pitching", "strikeOuts"),
+}
+
+
+def grade_prop_outcomes(date: str):
+    """
+    For each player in player_prop_history with game_date=date and result=NULL,
+    fetch the actual box score stat from MLB Stats API and grade the prop.
+    Non-fatal: logs warnings and continues on any lookup failure.
+    """
+    try:
+        from db.picks_store import grade_prop_pick as db_grade_prop
+        from db.connection import db_conn
+    except ImportError:
+        log.debug("db package not available — skipping prop grading")
+        return
+
+    # Fetch ungraded props for this date
+    ungraded = []
+    try:
+        with db_conn() as conn:
+            if conn is None:
+                return
+            cur = conn.cursor()
+            cur.execute(
+                """SELECT id, player_name, team, away_team, home_team,
+                          prop_type, line
+                   FROM player_prop_history
+                   WHERE game_date = %s AND result IS NULL""",
+                (date,)
+            )
+            cols = [d[0] for d in cur.description]
+            ungraded = [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as e:
+        log.warning(f"grade_prop_outcomes: failed to fetch ungraded props: {e}")
+        return
+
+    if not ungraded:
+        log.info(f"No ungraded props for {date}")
+        return
+
+    log.info(f"Grading {len(ungraded)} prop pick(s) for {date}")
+
+    # Fetch schedule to get game_pks for final games on this date
+    try:
+        resp = requests.get(
+            f"{MLB_API}/schedule",
+            params={"sportId": 1, "date": date, "hydrate": "linescore", "gameType": "R"},
+            headers={"User-Agent": "mlb-betting-pipeline/1.0"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        sched_data = resp.json()
+    except Exception as e:
+        log.warning(f"grade_prop_outcomes: schedule fetch failed for {date}: {e}")
+        return
+
+    # (away_team, home_team) -> game_pk for final games
+    game_pk_map: dict[tuple, int] = {}
+    for date_entry in sched_data.get("dates", []):
+        for game in date_entry.get("games", []):
+            if game.get("status", {}).get("abstractGameState") != "Final":
+                continue
+            away = game["teams"]["away"]["team"]["name"]
+            home = game["teams"]["home"]["team"]["name"]
+            game_pk_map[(away, home)] = game["gamePk"]
+
+    # Cache boxscores to avoid re-fetching the same game
+    _bs_cache: dict[int, dict | None] = {}
+
+    def _get_boxscore(game_pk: int) -> dict | None:
+        if game_pk in _bs_cache:
+            return _bs_cache[game_pk]
+        try:
+            r = requests.get(
+                f"{MLB_API}/game/{game_pk}/boxscore",
+                headers={"User-Agent": "mlb-betting-pipeline/1.0"},
+                timeout=15,
+            )
+            r.raise_for_status()
+            _bs_cache[game_pk] = r.json()
+        except Exception as ex:
+            log.warning(f"grade_prop_outcomes: boxscore fetch failed game_pk={game_pk}: {ex}")
+            _bs_cache[game_pk] = None
+        return _bs_cache[game_pk]
+
+    graded_count = 0
+    for prop in ungraded:
+        try:
+            away_team   = prop.get("away_team", "")
+            home_team   = prop.get("home_team", "")
+            player_name = prop["player_name"]
+            prop_type   = prop["prop_type"]
+            line        = float(prop["line"])
+
+            # Match game by fuzzy team name
+            game_pk = None
+            for (a, h), pk in game_pk_map.items():
+                a_n = _normalize_team(a)
+                h_n = _normalize_team(h)
+                at  = _normalize_team(away_team) if away_team else ""
+                ht  = _normalize_team(home_team) if home_team else ""
+                away_ok = not at or (at in a_n or a_n in at)
+                home_ok = not ht or (ht in h_n or h_n in ht)
+                if away_ok and home_ok:
+                    game_pk = pk
+                    break
+
+            if game_pk is None:
+                log.debug(f"grade_prop_outcomes: no game_pk for {away_team} @ {home_team}")
+                continue
+
+            bs = _get_boxscore(game_pk)
+            if not bs:
+                continue
+
+            stat_cat, stat_field = _PROP_STAT_MAP.get(prop_type, (None, None))
+            if not stat_cat:
+                log.debug(f"grade_prop_outcomes: unknown prop_type {prop_type}")
+                continue
+
+            # Search both sides of the boxscore for the player
+            actual_value = None
+            pn_lower = player_name.lower()
+            for side in ("away", "home"):
+                for pdata in bs.get("teams", {}).get(side, {}).get("players", {}).values():
+                    full_name = pdata.get("person", {}).get("fullName", "").lower()
+                    if pn_lower in full_name or full_name in pn_lower:
+                        val = pdata.get("stats", {}).get(stat_cat, {}).get(stat_field)
+                        if val is not None:
+                            actual_value = float(val)
+                        break
+                if actual_value is not None:
+                    break
+
+            if actual_value is None:
+                log.debug(f"grade_prop_outcomes: stat not found for {player_name} ({prop_type})")
+                continue
+
+            db_grade_prop(date, player_name, prop_type, line, actual_value)
+            log.info(f"Prop graded: {player_name} {prop_type} line={line} actual={actual_value}")
+            graded_count += 1
+
+        except Exception as e:
+            log.warning(f"grade_prop_outcomes: failed for {prop.get('player_name')} {prop.get('prop_type')}: {e}")
+
+    log.info(f"grade_prop_outcomes complete: {graded_count}/{len(ungraded)} props graded for {date}")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
@@ -755,6 +916,7 @@ def run(date: str):
 
     # Persist grades to PostgreSQL (non-fatal if DB unavailable)
     push_grades_to_db(graded, date)
+    grade_prop_outcomes(date)
 
     return {
         "date":     date,

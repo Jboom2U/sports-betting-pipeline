@@ -17,7 +17,7 @@ from datetime import datetime
 # ── Persistence helpers (non-fatal — work without DATABASE_URL / STORAGE_*) ───
 try:
     from db.pipeline_log import mark_pipeline_started, mark_pipeline_complete, mark_pipeline_failed
-    from db.picks_store import save_picks, save_scored_games
+    from db.picks_store import save_picks, save_scored_games, save_prop_pick
     from db.csv_sync import upload_all as csv_upload_all, storage_available
     _DB_AVAILABLE = True
 except ImportError as _e:
@@ -28,6 +28,7 @@ except ImportError as _e:
     def mark_pipeline_failed(n=""): pass
     def save_picks(p, d):            return 0
     def save_scored_games(g, d):     return 0
+    def save_prop_pick(*a, **kw):    return None
     def csv_upload_all():            return 0
     def storage_available():         return False
 
@@ -269,6 +270,32 @@ def main(date=None):
             )
     except Exception as e:
         log.warning(f"DB save failed (non-fatal): {e}")
+
+    # ── Step 8b: Save prop picks to DB ───────────────────────────────────────
+    try:
+        today_str2 = actual_date if 'actual_date' in dir() else (
+            datetime.now().strftime("%Y-%m-%d") if not date else date
+        )
+        from model.mlb_props_model import score_all_props as _score_props
+        prop_picks = _score_props(target_date=today_str2)
+        saved_props = 0
+        for pp in prop_picks:
+            if pp.get("projected"):
+                continue  # only save confirmed lineup props
+            save_prop_pick(
+                game_date  = today_str2,
+                player_name= pp.get("player_name", ""),
+                team       = pp.get("side", ""),
+                away_team  = pp.get("away_team", ""),
+                home_team  = pp.get("home_team", ""),
+                prop_type  = pp.get("prop_type", ""),
+                line       = pp.get("line", 0),
+                model_conf = pp.get("confidence", 0),
+            )
+            saved_props += 1
+        log.info(f"DB: {saved_props} prop picks saved for {today_str2}.")
+    except Exception as e:
+        log.warning(f"Prop picks DB save failed (non-fatal): {e}")
 
     # ── Step 9: Upload CSVs to object storage FIRST ──────────────────────────
     # IMPORTANT: Upload before marking pipeline complete so that if the upload

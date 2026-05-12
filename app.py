@@ -809,6 +809,97 @@ def performance_html():
         if not rows else ""
     )
 
+
+
+    # -- Props section HTML ---------------------------------------------------
+    _BREAKEVEN = 52.4
+    _prop_total_picks = sum(int(r.get('total') or 0) for r in prop_rows)
+    _prop_total_hits  = sum(int(r.get('hits')  or 0) for r in prop_rows)
+    _prop_overall_hr  = (_prop_total_hits / _prop_total_picks * 100) if _prop_total_picks > 0 else 0
+    _prop_overall_str = f'{_prop_overall_hr:.1f}%' if _prop_total_picks > 0 else '---'
+
+    __best  = max(prop_rows, key=lambda r: float(r.get('hit_rate') or 0), default=None)
+    __worst = min(prop_rows, key=lambda r: float(r.get('hit_rate') or 0), default=None)
+    _best_prop_str  = (f"{__best['prop_type']} — {float(__best['hit_rate'])*100:.0f}%"
+                      if __best else '---')
+    _worst_prop_str = (f"{__worst['prop_type']} — {float(__worst['hit_rate'])*100:.0f}%"
+                      if __worst else '---')
+
+    _prop_type_rows = []
+    for _r in prop_rows:
+        _pt    = _r.get('prop_type', '')
+        _tot   = int(_r.get('total') or 0)
+        _hits  = int(_r.get('hits')  or 0)
+        _hrv   = float(_r.get('hit_rate') or 0) * 100
+        _hrs   = f'{_hrv:.1f}%' if _tot > 0 else '---'
+        _vsbe  = _hrv - _BREAKEVEN
+        _vsbes = f'+{_vsbe:.1f}%' if _vsbe >= 0 else f'{_vsbe:.1f}%'
+        _cc    = '#3fb950' if _vsbe >= 0 else '#f85149'
+        _ac    = float(_r.get('avg_conf') or 0) * 100
+        _prop_type_rows.append(
+            f'<tr><td style="font-weight:600">{_pt}</td>'
+            f'<td>{_tot}</td><td>{_hits}</td>'
+            f'<td><strong>{_hrs}</strong></td>'
+            f'<td style="color:{_cc}">{_vsbes}</td>'
+            f'<td style="color:#8b949e">{_ac:.1f}%</td></tr>'
+        )
+    _prop_type_body = ''.join(_prop_type_rows) or (
+        '<tr><td colspan="6" style="color:#8b949e;padding:14px">No graded props yet.</td></tr>'
+    )
+
+    _player_rows = []
+    for _r in player_prop_rows[:30]:
+        _pn   = _r.get('player_name', '')
+        _pt   = _r.get('prop_type', '')
+        _tot  = int(_r.get('total') or 0)
+        _hrv  = float(_r.get('hit_rate') or 0) * 100
+        _hrs  = f'{_hrv:.1f}%'
+        _ac   = float(_r.get('avg_conf') or 0) * 100
+        _hc   = '#3fb950' if _hrv >= _BREAKEVEN else '#f85149'
+        _player_rows.append(
+            f'<tr><td>{_pn}</td><td style="color:#8b949e">{_pt}</td>'
+            f'<td>{_tot}</td>'
+            f'<td style="color:{_hc};font-weight:600">{_hrs}</td>'
+            f'<td style="color:#8b949e">{_ac:.1f}%</td></tr>'
+        )
+    _player_body = ''.join(_player_rows) or (
+        '<tr><td colspan="5" style="color:#8b949e;padding:14px">Need 5+ picks per player to show.</td></tr>'
+    )
+
+    _props_section_html = (
+        '<div class="secondary-section" style="margin-top:32px">'
+        '<div class="secondary-toggle" '
+        'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
+        'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">'
+        '<span class="arr">&#9654;</span> Player Props Performance'
+        '</div><div class="secondary-body">'
+        f'<div class="stat-grid" style="margin-top:14px">'
+        f'<div class="stat-card"><div class="stat-val">{_prop_overall_str}</div>'
+        f'<div class="stat-lbl">Props Hit Rate</div></div>'
+        f'<div class="stat-card"><div class="stat-val" style="font-size:1.05rem">{_best_prop_str}</div>'
+        f'<div class="stat-lbl">Best Prop Type</div></div>'
+        f'<div class="stat-card"><div class="stat-val" style="font-size:1.05rem">{_worst_prop_str}</div>'
+        f'<div class="stat-lbl">Worst Prop Type</div></div>'
+        f'<div class="stat-card"><div class="stat-val">{_prop_total_picks}</div>'
+        f'<div class="stat-lbl">Total Props Graded</div></div>'
+        f'</div>'
+        f'<div class="table-card" style="margin-top:14px">'
+        f'<div class="section-title" style="padding:12px 14px 0">Hit Rate by Prop Type</div>'
+        f'<table><thead><tr><th>Prop</th><th>Picks</th><th>Hits</th>'
+        f'<th>Hit Rate</th><th>vs Break-even</th><th>Avg Conf</th></tr></thead>'
+        f'<tbody>{_prop_type_body}</tbody></table></div>'
+        '<div class="secondary-section" style="margin-top:12px">'
+        '<div class="secondary-toggle" '
+        'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
+        'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">'
+        '<span class="arr">&#9654;</span> Top Players (5+ picks)</div>'
+        '<div class="secondary-body"><div class="table-card"><table>'
+        '<thead><tr><th>Player</th><th>Prop</th><th>Picks</th>'
+        '<th>Hit Rate</th><th>Avg Conf</th></tr></thead>'
+        f'<tbody>{_player_body}</tbody></table></div></div></div>'
+        '</div></div>'
+    )
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -919,6 +1010,8 @@ def performance_html():
       </div>
     </div>
   </div>
+
+  {_props_section_html}
 
 </body>
 </html>"""

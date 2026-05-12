@@ -272,3 +272,177 @@ def get_accuracy_summary(days: int = 30) -> dict:
         except Exception as e:
             log.warning(f"get_accuracy_summary failed: {e}")
             return {}
+
+
+# ── Prop history ──────────────────────────────────────────────────────────────
+
+def save_prop_pick(game_date, player_name, team, away_team, home_team,
+                   prop_type, line, model_conf):
+    """Insert a prop pick row (ungraded). Ignores duplicates."""
+    with db_conn() as conn:
+        if conn is None:
+            log.debug("No DB — prop pick not saved.")
+            return
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO player_prop_history
+                    (game_date, player_name, team, away_team, home_team,
+                     prop_type, line, model_conf)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (game_date, player_name, prop_type, line) DO NOTHING
+                """,
+                (game_date, player_name, team, away_team, home_team,
+                 prop_type, float(line), round(float(model_conf), 3))
+            )
+        except Exception as e:
+            log.warning(f"save_prop_pick failed: {e}")
+
+
+def grade_prop_pick(game_date, player_name, prop_type, line, actual_value):
+    """Set actual_value and result (OVER/UNDER/PUSH) for a prop row."""
+    line_f   = float(line)
+    actual_f = float(actual_value)
+    if actual_f > line_f:
+        result = "OVER"
+    elif actual_f < line_f:
+        result = "UNDER"
+    else:
+        result = "PUSH"
+
+    with db_conn() as conn:
+        if conn is None:
+            return
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE player_prop_history
+                SET actual_value = %s,
+                    result       = %s,
+                    graded_at    = NOW()
+                WHERE game_date   = %s
+                  AND player_name = %s
+                  AND prop_type   = %s
+                  AND line        = %s
+                  AND result IS NULL
+                """,
+                (actual_f, result, game_date, player_name, prop_type, line_f)
+            )
+        except Exception as e:
+            log.warning(f"grade_prop_pick failed ({player_name}/{prop_type}): {e}")
+
+
+def get_prop_accuracy(days: int = 30) -> list:
+    """
+    Return prop hit rates by prop_type and overall.
+    Returns list of dicts: {prop_type, total, hits, hit_rate, avg_conf}
+    """
+    rows = []
+    with db_conn() as conn:
+        if conn is None:
+            return []
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    prop_type,
+                    COUNT(*) FILTER (WHERE result IN ('OVER','UNDER','PUSH')) AS total,
+                    COUNT(*) FILTER (WHERE result = 'OVER')  AS hits,
+                    ROUND(
+                        COUNT(*) FILTER (WHERE result = 'OVER')::numeric /
+                        NULLIF(COUNT(*) FILTER (WHERE result IN ('OVER','UNDER','PUSH')), 0),
+                        3
+                    ) AS hit_rate,
+                    ROUND(AVG(model_conf)::numeric, 3) AS avg_conf
+                FROM player_prop_history
+                WHERE game_date >= CURRENT_DATE - INTERVAL '%s days'
+                  AND result IS NOT NULL
+                GROUP BY prop_type
+                ORDER BY hit_rate DESC NULLS LAST
+                """,
+                (days,)
+            )
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        except Exception as e:
+            log.warning(f"get_prop_accuracy failed: {e}")
+    return rows
+
+
+def get_player_prop_accuracy(days: int = 30, min_picks: int = 5) -> list:
+    """
+    Return per-player hit rates for each prop type.
+    Returns list of dicts: {player_name, prop_type, total, hits, hit_rate, avg_conf}
+    Filtered to players with >= min_picks graded results.
+    """
+    rows = []
+    with db_conn() as conn:
+        if conn is None:
+            return []
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    player_name,
+                    prop_type,
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE result = 'OVER') AS hits,
+                    ROUND(
+                        COUNT(*) FILTER (WHERE result = 'OVER')::numeric /
+                        NULLIF(COUNT(*), 0),
+                        3
+                    ) AS hit_rate,
+                    ROUND(AVG(model_conf)::numeric, 3) AS avg_conf
+                FROM player_prop_history
+                WHERE game_date >= CURRENT_DATE - INTERVAL '%s days'
+                  AND result IS NOT NULL
+                GROUP BY player_name, prop_type
+                HAVING COUNT(*) >= %s
+                ORDER BY hit_rate DESC NULLS LAST
+                """,
+                (days, min_picks)
+            )
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        except Exception as e:
+            log.warning(f"get_player_prop_accuracy failed: {e}")
+    return rows
+
+
+def get_player_trailing_hit_rate(player_name: str, prop_type: str,
+                                  line, days: int = 30):
+    """
+    Return trailing hit rate (0.0-1.0) for a specific player/prop/line combo.
+    Returns None if fewer than 5 graded results exist.
+    """
+    with db_conn() as conn:
+        if conn is None:
+            return None
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE result = 'OVER') AS hits
+                FROM player_prop_history
+                WHERE player_name = %s
+                  AND prop_type   = %s
+                  AND line        = %s
+                  AND game_date  >= CURRENT_DATE - INTERVAL '%s days'
+                  AND result IS NOT NULL
+                """,
+                (player_name, prop_type, float(line), days)
+            )
+            row = cur.fetchone()
+            if not row or row[0] < 5:
+                return None
+            total, hits = row
+            return round(hits / total, 3) if total > 0 else None
+        except Exception as e:
+            log.warning(f"get_player_trailing_hit_rate failed: {e}")
+            return None

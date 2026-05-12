@@ -98,11 +98,32 @@ CREATE TABLE IF NOT EXISTS scored_games (
 );
 """
 
+_PLAYER_PROP_HISTORY = """
+CREATE TABLE IF NOT EXISTS player_prop_history (
+    id              SERIAL PRIMARY KEY,
+    game_date       DATE NOT NULL,
+    player_name     TEXT NOT NULL,
+    team            TEXT,
+    away_team       TEXT,
+    home_team       TEXT,
+    prop_type       TEXT NOT NULL,
+    line            NUMERIC(4,1) NOT NULL,
+    actual_value    NUMERIC(5,1),
+    result          TEXT,
+    model_conf      NUMERIC(5,3),
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    graded_at       TIMESTAMPTZ,
+    UNIQUE (game_date, player_name, prop_type, line)
+);
+"""
+
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_picks_pick_date    ON picks(pick_date);",
     "CREATE INDEX IF NOT EXISTS idx_picks_actual_result ON picks(actual_result);",
     "CREATE INDEX IF NOT EXISTS idx_scored_score_date  ON scored_games(score_date);",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_run_date  ON pipeline_runs(run_date);",
+    "CREATE INDEX IF NOT EXISTS idx_prop_history_player ON player_prop_history (player_name, prop_type);",
+    "CREATE INDEX IF NOT EXISTS idx_prop_history_date   ON player_prop_history (game_date);",
 ]
 
 
@@ -121,6 +142,7 @@ def create_all():
             cur.execute(_PIPELINE_RUNS)
             cur.execute(_PICKS)
             cur.execute(_SCORED_GAMES)
+            cur.execute(_PLAYER_PROP_HISTORY)
             for idx in _INDEXES:
                 cur.execute(idx)
             log.info("DB schema verified / created.")
