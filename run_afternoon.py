@@ -96,6 +96,30 @@ def main():
             from scrapers.mlb_hitter_scraper import run as run_hitters
             run_hitters(target_date=today)
             log.info("Hitter stats refreshed — props will now populate")
+
+            # Save confirmed prop picks to DB (ON CONFLICT DO NOTHING so safe to re-run)
+            try:
+                from model.mlb_props_model import score_all_props
+                from db.picks_store import save_prop_pick
+                props = score_all_props(target_date=today)
+                saved = 0
+                for _p in props:
+                    if _p.get("projected"):
+                        continue  # skip non-confirmed lineup props
+                    save_prop_pick(
+                        game_date=today,
+                        player_name=_p.get("player_name", ""),
+                        team=_p.get("team", ""),
+                        away_team=_p.get("away_team", ""),
+                        home_team=_p.get("home_team", ""),
+                        prop_type=_p.get("prop_type", ""),
+                        line=_p.get("line", 0),
+                        model_conf=_p.get("confidence", 0),
+                    )
+                    saved += 1
+                log.info(f"Props saved to DB: {saved} confirmed picks")
+            except Exception as _pe:
+                log.warning(f"Prop DB save failed (non-fatal): {_pe}")
         else:
             log.info("No confirmed lineups yet. Try again closer to first pitch.")
     except Exception as e:
