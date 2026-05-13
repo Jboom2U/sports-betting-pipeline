@@ -1,5 +1,14 @@
 # Statalizers — Project Context for Claude
 
+## ⚠️ CRITICAL: Log Timestamps Are UTC — Always Convert to ET
+**Railway logs always show UTC time. NEVER read a log timestamp as ET.**
+- Subtract 4 hours (EDT) or 5 hours (EST) to get ET
+- Example: log shows `22:32` → actual time is `6:32pm ET`
+- This mistake has been made repeatedly and causes incorrect diagnosis
+- When reading any log line, always convert before reasoning about what was happening at that time
+
+---
+
 ## What This Is
 MLB betting dashboard at **statalizers.com**, deployed on **Railway.app**. Built by Justin Skelly (jskellly@gmail.com). Flask app that runs a full data pipeline every morning at 6am ET, scores today's MLB games across moneyline, run line, totals, and player props, and serves an HTML dashboard with picks tiered by confidence (LOCK / STRONG / LEAN).
 
@@ -251,10 +260,4 @@ HR (0.5+), HITS (0.5+), TB (1.5+), RBI (0.5+), R (0.5+), SB (0.5+), K (SP strike
 ---
 
 ## Known Issues / Watch Points
-- **Odds API free tier** — 500 req/month. Deploys trigger pipeline runs which burn quota. May 2026 exhausted due to multiple deploys. Resets May 1st. Quota warnings now logged at 150/75/25 remaining.
-- **Polymarket sandbox** can't reach gamma-api.polymarket.com (proxy 403) — scraper built from API docs, untested until Railway runs it
-- **statalizers-pipeline** R2 bucket — empty, created by accident, can be deleted from Cloudflare
-
-## Session Notes
-- New chat sessions: say "read CLAUDE.md" and Claude will load full context
-- File path: `C:\Users\Jskel\OneDrive\Documents\GitHub\sports-betting-pipeline\CLAUDE.md`
+- **Odds API free tier** — 500 req/month. Deploys trigger pipeline runs which burn quota. May 2026 exhausted due to multiple deploys. Resets May 1st. Quota warnings now logged at 150/75/25 re

@@ -1486,6 +1486,40 @@ def warm_cache():
         else:
             log.info("Today's pipeline data exists -- skipping full pipeline run.")
 
+        # ── Step 3b: Seed cache from R2 HTML ───────────────────────
+        # If Railway restarted mid-day after a deploy, the in-memory cache is gone but
+        # R2 has the HTML generated this morning. Seed the cache with it NOW so the site
+        # serves the full dashboard immediately. If fresh generation succeeds later, it
+        # replaces this. If generation returns None (games started / schedule gap), the
+        # existing logic in _regenerate_in_background already preserves the cache.
+        try:
+            from db.csv_sync import _get_client, _bucket
+            _r2 = _get_client()
+            if _r2:
+                import tempfile as _tmpmod
+                _today_str = datetime.now(ET).strftime("%Y-%m-%d")
+                for _r2_key in [
+                    f"picks/mlb_picks_{_today_str}.html",
+                    "picks/mlb_picks_latest.html",
+                ]:
+                    try:
+                        with _tmpmod.NamedTemporaryFile(suffix=".html", delete=False) as _tf:
+                            _tf_path = _tf.name
+                        _r2.download_file(_bucket(), _r2_key, _tf_path)
+                        with open(_tf_path, encoding="utf-8") as _f:
+                            _r2_html = _f.read()
+                        os.remove(_tf_path)
+                        if _r2_html:
+                            with _cache_lock:
+                                _cache["html"] = _r2_html
+                                _cache["generated_at"] = time.time()
+                            log.info(f"Startup: cache seeded from R2 ({_r2_key}) -- site ready immediately.")
+                            break
+                    except Exception:
+                        continue
+        except Exception as _r2e:
+            log.debug(f"R2 cache seed skipped: {_r2e}")
+
         # ── Step 4: Dashboard cache ──────────────────────────────────────────────────────────────────────────────────
         log.info("Warming dashboard cache...")
         _regenerate_in_background()
