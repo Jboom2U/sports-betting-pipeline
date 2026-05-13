@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS picks (
     conf            REAL        NOT NULL,
     tier            TEXT        NOT NULL,   -- LOCK | STRONG | LEAN
     reasoning       TEXT,
+    market_signal  TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Backtesting fields — filled by the grading step after game results are in
@@ -143,6 +144,10 @@ def create_all():
             cur.execute(_PICKS)
             cur.execute(_SCORED_GAMES)
             cur.execute(_PLAYER_PROP_HISTORY)
+            # Additive migration — add market_signal column if it doesn't exist yet
+            cur.execute(
+                """ALTER TABLE picks ADD COLUMN IF NOT EXISTS market_signal TEXT"""
+            )
             for idx in _INDEXES:
                 cur.execute(idx)
             log.info("DB schema verified / created.")
