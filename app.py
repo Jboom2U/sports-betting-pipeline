@@ -843,6 +843,14 @@ def performance_html():
     except Exception as e:
         rows = []
 
+    try:
+        from db.picks_store import get_accuracy_by_market_signal, get_monthly_accuracy
+        mkt_signal_rows = get_accuracy_by_market_signal(days=days) or []
+        monthly_rows    = get_monthly_accuracy() or []
+    except Exception:
+        mkt_signal_rows = []
+        monthly_rows    = []
+
     # ── Aggregate stats ───────────────────────────────────────────────────────
     total_w = sum(r.get("wins",   0) or 0 for r in rows)
     total_l = sum(r.get("losses", 0) or 0 for r in rows)
@@ -1028,6 +1036,90 @@ def performance_html():
         '</div></div>'
     )
 
+    # ── Market Signal section HTML ─────────────────────────────────────────
+    _MKT_SIGNAL_ORDER = ["CONFIRM", "DIVERGE", "NEUTRAL"]
+    _MKT_SIGNAL_COLOR = {"CONFIRM": "#3fb950", "DIVERGE": "#f85149", "NEUTRAL": "#8b949e"}
+    _MKT_SIGNAL_ICON  = {"CONFIRM": "&#10003;", "DIVERGE": "&#10007;", "NEUTRAL": "&mdash;"}
+    _mkt_index = {r.get("market_signal"): r for r in mkt_signal_rows}
+    _mkt_rows_html = ""
+    for _sig in _MKT_SIGNAL_ORDER:
+        _rd  = _mkt_index.get(_sig, {})
+        _w4  = int(_rd.get("wins",   0) or 0)
+        _l4  = int(_rd.get("losses", 0) or 0)
+        _p4  = int(_rd.get("pushes", 0) or 0)
+        _d4  = _w4 + _l4
+        _wr4 = f"{_w4/_d4*100:.1f}%" if _d4 > 0 else "&mdash;"
+        _ac4 = f"{float(_rd.get('avg_conf') or 0)*100:.1f}%" if _rd else "&mdash;"
+        _clr = _MKT_SIGNAL_COLOR.get(_sig, "#8b949e")
+        _ico = _MKT_SIGNAL_ICON.get(_sig, "")
+        _mkt_rows_html += (
+            f"<tr><td style='color:{_clr};font-weight:600'>{_ico} {_sig}</td>"
+            f"<td style='color:#3fb950'>{_w4}</td>"
+            f"<td style='color:#f85149'>{_l4}</td>"
+            f"<td style='color:#8b949e'>{_p4}</td>"
+            f"<td><strong>{_wr4}</strong></td>"
+            f"<td style='color:#8b949e'>{_ac4}</td></tr>\n"
+        )
+    _no_mkt = "<tr><td colspan='6' style='color:#8b949e;padding:14px'>No graded data yet.</td></tr>"
+    _mkt_section_html = (
+        '<div class="secondary-section" style="margin-top:24px">'
+        '<div class="secondary-toggle" '
+        'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
+        'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">'
+        '<span class="arr">&#9654;</span> Market Signal Breakdown (Kalshi / Polymarket)'
+        '</div><div class="secondary-body">'
+        '<p style="color:#8b949e;font-size:.75rem;margin:10px 0">'
+        'CONFIRM = markets agreed with model &nbsp;&middot;&nbsp; '
+        'DIVERGE = markets disagreed &nbsp;&middot;&nbsp; '
+        'NEUTRAL = no market data</p>'
+        '<div class="table-card">'
+        '<table><thead><tr>'
+        '<th>Signal</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th>'
+        '</tr></thead>'
+        f'<tbody>{_mkt_rows_html or _no_mkt}</tbody>'
+        '</table></div></div></div>'
+    )
+
+    # ── Monthly Summary section HTML ───────────────────────────────────────
+    _monthly_rows_html = ""
+    for _mr in monthly_rows:
+        _mn5 = _mr.get("month", "")
+        _w5  = int(_mr.get("wins",   0) or 0)
+        _l5  = int(_mr.get("losses", 0) or 0)
+        _p5  = int(_mr.get("pushes", 0) or 0)
+        _d5  = _w5 + _l5
+        _wr5 = f"{_w5/_d5*100:.1f}%" if _d5 > 0 else "&mdash;"
+        _ac5 = f"{float(_mr.get('avg_conf') or 0)*100:.1f}%" if _mr else "&mdash;"
+        _e5  = (_w5/_d5*100 - 52.4) if _d5 > 0 else None
+        _es5 = (f"+{_e5:.1f}%" if _e5 >= 0 else f"{_e5:.1f}%") if _e5 is not None else "&mdash;"
+        _ec5 = "#3fb950" if (_e5 is not None and _e5 >= 0) else "#f85149"
+        _monthly_rows_html += (
+            f"<tr><td style='font-weight:600'>{_mn5}</td>"
+            f"<td style='color:#3fb950'>{_w5}</td>"
+            f"<td style='color:#f85149'>{_l5}</td>"
+            f"<td style='color:#8b949e'>{_p5}</td>"
+            f"<td><strong>{_wr5}</strong></td>"
+            f"<td style='color:{_ec5}'>{_es5}</td>"
+            f"<td style='color:#8b949e'>{_ac5}</td></tr>\n"
+        )
+    _no_monthly = "<tr><td colspan='7' style='color:#8b949e;padding:14px'>No graded data yet.</td></tr>"
+    _monthly_section_html = (
+        '<div class="secondary-section" style="margin-top:24px">'
+        '<div class="secondary-toggle" '
+        'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
+        'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">'
+        '<span class="arr">&#9654;</span> Monthly Performance Summary'
+        '</div><div class="secondary-body">'
+        '<div class="table-card" style="margin-top:10px">'
+        '<table><thead><tr>'
+        '<th>Month</th><th>W</th><th>L</th><th>Push</th>'
+        '<th>Win %</th><th>Edge vs -110</th><th>Avg Conf</th>'
+        '</tr></thead>'
+        f'<tbody>{_monthly_rows_html or _no_monthly}</tbody>'
+        '</table></div></div></div>'
+    )
+
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1140,6 +1232,10 @@ def performance_html():
   </div>
 
   {_props_section_html}
+
+  {_mkt_section_html}
+
+  {_monthly_section_html}
 
 </body>
 </html>"""
