@@ -916,6 +916,16 @@ def run(date: str):
 
     # Persist grades to PostgreSQL (non-fatal if DB unavailable)
     push_grades_to_db(graded, date)
+
+    # Backfill market_signal on any picks that don't have it yet (non-fatal)
+    try:
+        from db.picks_store import backfill_market_signals
+        bf_count = backfill_market_signals()
+        if bf_count:
+            log.info(f"Market signal backfill: {bf_count} pick(s) updated")
+    except Exception as e:
+        log.debug(f"backfill_market_signals skipped: {e}")
+
     grade_prop_outcomes(date)
 
     return {
