@@ -851,6 +851,16 @@ def performance_html():
         mkt_signal_rows = []
         monthly_rows    = []
 
+    # ── Yesterday picks ──────────────────────────────────
+    yesterday_picks = []
+    try:
+        from datetime import timedelta
+        from db.picks_store import get_picks
+        _yday = (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_picks = get_picks(_yday) or []
+    except Exception:
+        yesterday_picks = []
+
     # ── Aggregate stats ───────────────────────────────────────────────────────
     total_w = sum(r.get("wins",   0) or 0 for r in rows)
     total_l = sum(r.get("losses", 0) or 0 for r in rows)
@@ -1119,6 +1129,70 @@ def performance_html():
         '</table></div></div></div>'
     )
 
+    # ── Yesterday section HTML ───────────────────────────────────
+    _TIER_ORDER_Y = ["LOCK", "STRONG", "LEAN", "TOSSUP"]
+    _TIER_COLOR_Y = {"LOCK": "#ffc107", "STRONG": "#42a5f5", "LEAN": "#66bb6a", "TOSSUP": "#a09ae0"}
+    _graded_yday  = [p for p in yesterday_picks if p.get("actual_result") in ("WIN", "LOSS", "PUSH")]
+    _yday_w       = sum(1 for p in _graded_yday if p.get("actual_result") == "WIN")
+    _yday_l       = sum(1 for p in _graded_yday if p.get("actual_result") == "LOSS")
+    _yday_p       = sum(1 for p in _graded_yday if p.get("actual_result") == "PUSH")
+
+    # Group by tier + pick_type
+    _yday_groups = {}
+    for _py in _graded_yday:
+        _key = (_py.get("tier", ""), _py.get("pick_type", ""))
+        if _key not in _yday_groups:
+            _yday_groups[_key] = {"w": 0, "l": 0, "p": 0}
+        _res = _py.get("actual_result")
+        if _res == "WIN":   _yday_groups[_key]["w"] += 1
+        elif _res == "LOSS": _yday_groups[_key]["l"] += 1
+        elif _res == "PUSH": _yday_groups[_key]["p"] += 1
+
+    _yday_badges = []
+    for _tier in _TIER_ORDER_Y:
+        for _ptype in ["ML", "TOTAL", "RL"]:
+            _gd = _yday_groups.get((_tier, _ptype))
+            if not _gd:
+                continue
+            _clr = _TIER_COLOR_Y.get(_tier, "#8b949e")
+            _rec = f"{_gd['w']}-{_gd['l']}"
+            if _gd["p"]:
+                _rec += f" P{_gd['p']}"
+            _yday_badges.append(
+                f'<span style="background:#161b22;border:1px solid {_clr}33;' +
+                f'border-radius:8px;padding:6px 12px;font-size:.8rem;white-space:nowrap">' +
+                f'<span style="color:{_clr};font-weight:700">{_tier}</span> ' +
+                f'<span style="color:#8b949e">{_ptype}</span> ' +
+                f'<span style="font-weight:600">{_rec}</span></span>'
+            )
+
+    if _graded_yday:
+        _yday_wr  = _yday_w / (_yday_w + _yday_l) * 100 if (_yday_w + _yday_l) > 0 else 0
+        _yday_hdr_color = "#3fb950" if _yday_wr >= 52.4 else "#f85149"
+        _yday_record_str = f"{_yday_w}-{_yday_l}"
+        if _yday_p:
+            _yday_record_str += f" ({_yday_p} push)"
+        _badges_html = " ".join(_yday_badges)
+        _yday_content = (
+            f'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">' +
+            f'<span style="font-size:1.3rem;font-weight:700;color:{_yday_hdr_color}">{_yday_record_str}</span>' +
+            f'<span style="color:#8b949e;font-size:.8rem">{_yday_wr:.1f}% win rate</span>' +
+            f'</div>' +
+            f'<div style="display:flex;gap:8px;flex-wrap:wrap">{_badges_html}</div>'
+        )
+    else:
+        _yday_content = '<p style="color:#8b949e;font-size:.83rem">No graded picks for yesterday yet — grades post after games finish.</p>'
+
+    _yday_label = (datetime.now(ET) - timedelta(days=1)).strftime("%A, %b %-d") if yesterday_picks else "Yesterday"
+    _yesterday_section_html = (
+        '<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;' +
+        'padding:16px 20px;margin-bottom:24px">' +
+        f'<div style="font-size:.72rem;font-weight:600;color:#8b949e;text-transform:uppercase;' +
+        f'letter-spacing:.06em;margin-bottom:10px">📅 Yesterday — {_yday_label}</div>' +
+        _yday_content +
+        '</div>'
+    )
+
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1179,6 +1253,8 @@ def performance_html():
     <a href="/" class="back-link">← Back to Picks</a>
   </div>
   <p class="sub">Last {days} days — graded picks only</p>
+
+  {_yesterday_section_html}
 
   <div class="days-nav">{days_links}</div>
 
