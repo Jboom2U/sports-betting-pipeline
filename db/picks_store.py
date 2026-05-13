@@ -45,9 +45,9 @@ def save_picks(picks: list, pick_date: str) -> int:
                     """
                     INSERT INTO picks
                         (pick_date, game_id, game, pick_type, label, team,
-                         conf, tier, reasoning, actual_result)
+                         conf, tier, reasoning, market_signal, actual_result)
                     VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
+                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
                     ON CONFLICT (pick_date, game_id, pick_type) DO NOTHING
                     """,
                     (
@@ -60,6 +60,7 @@ def save_picks(picks: list, pick_date: str) -> int:
                         round(float(p.get("conf", 0)), 4),
                         p.get("tier", ""),
                         p.get("reasoning", ""),
+                        _infer_market_signal(p.get("reasoning", "")),
                     )
                 )
                 inserted += cur.rowcount
@@ -272,6 +273,120 @@ def get_accuracy_summary(days: int = 30) -> dict:
         except Exception as e:
             log.warning(f"get_accuracy_summary failed: {e}")
             return {}
+
+
+
+# ── Market Signal helpers ──────────────────────────────────────────────────
+
+def _infer_market_signal(reasoning: str) -> str:
+    """
+    Infer market signal from pick reasoning text.
+    Returns 'CONFIRM', 'DIVERGE', or 'NEUTRAL'.
+    CONFIRM = Kalshi/Polymarket agreed with the model.
+    DIVERGE = markets disagreed with the model.
+    NEUTRAL = no market data or ambiguous signal.
+    """
+    if not reasoning:
+        return "NEUTRAL"
+    r = reasoning.upper()
+    if "CONFIRM" in r:
+        return "CONFIRM"
+    if "DIVERGE" in r:
+        return "DIVERGE"
+    return "NEUTRAL"
+
+
+def backfill_market_signals() -> int:
+    """
+    For every pick that has no market_signal set, infer it from the reasoning
+    text and write it back.  Safe to call repeatedly -- only touches NULL rows.
+    Returns the number of rows updated.
+    """
+    updated = 0
+    with db_conn() as conn:
+        if conn is None:
+            return 0
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, reasoning FROM picks WHERE market_signal IS NULL"
+            )
+            rows = cur.fetchall()
+            for pick_id, reasoning in rows:
+                signal = _infer_market_signal(reasoning or "")
+                cur.execute(
+                    "UPDATE picks SET market_signal = %s WHERE id = %s",
+                    (signal, pick_id),
+                )
+                updated += cur.rowcount
+            log.info(f"backfill_market_signals: {updated} row(s) updated.")
+        except Exception as e:
+            log.warning(f"backfill_market_signals failed: {e}")
+    return updated
+
+
+def get_accuracy_by_market_signal(days: int = 30) -> list:
+    """
+    Returns W/L/ROI grouped by market_signal (CONFIRM / DIVERGE / NEUTRAL)
+    over the last N days.
+    """
+    with db_conn() as conn:
+        if conn is None:
+            return []
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(market_signal, 'NEUTRAL') AS market_signal,
+                    COUNT(*) FILTER (WHERE actual_result = 'WIN')  AS wins,
+                    COUNT(*) FILTER (WHERE actual_result = 'LOSS') AS losses,
+                    COUNT(*) FILTER (WHERE actual_result = 'PUSH') AS pushes,
+                    ROUND(AVG(conf)::numeric, 3) AS avg_conf
+                FROM picks
+                WHERE pick_date >= CURRENT_DATE - INTERVAL '%s days'
+                  AND actual_result IN ('WIN', 'LOSS', 'PUSH')
+                GROUP BY COALESCE(market_signal, 'NEUTRAL')
+                ORDER BY market_signal
+                """,
+                (days,)
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+        except Exception as e:
+            log.warning(f"get_accuracy_by_market_signal failed: {e}")
+            return []
+
+
+def get_monthly_accuracy() -> list:
+    """
+    Returns W/L/ROI grouped by calendar month for all graded picks.
+    Sorted most-recent first.
+    """
+    with db_conn() as conn:
+        if conn is None:
+            return []
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    TO_CHAR(pick_date, 'YYYY-MM') AS month,
+                    COUNT(*) FILTER (WHERE actual_result = 'WIN')  AS wins,
+                    COUNT(*) FILTER (WHERE actual_result = 'LOSS') AS losses,
+                    COUNT(*) FILTER (WHERE actual_result = 'PUSH') AS pushes,
+                    ROUND(AVG(conf)::numeric, 3) AS avg_conf
+                FROM picks
+                WHERE actual_result IN ('WIN', 'LOSS', 'PUSH')
+                GROUP BY TO_CHAR(pick_date, 'YYYY-MM')
+                ORDER BY month DESC
+                """
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+        except Exception as e:
+            log.warning(f"get_monthly_accuracy failed: {e}")
+            return []
 
 
 # ── Prop history ──────────────────────────────────────────────────────────────
