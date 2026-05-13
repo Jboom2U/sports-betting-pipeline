@@ -240,6 +240,10 @@ def _ml_reasoning(g: dict) -> str:
     elif pf <= 96:
         parts.append(f"Pitcher park ({pf})")
 
+    # Prediction market signal
+    poly_sig = g.get("poly_market_signal", "")
+    if poly_sig in ("CONFIRM", "DIVERGE"):
+        parts.append(f"📊 Markets: {poly_sig}")
     return " | ".join(parts)
 
 
@@ -279,6 +283,10 @@ def _total_reasoning(g: dict) -> str:
         elif avg >= 4.80:
             parts.append(f"Weak pitching matchup (avg ERA {avg:.2f})")
 
+    # Prediction market signal
+    poly_sig_t = g.get("poly_market_signal", "")
+    if poly_sig_t in ("CONFIRM", "DIVERGE"):
+        parts.append(f"📊 Markets: {poly_sig_t}")
     return " | ".join(parts)
 
 
