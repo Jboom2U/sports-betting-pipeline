@@ -1058,6 +1058,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .badge-ML   {background:rgba(66,165,245,.15);color:#42a5f5;border:1px solid rgba(66,165,245,.3)}
 .badge-RL   {background:rgba(171,71,188,.15);color:#ce93d8;border:1px solid rgba(171,71,188,.3)}
 .badge-TOTAL{background:rgba(0,230,118,.15);color:#00e676;border:1px solid rgba(0,230,118,.3)}
+.badge-PROP {background:rgba(255,183,77,.15);color:#ffb74d;border:1px solid rgba(255,183,77,.3)}
 .tier-badge{
   font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:4px;
 }
@@ -1461,6 +1462,22 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
       <div class="sharp-panel" id="sharpMoneyGrid"></div>
     </div>
 
+    <!-- LEAN PICKS -- collapsed by default -->
+    <div id="leanSection" style="margin-top:4px;margin-bottom:8px">
+      <div id="leanToggle" onclick="toggleLean()" style="cursor:pointer;color:var(--sub);font-size:.78rem;padding:8px 0;user-select:none;display:none">
+        <span id="leanArrow">▶</span> <span id="leanLabel">Show Lean picks</span>
+      </div>
+      <div id="leanBody" style="display:none">
+        <div class="picks-grid" id="leanGrid"></div>
+      </div>
+    </div>
+
+    <!-- SURFACED PROPS -- 70%+ confidence props shown alongside game picks -->
+    <div id="surfacedPropsSection" style="display:none;margin-bottom:16px">
+      <div class="section-title">👤 Top Props (70%+)</div>
+      <div class="picks-grid" id="surfacedPropsGrid"></div>
+    </div>
+
     <div class="section-title">🔥 Parlay Recommendations</div>
     <div class="section-tabs">
       <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
@@ -1576,6 +1593,13 @@ if(DATA_PICKS.length){
 function renderPicks(){
   const grid = document.getElementById("picksGrid");
   grid.innerHTML = "";
+  const leanGridEl = document.getElementById("leanGrid");
+  if(leanGridEl) leanGridEl.innerHTML = "";
+  // Also collapse lean body on re-render
+  const leanBodyEl = document.getElementById("leanBody");
+  if(leanBodyEl) leanBodyEl.style.display = "none";
+  const leanArrowEl = document.getElementById("leanArrow");
+  if(leanArrowEl) leanArrowEl.textContent = "▶";
   let visible = 0;
   DATA_PICKS.forEach(p=>{
     const show = (filterType==="all" || p.type===filterType)
@@ -1716,7 +1740,9 @@ function renderPicks(){
           </div>
         </div>`;
     } else {
-    grid.innerHTML += `
+    const _tg = (p.tier === "LEAN" && filterTier === "all")
+      ? (leanGridEl || grid) : grid;
+    _tg.innerHTML += `
       <div class="pick-card tier-${p.tier}" data-type="${p.type}" data-tier="${p.tier}">
         <div class="pick-top">
           <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
@@ -1746,12 +1772,80 @@ function renderPicks(){
       </div>`;
     }
   });
+  // Route LEAN picks to collapsed section when showing all tiers
+  const leanGrid   = document.getElementById("leanGrid");
+  const leanToggle = document.getElementById("leanToggle");
+  const leanLabel  = document.getElementById("leanLabel");
+  const leanCount  = leanGrid ? leanGrid.querySelectorAll(".pick-card").length : 0;
+  if(leanToggle){
+    if(filterTier === "all" && leanCount > 0){
+      leanToggle.style.display = "block";
+      leanLabel.textContent = `Show ${leanCount} Lean pick${leanCount===1?"":"s"} (lower confidence — watch only)`;
+    } else {
+      leanToggle.style.display = "none";
+    }
+  }
   document.getElementById("pickResults").innerHTML =
     `Showing <b>${visible}</b> of <b>${DATA_PICKS.length}</b> picks`;
   if(visible===0) grid.innerHTML = `<div class="empty">No picks match the current filters.</div>`;
 }
 
 function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":t==="TOSSUP"?"≈":"⭐"; }
+
+function toggleLean(){
+  const body  = document.getElementById("leanBody");
+  const arrow = document.getElementById("leanArrow");
+  const label = document.getElementById("leanLabel");
+  const open  = body.style.display === "none";
+  body.style.display  = open ? "block" : "none";
+  arrow.textContent   = open ? "▼" : "▶";
+  const cnt = document.getElementById("leanGrid")
+    ? document.getElementById("leanGrid").querySelectorAll(".pick-card").length : 0;
+  label.textContent = open
+    ? `Hide Lean picks`
+    : `Show ${cnt} Lean pick${cnt===1?"":"s"} (lower confidence — watch only)`;
+}
+
+function renderSurfacedProps(){
+  const section = document.getElementById("surfacedPropsSection");
+  const grid    = document.getElementById("surfacedPropsGrid");
+  if(!section || !grid || !DATA_PROPS || !DATA_PROPS.length){
+    if(section) section.style.display = "none";
+    return;
+  }
+  const topProps = DATA_PROPS
+    .filter(p => !p.projected && p.conf >= 70)
+    .sort((a,b) => (b.conf||0)-(a.conf||0));
+  if(!topProps.length){ section.style.display = "none"; return; }
+  section.style.display = "block";
+  grid.innerHTML = "";
+  topProps.forEach(p => {
+    const label     = propLabel(p.prop_type, p.line);
+    const overUnder = p.proj >= p.line ? "OVER" : "UNDER";
+    const projColor = overUnder === "OVER" ? "var(--green)" : "var(--blue)";
+    const barPct    = Math.min(100, Math.max(0, (p.conf - 50) * 2));
+    grid.innerHTML += `
+      <div class="pick-card tier-${p.tier}" data-type="PROP" data-tier="${p.tier}">
+        <div class="pick-top">
+          <span class="pick-type-badge badge-PROP">👤 PROP · ${p.prop_type}</span>
+          <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
+        </div>
+        <div class="pick-label">${p.player_name} — ${label}</div>
+        <div class="pick-game">${p.game}</div>
+        <div class="conf-row">
+          <div class="conf-bar-wrap">
+            <div class="conf-bar bar-${p.tier}" style="width:${barPct}%"></div>
+          </div>
+          <span class="conf-pct pct-${p.tier}">${p.conf}%</span>
+        </div>
+        <div style="font-size:.76rem;color:var(--sub);margin-top:6px">
+          Projected: <span style="color:${projColor};font-weight:600">${p.proj} ${overUnder}</span>
+        </div>
+        <div class="pick-reasoning">${p.reasoning||""}</div>
+      </div>`;
+  });
+}
+
 
 // ── Inline props for pick card ────────────────────────────────────────────────
 function buildInlineProps(away, home){
@@ -3146,6 +3240,7 @@ function renderSharpAction(){
 renderTicker();
 renderYesterday();
 renderPicks();
+renderSurfacedProps();
 // Defer heavy renders so browser doesn't block on initial paint
 setTimeout(() => {
   renderSharpMoney();

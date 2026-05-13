@@ -23,9 +23,9 @@ from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-LOCK_THRESH   = 0.68
-STRONG_THRESH = 0.62
-LEAN_THRESH   = 0.52
+LOCK_THRESH   = 0.75   # raised from 0.68 -- only genuine high-confidence picks
+STRONG_THRESH = 0.68   # raised from 0.62
+LEAN_THRESH   = 0.60   # raised from 0.52 -- sub-60% not worth showing
 TOSSUP_THRESH = 0.48
 PARLAY_MIN    = 0.57   # minimum per-leg confidence for parlay inclusion
 
