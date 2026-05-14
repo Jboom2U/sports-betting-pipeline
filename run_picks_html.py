@@ -1814,7 +1814,7 @@ function renderSurfacedProps(){
     return;
   }
   const topProps = DATA_PROPS
-    .filter(p => !p.projected && p.conf >= 65)
+    .filter(p => p.conf >= 65)
     .sort((a,b) => (b.conf||0)-(a.conf||0));
   if(!topProps.length){ section.style.display = "none"; return; }
   section.style.display = "block";
@@ -1824,8 +1824,12 @@ function renderSurfacedProps(){
     const overUnder = p.proj >= p.line ? "OVER" : "UNDER";
     const projColor = overUnder === "OVER" ? "var(--green)" : "var(--blue)";
     const barPct    = Math.min(100, Math.max(0, (p.conf - 50) * 2));
+    const projBanner = p.projected
+      ? `<div style="background:rgba(255,183,77,.1);border-bottom:1px solid rgba(255,183,77,.2);padding:3px 10px;font-size:.68rem;color:#ffb74d;letter-spacing:.04em">📋 Lineup not confirmed yet</div>`
+      : "";
     grid.innerHTML += `
       <div class="pick-card tier-${p.tier}" data-type="PROP" data-tier="${p.tier}">
+        ${projBanner}
         <div class="pick-top">
           <span class="pick-type-badge badge-PROP">👤 PROP · ${p.prop_type}</span>
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
