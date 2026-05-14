@@ -990,7 +990,9 @@ def score_all_props(target_date: str = None) -> list[dict]:
             _opp_kr = team_k_rate.get(_opp_team, 0.220)
             _k9  = float(_sp_row.get("k9", _sp_row.get("k_per_9", 0)) or 0)
             _exp = (_k9 / 9.0) * 5.5
-            _line = round(_exp * 2) / 2
+            # Sportsbook K lines are typically ~80% of the statistical projection
+            # (books set lines below projection to balance action; OVER has real edge)
+            _line = round(_exp * 0.80 * 2) / 2
             _k_prop = score_k_prop(
                 pitcher_name=_sp_name,
                 pitcher_stats=_sp_row,
@@ -1238,7 +1240,8 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
             opp_kr = team_k_rate.get(opp_team, 0.220)
             k9  = float(sp_row.get("k9", sp_row.get("k_per_9", 0)) or 0)
             exp = (k9 / 9.0) * 5.5
-            line = round(exp * 2) / 2
+            # Sportsbook K lines are typically ~80% of the statistical projection
+            line = round(exp * 0.80 * 2) / 2
             k_prop = score_k_prop(
                 pitcher_name=sp_name,
                 pitcher_stats=sp_row,
