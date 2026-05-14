@@ -3534,7 +3534,8 @@ def main(date=None, no_open=False):
         from db.csv_sync import upload_file as _upload_file
         _upload_file(out_path,    f"picks/mlb_picks_{actual_date}.html")
         _upload_file(latest_path, "picks/mlb_picks_latest.html")
-        log.info(f"Picks HTML uploaded to R2 (picks/mlb_picks_{actual_date}.html)")
+        _upload_file(csv_path,    f"picks/mlb_picks_{actual_date}.csv")
+        log.info(f"Picks HTML + CSV uploaded to R2 (picks/mlb_picks_{actual_date}.html/.csv)")
     except Exception as _e:
         log.warning(f"R2 HTML upload failed (non-fatal): {_e}")
     log.info(f"{len(scored)} games | {len(picks)} picks | "

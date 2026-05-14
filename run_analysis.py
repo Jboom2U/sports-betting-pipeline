@@ -884,7 +884,30 @@ def run(date: str):
 
     picks = load_picks(date)
     if not picks:
-        log.warning(f"No picks found for {date}")
+        # CSV not on disk (Railway ephemeral filesystem wiped on restart).
+        # Fall back to picks already stored in PostgreSQL.
+        log.info(f"Picks CSV not found for {date} -- trying DB fallback")
+        try:
+            from db.picks_store import get_picks as _db_get_picks
+            _db_rows = _db_get_picks(date)
+            if _db_rows:
+                picks = [
+                    {
+                        "date":      str(p.get("pick_date", date)),
+                        "game":      p.get("game", ""),
+                        "type":      p.get("pick_type", "").upper(),
+                        "label":     p.get("label", ""),
+                        "conf":      float(p.get("conf") or 0),
+                        "tier":      p.get("tier", "").upper(),
+                        "reasoning": p.get("reasoning", ""),
+                    }
+                    for p in _db_rows
+                ]
+                log.info(f"DB fallback: {len(picks)} picks loaded for {date}")
+        except Exception as _dbe:
+            log.debug(f"DB picks fallback failed: {_dbe}")
+    if not picks:
+        log.warning(f"No picks found for {date} (CSV or DB)")
         return None
 
     # Try API first, fall back to CSV
