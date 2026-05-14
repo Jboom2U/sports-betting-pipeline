@@ -696,13 +696,12 @@ def score_all_props(target_date: str = None) -> list[dict]:
     raw_path = os.path.join(DATA_DIR, "raw", f"mlb_hitter_stats_{today}.json")
 
     if not os.path.exists(raw_path):
-        log.warning(f"No hitter stats file for {today} — run mlb_hitter_scraper.py first")
-        return []
-
-    with open(raw_path, encoding="utf-8") as f:
-        data = json.load(f)
-
-    games = data.get("hitters", [])
+        log.warning(f"No hitter stats file for {today} — batter props skipped, K props still run")
+        games = []
+    else:
+        with open(raw_path, encoding="utf-8") as f:
+            data = json.load(f)
+        games = data.get("hitters", [])
 
     # ── Load pitcher stats master — keyed by name ─────────────────────────────
     # We use this for both K props AND to build pitcher opponent stats
@@ -802,8 +801,10 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     try:
                         gid = int(row.get("game_id", 0))
                         game_pitchers[gid] = {
-                            "away_sp": row.get("away_probable_pitcher", "TBD"),
-                            "home_sp": row.get("home_probable_pitcher", "TBD"),
+                            "away_sp":   row.get("away_probable_pitcher", "TBD"),
+                            "home_sp":   row.get("home_probable_pitcher", "TBD"),
+                            "away_team": row.get("away_team", ""),
+                            "home_team": row.get("home_team", ""),
                         }
                     except (ValueError, TypeError):
                         pass
@@ -968,37 +969,44 @@ def score_all_props(target_date: str = None) -> list[dict]:
                         **prop,
                     })
 
-        # ── Pitcher K props ──────────────────────────────────────────────────
-        for sp_name, opp_team in ((away_sp, home_team), (home_sp, away_team)):
-            if not sp_name or sp_name == "TBD":
+    # ── Pitcher K props ──────────────────────────────────────
+    # Generated from schedule for ALL today's games — no hitter stats or lineup
+    # confirmation needed. K props need only pitcher stats (always in R2 CSVs).
+    for _gid, _gp in game_pitchers.items():
+        _away_team = _gp.get("away_team", "")
+        _home_team = _gp.get("home_team", "")
+        _game_str  = f"{_away_team} @ {_home_team}"
+        _weather   = weather_data.get(_gid)
+        for _sp_name, _opp_team in ((_gp["away_sp"], _home_team), (_gp["home_sp"], _away_team)):
+            if not _sp_name or _sp_name == "TBD":
                 continue
-            sp_row   = pitcher_stats.get(sp_name, {})
-            if not sp_row:
+            # Skip if already scored this pitcher in the confirmed game loop
+            if any(p.get("player_name") == _sp_name and p.get("prop_type") == "K"
+                   for p in all_props):
                 continue
-            opp_kr   = team_k_rate.get(opp_team, 0.220)
-
-            # Determine a reasonable line — use projection to set market-like line
-            k9  = float(sp_row.get("k9", sp_row.get("k_per_9", 0)) or 0)
-            exp = (k9 / 9.0) * 5.5
-            # Round to nearest half for realistic line
-            line = round(exp * 2) / 2
-
-            k_prop = score_k_prop(
-                pitcher_name=sp_name,
-                pitcher_stats=sp_row,
-                opp_team_k_rate=opp_kr,
+            _sp_row = pitcher_stats.get(_sp_name, {})
+            if not _sp_row:
+                continue
+            _opp_kr = team_k_rate.get(_opp_team, 0.220)
+            _k9  = float(_sp_row.get("k9", _sp_row.get("k_per_9", 0)) or 0)
+            _exp = (_k9 / 9.0) * 5.5
+            _line = round(_exp * 2) / 2
+            _k_prop = score_k_prop(
+                pitcher_name=_sp_name,
+                pitcher_stats=_sp_row,
+                opp_team_k_rate=_opp_kr,
                 innings_expected=5.5,
-                line=line,
-                weather=weather,
+                line=_line,
+                weather=_weather,
             )
-            if k_prop:
+            if _k_prop:
                 all_props.append({
-                    "game":      game_str,
-                    "game_id":   game_id,
-                    "away_team": away_team,
-                    "home_team": home_team,
+                    "game":      _game_str,
+                    "game_id":   _gid,
+                    "away_team": _away_team,
+                    "home_team": _home_team,
                     "side":      "pitcher",
-                    **k_prop,
+                    **_k_prop,
                 })
 
     # Sort by confidence descending
@@ -1174,7 +1182,8 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
         proj_away = projected_lineups.get(away_team)
         proj_home = projected_lineups.get(home_team)
         if not proj_away and not proj_home:
-            continue  # no projected lineups for either team — skip
+            # No batter lineup data for either team, but K props still run below
+            pass  # fall through to K props section
 
         weather  = weather_data.get(game_id)
         away_opp = pitcher_opp(g["away_sp"])   # away batters face home SP
