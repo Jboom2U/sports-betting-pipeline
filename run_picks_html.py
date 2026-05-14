@@ -1814,7 +1814,7 @@ function renderSurfacedProps(){
     return;
   }
   const topProps = DATA_PROPS
-    .filter(p => !p.projected && p.conf >= 70)
+    .filter(p => !p.projected && p.conf >= 65)
     .sort((a,b) => (b.conf||0)-(a.conf||0));
   if(!topProps.length){ section.style.display = "none"; return; }
   section.style.display = "block";
