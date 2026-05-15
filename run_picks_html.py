@@ -1940,6 +1940,8 @@ function renderPicks(){
     } else {
     const _tg = (p.tier === "LEAN" && filterTier === "all")
       ? (leanGridEl || grid) : grid;
+    pickData.push(p);
+    const _legIdx = pickData.length - 1;
     _tg.innerHTML += `
       <div class="pick-card tier-${p.tier}" data-type="${p.type}" data-tier="${p.tier}">
         <div class="pick-top">
@@ -1968,7 +1970,7 @@ function renderPicks(){
         <div class="pick-card-props-panel">
           ${buildInlineProps(p.away, p.home)}
         </div>
-        <button class="add-leg-btn" data-leg="${(()=>{pickData.push(p);return pickData.length-1;})()" onclick="toggleLegByIdx(event,+this.dataset.leg)" title="Add to parlay">➕ Add to Parlay</button>
+        <button class="add-leg-btn" data-leg="${_legIdx}" onclick="toggleLegByIdx(event,+this.dataset.leg)" title="Add to parlay">➕ Add to Parlay</button>
       </div>`;
     }
   });
