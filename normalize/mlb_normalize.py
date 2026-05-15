@@ -229,6 +229,74 @@ def append_to_master(rows: list[dict], record_type: str, dedup_key: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# UPSERT SCHEDULE PITCHERS (afternoon refresh — updates probable starters)
+# ─────────────────────────────────────────────────────────────────────────────
+def upsert_schedule_pitchers(rows: list[dict]) -> int:
+    """
+    Update probable pitcher fields in mlb_schedule_master.csv for matching game_ids.
+    Inserts the row if the game_id is not yet in the master (e.g. a brand-new date).
+    Returns the number of rows updated or inserted.
+
+    Called by run_afternoon.py so pitcher assignments stay current throughout the day
+    (injuries, rotation changes, and late announcements all get picked up).
+    """
+    master_file = os.path.join(CLEAN_DIR, "mlb_schedule_master.csv")
+
+    if not rows:
+        log.warning("upsert_schedule_pitchers: no rows provided")
+        return 0
+
+    # Index incoming rows by game_id for O(1) lookup
+    incoming = {str(r.get("game_id", "")): r for r in rows if r.get("game_id")}
+
+    existing_rows = []
+    fieldnames = None
+
+    if os.path.exists(master_file):
+        with open(master_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or []
+            existing_rows = list(reader)
+
+    # Merge: update pitcher fields for matching game_ids
+    updated = 0
+    seen_ids = set()
+    merged = []
+    for row in existing_rows:
+        gid = str(row.get("game_id", ""))
+        if gid in incoming:
+            fresh = incoming[gid]
+            row["away_probable_pitcher"] = normalize_player(fresh.get("away_probable_pitcher", "")) or row.get("away_probable_pitcher", "")
+            row["home_probable_pitcher"] = normalize_player(fresh.get("home_probable_pitcher", "")) or row.get("home_probable_pitcher", "")
+            row["timestamp"] = fresh.get("timestamp", row.get("timestamp", ""))
+            updated += 1
+        seen_ids.add(gid)
+        merged.append(row)
+
+    # Insert brand-new game_ids (future dates the master hasn't seen yet)
+    inserted = 0
+    clean_incoming = normalize_schedule(rows)
+    for row in clean_incoming:
+        gid = str(row.get("game_id", ""))
+        if gid not in seen_ids:
+            merged.append(row)
+            seen_ids.add(gid)
+            inserted += 1
+
+    # Determine fieldnames (prefer existing header so column order stays stable)
+    if not fieldnames and merged:
+        fieldnames = list(merged[0].keys())
+
+    with open(master_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(merged)
+
+    log.info(f"upsert_schedule_pitchers: {updated} updated, {inserted} inserted")
+    return updated + inserted
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # READ RAW
 # ─────────────────────────────────────────────────────────────────────────────
 def read_raw(record_type: str) -> list[dict]:

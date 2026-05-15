@@ -1356,7 +1356,7 @@ def _start_daily_scheduler():
 def _run_afternoon_refresh():
     """Re-run lineup + hitter + odds + umpire + bullpen fatigue scrapers and rebuild dashboard."""
     today = datetime.now(ET).strftime("%Y-%m-%d")
-    log.info("=== 11:30am ET afternoon refresh starting ===")
+    log.info("=== Adaptive afternoon refresh starting ===")
 
     # Grade yesterday's picks first so Yesterday panel is ready
     try:
@@ -1366,6 +1366,17 @@ def _run_afternoon_refresh():
         log.info(f"Afternoon grading complete: {yesterday}")
     except Exception as e:
         log.warning(f"Afternoon grading failed (non-fatal): {e}")
+
+    # Refresh probable pitchers (rotation changes, scratches post at any time)
+    # Upserts schedule master CSV so stale 6am assignments get corrected before scoring
+    try:
+        from scrapers.mlb_scraper import fetch_schedule
+        from normalize.mlb_normalize import upsert_schedule_pitchers
+        fresh_sched = fetch_schedule(days_ahead=1)   # today + tomorrow
+        n_sp = upsert_schedule_pitchers(fresh_sched)
+        log.info(f"Afternoon probable pitchers refreshed: {n_sp} game(s) updated/inserted")
+    except Exception as e:
+        log.warning(f"Afternoon pitcher refresh failed (non-fatal): {e}")
 
     # Refresh odds
     try:
@@ -1417,7 +1428,7 @@ def _run_afternoon_refresh():
             run_hitters(target_date=today)
             log.info("Afternoon hitter stats refreshed")
         else:
-            log.info("No confirmed lineups yet at 11:30am — dashboard will retry automatically")
+            log.info("No confirmed lineups yet — dashboard will retry automatically")
     except Exception as e:
         log.warning(f"Afternoon lineup/hitter refresh failed (non-fatal): {e}")
 

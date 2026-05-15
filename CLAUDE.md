@@ -1,5 +1,13 @@
 # Statalizers — Project Context for Claude
 
+## ⚠️ CRITICAL: Never Run Git Commands From the Sandbox
+**The Cowork sandbox cannot delete lock files on the Windows-mounted repo.** Running `git add` or `git commit` from bash leaves `.git/index.lock` and `.git/HEAD.lock` stranded, breaking the next commit.
+- **Claude: make file edits only from the sandbox. Never run git add/commit/push from bash.**
+- Tell the user to run all git operations from their own PowerShell terminal.
+- Correct pattern: edit files in sandbox → "run `git commit` and `git push` from your terminal"
+
+---
+
 ## ⚠️ CRITICAL: Log Timestamps Are UTC — Always Convert to ET
 **Railway logs always show UTC time. NEVER read a log timestamp as ET.**
 - Subtract 4 hours (EDT) or 5 hours (EST) to get ET
@@ -118,9 +126,12 @@ Runs daily at 6am ET via app.py scheduler (Railway — no laptop needed). Steps 
 17. **mark_pipeline_complete** — records run in DB so next deploy skips pipeline
 18. **csv_upload_all** — uploads all CSVs to Cloudflare R2
 
-**Afternoon refresh** (11:30am ET — runs on Railway, no laptop needed):
-- Grades yesterday, refreshes odds, umpires, bullpen fatigue, Kalshi, Polymarket, lineups, hitter stats
-- Rebuilds dashboard cache
+**Afternoon refresh** (adaptive — fires 2 hours before first pitch, scheduled by `_schedule_adaptive_refresh()` after 6am pipeline):
+- Early game days (first pitch ~12:30pm ET) → fires ~10:30am ET
+- Late game days (first pitch ~6pm ET) → fires ~4pm ET
+- Steps: grade yesterday → upsert probable pitchers → refresh odds → refresh umpires → bullpen fatigue → Kalshi → Polymarket → lineups → hitter stats → rebuild dashboard
+- Probable pitcher upsert: re-fetches MLB Stats API schedule for today + tomorrow and overwrites `away_probable_pitcher`/`home_probable_pitcher` in schedule master CSV, so scratches and rotation changes picked up post-6am are reflected in picks
+- Hitter stats uploaded to R2 after scraper runs so props survive Railway restarts
 
 ---
 
@@ -157,11 +168,11 @@ Runs daily at 6am ET via app.py scheduler (Railway — no laptop needed). Steps 
 
 ## Pick Generation (model/mlb_picks.py)
 
-**Confidence tiers:**
-- LOCK: 68%+ — strongest model signal
-- STRONG: 62-68%
-- LEAN: 55-62%
-- PASS: <55% — not shown
+**Confidence tiers (current thresholds in mlb_picks.py):**
+- LOCK: 75%+ — strongest model signal
+- STRONG: 68-75%
+- LEAN: 60-68%
+- PASS: <60% — not shown
 
 **Parlay rules:**
 - Minimum 57% confidence per leg
@@ -177,11 +188,13 @@ HR (0.5+), HITS (0.5+), TB (1.5+), RBI (0.5+), R (0.5+), SB (0.5+), K (SP strike
 - Serves dashboard from cache; never blocks a request
 - Cache TTL: 10 minutes (regenerates in background)
 - Full pipeline: runs at 6am ET daily on Railway (background thread)
-- Afternoon refresh: runs at 11:30am ET daily on Railway (background thread) — no Windows Task Scheduler needed
-- Odds snapshot: every 2 hours between 8am-10pm ET
+- Afternoon refresh: adaptive — fires 2 hours before first pitch (scheduled by `_schedule_adaptive_refresh()` after 6am pipeline completes); no hardcoded 11:30am
 - Lineup refresh: checks lineup_confirmed status from JSON directly; retries every 30 min while any game unconfirmed
 - Dashboard shows TOMORROW badge (amber pill) when picks are for next calendar day
+- Auto-switches to tomorrow's slate when all today's games have started; shows amber in-progress banner
+- Date toggle: today/tomorrow tabs let user manually switch slates at any time
 - gzip compression via flask-compress (570KB HTML → ~80KB)
+- On startup: seeds in-memory cache from R2 HTML immediately so site is live before pipeline reruns (~2 min)
 
 **Routes:**
 - `/` — main dashboard
@@ -195,8 +208,11 @@ HR (0.5+), HITS (0.5+), TB (1.5+), RBI (0.5+), R (0.5+), SB (0.5+), K (SP strike
 - `run_analysis.py` grades yesterday's picks nightly using MLB Stats API for final scores
 - `push_grades_to_db()` matches graded picks to DB rows by (pick_type, label) and calls `db/picks_store.grade_pick()`
 - `db/picks_store.get_accuracy_summary(days)` computes rolling W/L/ROI from PostgreSQL
+- `db/picks_store.get_monthly_accuracy()` computes month-by-month W/L/ROI breakdown
 - Yesterday panel on dashboard shows prior day results once graded
-- Monthly stats display planned once sufficient data accumulates
+- `/performance-html` — dark-themed performance dashboard with 7/14/30/60/90d toggles, market signal breakdown (CONFIRM/DIVERGE/NONE), and monthly summary table
+- `picks` DB table has `market_signal` column (added via ALTER TABLE migration in schema.py)
+- `run_analysis.py` calls `backfill_market_signals()` after grading to retroactively tag historical picks
 
 ---
 
@@ -235,15 +251,21 @@ HR (0.5+), HITS (0.5+), TB (1.5+), RBI (0.5+), R (0.5+), SB (0.5+), K (SP strike
 - Pitcher Statcast stuff metrics — xwOBA/whiff% suppression multiplier
 - Bullpen fatigue signal — 3-day reliever workload tiers
 - Polymarket second prediction market signal — divergence vs Kalshi
-- Afternoon refresh moved to Railway (11:30am ET background thread)
-- Tomorrow badge on dashboard header
+- Adaptive afternoon refresh — fires 2 hours before first pitch (replaces hardcoded 11:30am)
+- Probable pitcher upsert in afternoon refresh — re-fetches MLB API to catch scratches and rotation changes post-6am
+- Tomorrow badge on dashboard header + date toggle (today/tomorrow tabs)
+- Auto-switch to tomorrow's slate when all today's games started, with amber in-progress banner
 - Lineup refresh fix — checks actual lineup_confirmed status, retries every 30 min
 - Odds API quota warnings at 150/75/25 remaining
+- Half-Kelly bet sizing on every pick card (e.g. 55%→2.8%, 65%→13.3%)
+- market_signal column in picks DB table (ALTER TABLE migration, backfill on nightly grade)
+- Monthly performance summary + market signal breakdown in /performance-html
+- R2 HTML cache seeding on startup — site serves immediately after deploy, before pipeline reruns
+- Hitter stats JSON uploaded to R2 after afternoon scraper so props survive Railway restarts
+- JS IIFE bug fix in run_picks_html.py — arrow function in template literal was killing entire script block; fixed by pre-computing leg index before template string
 
 ### Next Up — Model Improvements (Priority 3)
 - Tune Pythagorean weights using accumulated backtesting data (need ~4 weeks of graded picks first)
-- ~~Add Kelly Criterion bet sizing recommendations~~ **DONE** — Half-Kelly at -110 displayed on every pick card (e.g. 55%→2.8%, 65%→13.3%)
-- Monthly performance summary widget on main dashboard
 - Consider ensemble approach (Random Forest alongside Pythagorean) for validation
 
 ---
@@ -260,4 +282,12 @@ HR (0.5+), HITS (0.5+), TB (1.5+), RBI (0.5+), R (0.5+), SB (0.5+), K (SP strike
 ---
 
 ## Known Issues / Watch Points
-- **Odds API free tier** — 500 req/month. Deploys trigger pipeline runs which burn quota. May 2026 exhausted due to multiple deploys. Resets May 1st. Quota warnings now logged at 150/75/25 re
+- **Odds API free tier** — 500 req/month. Adaptive refresh replaced the every-2-hour loop so usage is now ~1 pull/day (~30/month). As of mid-May 2026: ~92 requests remaining. Resets June 1st. Quota warnings logged at 150/75/25 remaining.
+- **Probable pitchers stale at 6am** — the morning pipeline locks in whatever the MLB API says. The afternoon upsert corrects this. If a starter is scratched after the afternoon refresh has already fired, the dashboard won't update until the next manual `/refresh` or next morning's pipeline.
+- **Polymarket sandbox** can't reach gamma-api.polymarket.com (proxy 403) — scraper built from API docs, untested until Railway runs it
+- **statalizers-pipeline** R2 bucket — empty, created by accident, can be deleted from Cloudflare
+- **Kalshi 0 game markets** — "Parsed 0 unique game markets from Kalshi" logged; market name matching logic may not align with current Kalshi API response format
+
+## Session Notes
+- New chat sessions: say "read CLAUDE.md" and Claude will load full context
+- File path: `C:\Users\Jskel\OneDrive\Documents\GitHub\sports-betting-pipeline\CLAUDE.md`

@@ -61,6 +61,19 @@ def main():
     except Exception as e:
         log.warning(f"Analysis grade failed (non-fatal): {e}")
 
+    # ── Step 0b: Refresh probable pitchers (rotation changes, injuries) ──────────
+    # The morning pipeline locks in whatever the MLB API said at 6am. By afternoon,
+    # starters can be scratched or swapped. Re-fetch and upsert so the model uses
+    # current assignments for today + tomorrow.
+    try:
+        from scrapers.mlb_scraper import fetch_schedule
+        from normalize.mlb_normalize import upsert_schedule_pitchers
+        fresh_schedule = fetch_schedule(days_ahead=1)   # today + tomorrow
+        n_updated = upsert_schedule_pitchers(fresh_schedule)
+        log.info(f"Probable pitchers refreshed: {n_updated} game(s) updated/inserted")
+    except Exception as e:
+        log.warning(f"Pitcher refresh failed (non-fatal): {e}")
+
     # ── Step 1: Refresh odds (lines move all morning) ─────────────────────────
     try:
         from scrapers.mlb_odds_scraper import run as run_odds
