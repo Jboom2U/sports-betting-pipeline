@@ -1246,11 +1246,12 @@ class MLBModel:
                 and r.get("status", "").lower() == "final"]
 
     # ── Score All Games for a Date ────────────────────────────────────────────
-    def score_today(self, target_date: str = None) -> tuple:
+    def score_today(self, target_date: str = None, pivot: bool = True) -> tuple:
         """
         Score all games for target_date. Returns (scored_games, actual_date).
         Automatically excludes games that have started or finished.
-        Falls back to next available date if no upcoming games found.
+        Falls back to next available date if no upcoming games found and pivot=True.
+        Pass pivot=False to stay anchored to target_date even when all games have started.
         """
         if not self._loaded:
             self.load()
@@ -1265,8 +1266,8 @@ class MLBModel:
         if skipped:
             log.info(f"Filtered out {skipped} completed/in-progress game(s)")
 
-        # If nothing upcoming today, use next available future slate
-        if not games:
+        # If nothing upcoming today, use next available future slate (only when pivot allowed)
+        if not games and pivot:
             future = sorted(set(
                 g["game_date"] for g in self.schedule
                 if g.get("game_date", "") > target_date

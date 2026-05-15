@@ -97,6 +97,13 @@ def main():
             run_hitters(target_date=today)
             log.info("Hitter stats refreshed — props will now populate")
 
+            # Upload hitter stats JSON to R2 so batter props survive Railway restarts
+            try:
+                from db.csv_sync import upload_hitter_stats
+                upload_hitter_stats(today)
+            except Exception as _ue:
+                log.warning(f"Hitter stats R2 upload failed (non-fatal): {_ue}")
+
             # Save confirmed prop picks to DB (ON CONFLICT DO NOTHING so safe to re-run)
             try:
                 from model.mlb_props_model import score_all_props

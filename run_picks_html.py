@@ -243,6 +243,9 @@ def prep_picks(picks, kalshi_data: dict = None):
             # Opponent info for TOSSUP card split display
             "opp_team":       p.get("opp_team", ""),
             "opp_conf":       round((1 - p["conf"]) * 100, 1),
+            # Sportsbook ML odds (American format, from Odds API)
+            "ml_away_odds":   gd.get("ml_away_odds"),
+            "ml_home_odds":   gd.get("ml_home_odds"),
         })
     return out
 
@@ -1377,6 +1380,40 @@ a.status-link{
 }
 a.status-link:hover{color:var(--green);border-color:var(--green)}
 
+/* ── DATE TOGGLE ── */
+.date-toggle{display:flex;gap:8px;margin:8px 0 4px}
+.date-btn{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:var(--sub);
+  border-radius:20px;padding:5px 16px;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .18s}
+.date-btn:hover{background:rgba(255,255,255,.1);color:var(--text)}
+.date-btn.active{background:rgba(0,230,118,.15);border-color:var(--green);color:var(--green)}
+/* ── ODDS PILL ── */
+.odds-row{display:flex;align-items:center;gap:6px;margin:6px 0 2px;flex-wrap:wrap}
+.odds-label{font-size:.68rem;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;margin-right:2px}
+.odds-pill{font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:10px;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);color:var(--sub)}
+.odds-pill.odds-picked{background:rgba(66,165,245,.15);border-color:rgba(66,165,245,.4);color:#90caf9}
+/* ── ADD TO PARLAY BUTTON ── */
+.add-leg-btn{width:100%;margin-top:10px;padding:7px 0;background:rgba(0,230,118,.08);
+  border:1px solid rgba(0,230,118,.25);border-radius:6px;color:var(--green);font-size:.78rem;
+  font-weight:600;cursor:pointer;transition:all .18s;letter-spacing:.02em}
+.add-leg-btn:hover{background:rgba(0,230,118,.18);border-color:var(--green)}
+.add-leg-btn.leg-selected{background:rgba(0,230,118,.25);border-color:var(--green);color:#fff}
+/* ── PARLAY DRAWER ── */
+#parlayDrawer{position:fixed;bottom:0;left:0;right:0;z-index:999;
+  background:#1a2030;border-top:2px solid var(--green);padding:12px 20px 16px;
+  box-shadow:0 -4px 24px rgba(0,0,0,.5);max-height:45vh;overflow-y:auto}
+.drawer-header{display:flex;align-items:center;gap:16px;margin-bottom:10px;flex-wrap:wrap}
+.drawer-title{font-weight:700;font-size:.9rem;color:var(--text)}
+.drawer-payout{font-size:.82rem;color:var(--green);font-weight:600;margin-left:auto}
+.drawer-clear{background:rgba(239,83,80,.15);border:1px solid rgba(239,83,80,.3);color:#ef5350;
+  border-radius:6px;padding:3px 10px;font-size:.72rem;cursor:pointer}
+.drawer-legs{display:flex;flex-direction:column;gap:6px}
+.drawer-leg{display:flex;align-items:center;gap:10px;padding:5px 8px;
+  background:rgba(255,255,255,.04);border-radius:6px;font-size:.78rem}
+.drawer-leg-label{flex:1;color:var(--text);font-weight:600}
+.drawer-leg-odds{color:var(--green);font-weight:700;white-space:nowrap}
+.drawer-remove{background:none;border:none;color:var(--sub);cursor:pointer;font-size:.9rem;padding:0 4px}
+.drawer-remove:hover{color:#ef5350}
 /* ── PARLAY EV ── */
 .parlay-ev{font-size:.72rem;font-weight:700;color:var(--green);
   background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.2);
@@ -1389,6 +1426,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
 <div class="header">
   <h1>⚾ Sports Betting Parlay Genius</h1>
   <div class="header-sub" id="dateStr"></div>
+  <div class="date-toggle" id="dateToggle"></div>
   <div class="header-stats">
     <div class="stat-pill">Games <span id="gameCount">—</span></div>
     <div class="stat-pill">Picks <span id="pickCount">—</span></div>
@@ -1560,6 +1598,19 @@ const DATA_SCHEDULE  = __SCHEDULE__;
 const DATA_YESTERDAY     = __YESTERDAY__;
 const DATA_MOVEMENT      = __MOVEMENT__;
 const DATA_PROJ_LINEUPS  = __PROJ_LINEUPS__;
+// Tomorrow slate
+const DATA_NEXT_DATE     = "__NEXT_DATE__";
+const DATA_PICKS_NEXT    = __PICKS_NEXT__;
+const DATA_P2_NEXT       = __P2_NEXT__;
+const DATA_P3_NEXT       = __P3_NEXT__;
+const DATA_SCHEDULE_NEXT = __SCHEDULE_NEXT__;
+// Active slate pointers (reassigned by switchSlate)
+let currentSlate    = "today";
+let ACTIVE_PICKS    = DATA_PICKS;
+let ACTIVE_P2       = DATA_P2;
+let ACTIVE_P3       = DATA_P3;
+let ACTIVE_SCHEDULE = DATA_SCHEDULE;
+let ACTIVE_DATE     = DATA_DATE;
 
 // ── State ────────────────────────────────────────────────────────────────────
 let filterType = "all", filterTier = "all", filterTeam = "";
@@ -1578,10 +1629,10 @@ const _tomorrowBadge = _diffDays === 1
 document.getElementById("dateStr").innerHTML = _dateLabel + _tomorrowBadge;
 
 document.getElementById("gameCount").textContent = DATA_GAMES.length;
-document.getElementById("pickCount").textContent = DATA_PICKS.length;
-document.getElementById("lockCount").textContent = DATA_PICKS.filter(p=>p.tier==="LOCK").length;
-if(DATA_PICKS.length){
-  const tp = DATA_PICKS[0];
+document.getElementById("pickCount").textContent = ACTIVE_PICKS.length;
+document.getElementById("lockCount").textContent = ACTIVE_PICKS.filter(p=>p.tier==="LOCK").length;
+if(ACTIVE_PICKS.length){
+  const tp = ACTIVE_PICKS[0];
   const awayCity = tp.away ? tp.away.split(" ").slice(-1)[0] : "";
   const homeCity = tp.home ? tp.home.split(" ").slice(-1)[0] : "";
   const gameCtx  = (awayCity && homeCity) ? ` · ${awayCity} @ ${homeCity}` : "";
@@ -1590,6 +1641,143 @@ if(DATA_PICKS.length){
 }
 
 // ── Render Picks ─────────────────────────────────────────────────────────────
+// ── Slate switching (Today / Tomorrow) ─────────────────
+function switchSlate(slate){
+  currentSlate    = slate;
+  ACTIVE_PICKS    = slate === "today" ? DATA_PICKS    : DATA_PICKS_NEXT;
+  ACTIVE_P2       = slate === "today" ? DATA_P2       : DATA_P2_NEXT;
+  ACTIVE_P3       = slate === "today" ? DATA_P3       : DATA_P3_NEXT;
+  ACTIVE_SCHEDULE = slate === "today" ? DATA_SCHEDULE : DATA_SCHEDULE_NEXT;
+  ACTIVE_DATE     = slate === "today" ? DATA_DATE     : DATA_NEXT_DATE;
+  document.querySelectorAll(".date-btn").forEach(b=>{
+    b.classList.toggle("active", b.dataset.slate === slate);
+  });
+  document.getElementById("pickCount").textContent = ACTIVE_PICKS.length;
+  document.getElementById("lockCount").textContent = ACTIVE_PICKS.filter(p=>p.tier==="LOCK").length;
+  if(ACTIVE_PICKS.length){
+    const tp = ACTIVE_PICKS[0];
+    const awayCity = tp.away ? tp.away.split(" ").slice(-1)[0] : "";
+    const homeCity = tp.home ? tp.home.split(" ").slice(-1)[0] : "";
+    const gameCtx  = (awayCity && homeCity) ? ` · ${awayCity} @ ${homeCity}` : "";
+    document.getElementById("topPick").innerHTML =
+      `<span style="color:var(--gold)">${tp.label} (${tp.conf}%)</span><span style="color:var(--sub);font-size:.75rem">${gameCtx}</span>`;
+  } else {
+    document.getElementById("topPick").textContent = "—";
+  }
+  renderPicks();
+  renderSchedule();
+  renderParlays();
+  selectedLegs = [];
+  updateParlayDrawer();
+}
+
+(function initDateToggle(){
+  const el = document.getElementById("dateToggle");
+  if(!el) return;
+  const fmtDate = d => new Date(d + "T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+  el.innerHTML = `
+    <button class="date-btn active" data-slate="today"    onclick="switchSlate('today')"   >${fmtDate(DATA_DATE)}</button>
+    <button class="date-btn"        data-slate="tomorrow" onclick="switchSlate('tomorrow')">${fmtDate(DATA_NEXT_DATE)} →</button>
+  `;
+  if(DATA_PICKS.length === 0 && DATA_PICKS_NEXT.length > 0){ switchSlate("tomorrow"); }
+})();
+
+// Format American odds integer: +150 or -110
+function fmtOdds(o){ if(o == null) return null; o = Math.round(o); return o > 0 ? "+"+o : String(o); }
+
+// Convert model confidence (0-1) to implied American odds
+function confToAmerican(conf){
+  const p = conf / 100;
+  if(p <= 0 || p >= 1) return null;
+  if(p > 0.5) return Math.round(-100 * p / (1 - p));
+  return Math.round(100 * (1 - p) / p);
+}
+
+// Show sportsbook odds on pick card (away vs home ML line)
+function oddsHtml(p){
+  if(p.ml_away_odds == null && p.ml_home_odds == null) return "";
+  const ao = fmtOdds(p.ml_away_odds);
+  const ho = fmtOdds(p.ml_home_odds);
+  // Determine which side is picked for ML/RL picks
+  const awayTeam = (p.away||"").split(" ").slice(-1)[0];
+  const homeTeam = (p.home||"").split(" ").slice(-1)[0];
+  const pickedAway = p.type !== "TOTAL" && p.team && p.team.toLowerCase().includes(awayTeam.toLowerCase());
+  const aoClass = pickedAway ? "odds-picked" : "";
+  const hoClass = !pickedAway && p.type !== "TOTAL" ? "odds-picked" : "";
+  return `<div class="odds-row">
+    <span class="odds-label">Sportsbook ML</span>
+    ${ao ? `<span class="odds-pill ${aoClass}">${awayTeam} ${ao}</span>` : ""}
+    ${ho ? `<span class="odds-pill ${hoClass}">${homeTeam} ${ho}</span>` : ""}
+  </div>`;
+}
+
+// ── Parlay Drawer ─────────────────────────────────────────────
+let selectedLegs = [];  // [{id, type, label, conf, odds, away, home}]
+
+function toggleLeg(evt, gameId, type, label, conf, mlAway, mlHome, away, home, team){
+  evt.stopPropagation();
+  const idx = selectedLegs.findIndex(l => l.id === gameId && l.type === type);
+  if(idx !== -1){
+    selectedLegs.splice(idx, 1);
+  } else {
+    // Use sportsbook odds when available, fall back to model-implied
+    const awayLast = (away||"").split(" ").slice(-1)[0];
+    const pickedAway = team && team.toLowerCase().includes(awayLast.toLowerCase());
+    let sbOdds = null;
+    if(type !== "TOTAL"){
+      sbOdds = pickedAway ? mlAway : mlHome;
+    }
+    const odds = (sbOdds != null) ? sbOdds : confToAmerican(conf);
+    selectedLegs.push({id:gameId, type, label, conf, odds, away, home});
+  }
+  updateParlayDrawer();
+  // Update button appearance
+  evt.target.classList.toggle("leg-selected", idx === -1);
+}
+
+function parlayPayout(legs){
+  // Convert each American odds to decimal, multiply, convert back
+  let decimal = 1;
+  for(const leg of legs){
+    const o = leg.odds;
+    if(o == null) { decimal *= 1 / (leg.conf / 100); continue; }
+    decimal *= o > 0 ? (o / 100 + 1) : (100 / Math.abs(o) + 1);
+  }
+  // Convert combined decimal back to American odds
+  const net = decimal - 1;
+  const american = net >= 1 ? Math.round(net * 100) : -Math.round(100 / net);
+  const payout100 = Math.round(net * 100);
+  return {american, payout100, decimal};
+}
+
+function updateParlayDrawer(){
+  const drawer = document.getElementById("parlayDrawer");
+  if(!drawer) return;
+  if(selectedLegs.length === 0){ drawer.style.display = "none"; return; }
+  drawer.style.display = "block";
+  const {american, payout100} = parlayPayout(selectedLegs);
+  const americanStr = american > 0 ? "+"+american : String(american);
+  const legsHtml = selectedLegs.map((l,i) => {
+    const oddsStr = l.odds != null ? (l.odds > 0 ? "+"+l.odds : String(l.odds)) : "(model)";
+    return `<div class="drawer-leg">
+      <span class="drawer-leg-label">${l.label}</span>
+      <span class="drawer-leg-odds">${oddsStr}</span>
+      <button class="drawer-remove" onclick="removeLeg(${i})">×</button>
+    </div>`;
+  }).join("");
+  drawer.innerHTML = `
+    <div class="drawer-header">
+      <span class="drawer-title">📋 Parlay Builder (${selectedLegs.length} leg${selectedLegs.length===1?"":"s"})</span>
+      <span class="drawer-payout">${americanStr} &nbsp;·&nbsp; $100 wins <strong>$${payout100}</strong></span>
+      <button class="drawer-clear" onclick="clearLegs()">Clear All</button>
+    </div>
+    <div class="drawer-legs">${legsHtml}</div>
+  `;
+}
+
+function removeLeg(i){ selectedLegs.splice(i,1); updateParlayDrawer(); }
+function clearLegs(){ selectedLegs=[]; updateParlayDrawer(); }
+
 function renderPicks(){
   const grid = document.getElementById("picksGrid");
   grid.innerHTML = "";
@@ -1601,7 +1789,7 @@ function renderPicks(){
   const leanArrowEl = document.getElementById("leanArrow");
   if(leanArrowEl) leanArrowEl.textContent = "▶";
   let visible = 0;
-  DATA_PICKS.forEach(p=>{
+  ACTIVE_PICKS.forEach(p=>{
     const show = (filterType==="all" || p.type===filterType)
               && (filterTier==="all" || p.tier===filterTier)
               && (!filterTeam || p.away.toLowerCase().includes(filterTeam)
@@ -1762,6 +1950,7 @@ function renderPicks(){
         ${moveHtml}
         ${lineShopHtml}
         ${kellyHtml}
+        ${oddsHtml(p)}
         <div class="pick-reasoning">${p.reasoning}</div>
         <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
           <span class="toggle-arrow">▶</span> View Player Props for this game
@@ -1769,6 +1958,7 @@ function renderPicks(){
         <div class="pick-card-props-panel">
           ${buildInlineProps(p.away, p.home)}
         </div>
+        <button class="add-leg-btn" onclick="toggleLeg(event,p.game_id,p.type,p.label,p.conf,p.ml_away_odds,p.ml_home_odds,p.away,p.home,p.team)" title="Add to parlay">➕ Add to Parlay</button>
       </div>`;
     }
   });
@@ -1786,7 +1976,7 @@ function renderPicks(){
     }
   }
   document.getElementById("pickResults").innerHTML =
-    `Showing <b>${visible}</b> of <b>${DATA_PICKS.length}</b> picks`;
+    `Showing <b>${visible}</b> of <b>${ACTIVE_PICKS.length}</b> picks`;
   if(visible===0) grid.innerHTML = `<div class="empty">No picks match the current filters.</div>`;
 }
 
@@ -1970,7 +2160,7 @@ function renderSharpMoney(){
     }
 
     // Does sharp money agree with any of our picks for this game?
-    const gamePick = DATA_PICKS.find(p => p.away === mv.away && p.home === mv.home);
+    const gamePick = ACTIVE_PICKS.find(p => p.away === mv.away && p.home === mv.home);
     let agreeHtml = "";
     if(gamePick && sharp){
       const pickTeamNick = gamePick.team ? gamePick.team.split(" ").slice(-1)[0] : "";
@@ -2111,7 +2301,7 @@ function renderYesterday(){
 
 // ── Render Parlays ────────────────────────────────────────────────────────────
 function renderParlays(){
-  const data = showParlay===2 ? DATA_P2 : DATA_P3;
+  const data = showParlay===2 ? ACTIVE_P2 : ACTIVE_P3;
   const grid = document.getElementById("parlayGrid");
   grid.innerHTML = "";
   if(!data.length){
@@ -2380,7 +2570,7 @@ function renderTeamView(team){
   const opp   = isAway ? home : away;
 
   // Find pick for this game
-  const gamePicks = DATA_PICKS.filter(p =>
+  const gamePicks = ACTIVE_PICKS.filter(p =>
     (p.away === away && p.home === home) ||
     (p.game && p.game.includes(away) && p.game.includes(home))
   );
@@ -2618,11 +2808,11 @@ document.querySelectorAll(".section-nav-btn[data-panel='panel-teams']").forEach(
 function renderSchedule(){
   const grid = document.getElementById("scheduleGrid");
   grid.innerHTML = "";
-  if(!DATA_SCHEDULE || DATA_SCHEDULE.length === 0){
+  if(!ACTIVE_SCHEDULE || ACTIVE_SCHEDULE.length === 0){
     grid.innerHTML = `<div class="empty">No games found for today.</div>`;
     return;
   }
-  DATA_SCHEDULE.forEach(g=>{
+  ACTIVE_SCHEDULE.forEach(g=>{
     const isLive    = g.status.startsWith("Live");
     const isFinal   = g.status === "Final";
     const isUpcoming= g.status === "Upcoming";
@@ -3191,7 +3381,7 @@ function renderSharpAction(){
     let betCallHtml = "";
     if(sharp && hasML){
       const sharpNick  = sharp.split(" ").slice(-1)[0];
-      const gamePick   = DATA_PICKS.find(p => p.away === mv.away && p.home === mv.home && (p.type==="ML"||p.type==="RL"));
+      const gamePick   = ACTIVE_PICKS.find(p => p.away === mv.away && p.home === mv.home && (p.type==="ML"||p.type==="RL"));
       let modelNoteHtml = "";
       if(gamePick){
         const pickNick = gamePick.team ? gamePick.team.split(" ").slice(-1)[0] : "";
@@ -3270,6 +3460,7 @@ setTimeout(() => {
   scheduleReload();
 })();
 </script>
+<div id="parlayDrawer" style="display:none"></div>
 </body>
 </html>"""
 
@@ -3309,7 +3500,7 @@ def main(date=None, no_open=False):
         log.warning(f"Removed {len(all_schedule) - len(deduped_sched)} duplicate game(s) from all_schedule")
     all_schedule = deduped_sched
 
-    scored, actual_date = model.score_today(target)
+    scored, actual_date = model.score_today(target, pivot=False)
 
     # Deduplicate scored games by (away_team, home_team) — schedule CSV sometimes has duplicate rows
     seen_games = set()
@@ -3323,44 +3514,23 @@ def main(date=None, no_open=False):
         log.warning(f"Removed {len(scored) - len(deduped)} duplicate game(s) from scored list")
     scored = deduped
 
-    # If score_today pivoted to a future date (all today's games started/finished),
-    # or today's schedule exists but no upcoming games remain, today's picks are
-    # locked in. Return the morning-generated HTML so the dashboard stays
-    # populated all day even after first pitch — read-only, no re-scoring.
-    _today_games_done = (actual_date != target) or (not scored and bool(all_schedule))
-    if _today_games_done:
-        for _candidate in [
-            os.path.join(PICKS_DIR, f"mlb_picks_{target}.html"),
-            os.path.join(PICKS_DIR, "mlb_picks_latest.html"),
-        ]:
-            if os.path.exists(_candidate):
-                log.info(f"All today's games started — serving saved picks from {_candidate}")
-                with open(_candidate, encoding="utf-8") as _f:
-                    return _f.read()
-        # File not on disk (ephemeral Railway container) — try R2
-        log.info(f"No saved picks HTML on disk for {target} — attempting R2 download")
-        try:
-            from db.csv_sync import _get_client, _bucket
-            import tempfile as _tempfile
-            client = _get_client()
-            if client is not None:
-                for _r2_key in [f"picks/mlb_picks_{target}.html", "picks/mlb_picks_latest.html"]:
-                    try:
-                        with _tempfile.NamedTemporaryFile(suffix=".html", delete=False) as _tmp:
-                            _tmp_path = _tmp.name
-                        client.download_file(_bucket(), _r2_key, _tmp_path)
-                        with open(_tmp_path, encoding="utf-8") as _f:
-                            _html = _f.read()
-                        os.unlink(_tmp_path)
-                        if _html:
-                            log.info(f"Served picks HTML from R2 key: {_r2_key}")
-                            return _html
-                    except Exception:
-                        continue
-        except Exception as _e:
-            log.warning(f"R2 picks HTML download failed (non-fatal): {_e}")
-        log.info(f"No picks HTML found on disk or R2 for {target} — returning None")
-        return None
+    # Score tomorrow’s slate for the date toggle (uses same loaded model, no extra I/O)
+    from datetime import timedelta as _td
+    tomorrow_str = (datetime.strptime(target, "%Y-%m-%d") + _td(days=1)).strftime("%Y-%m-%d")
+    try:
+        scored_next, _ = model.score_today(tomorrow_str)
+    except Exception:
+        scored_next = []
+    # Tomorrow schedule for the schedule tab
+    all_schedule_next = [g for g in model.schedule if g.get("game_date") == tomorrow_str]
+    seen_sched_next = set()
+    deduped_sched_next = []
+    for g in all_schedule_next:
+        key = (g.get("away_team", ""), g.get("home_team", ""))
+        if key not in seen_sched_next:
+            seen_sched_next.add(key)
+            deduped_sched_next.append(g)
+    all_schedule_next = deduped_sched_next
 
     if not scored and not all_schedule:
         log.warning(f"No games found for {target}. Run python run_pipeline.py first.")
@@ -3389,6 +3559,11 @@ def main(date=None, no_open=False):
     picks     = generate_picks(scored)
     parlays_2 = build_parlays(picks, legs=2, max_parlays=5)
     parlays_3 = build_parlays(picks, legs=3, max_parlays=5)
+
+    # Tomorrow picks and parlays
+    picks_next     = generate_picks(scored_next)
+    parlays_2_next = build_parlays(picks_next, legs=2, max_parlays=5)
+    parlays_3_next = build_parlays(picks_next, legs=3, max_parlays=5)
 
     # Load standings for team records
     standings = load_standings()
@@ -3478,6 +3653,10 @@ def main(date=None, no_open=False):
     # Serialize projected lineups (loaded earlier for props; reuse here for JS injection)
     proj_lineups_json = json.dumps(proj_lineups_data)
 
+    # Tomorrow schedule view (no live scores needed — future games)
+    schedule_next_games = all_schedule_next if all_schedule_next else scored_next
+    schedule_next_json  = json.dumps(prep_schedule_view(schedule_next_games, [], standings))
+
     # Serialize all data for HTML template injection
     picks_json      = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
     games_json      = json.dumps(prep_games(scored))
@@ -3485,6 +3664,10 @@ def main(date=None, no_open=False):
     p3_json         = json.dumps(prep_parlays(parlays_3))
     scores_json     = json.dumps(prep_scores_ticker(today_scores))
     team_sched_json = json.dumps(prep_team_schedule(actual_date))
+    # Tomorrow data
+    picks_next_json = json.dumps(prep_picks(picks_next, kalshi_data={}))
+    p2_next_json    = json.dumps(prep_parlays(parlays_2_next))
+    p3_next_json    = json.dumps(prep_parlays(parlays_3_next))
 
     html = (HTML
             .replace("__DATE__",         actual_date)
@@ -3498,7 +3681,12 @@ def main(date=None, no_open=False):
             .replace("__YESTERDAY__",    yesterday_json)
             .replace("__MOVEMENT__",     movement_json)
             .replace("__PROJ_LINEUPS__", proj_lineups_json)
-            .replace("__TEAM_SCHED__",   team_sched_json))
+            .replace("__TEAM_SCHED__",   team_sched_json)
+            .replace("__NEXT_DATE__",     tomorrow_str)
+            .replace("__PICKS_NEXT__",    picks_next_json)
+            .replace("__P2_NEXT__",       p2_next_json)
+            .replace("__P3_NEXT__",       p3_next_json)
+            .replace("__SCHEDULE_NEXT__", schedule_next_json))
 
     os.makedirs(PICKS_DIR, exist_ok=True)
     out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")

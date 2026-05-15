@@ -111,6 +111,12 @@ def _run_full_pipeline():
     except Exception as e:
         log.error(f"Pipeline failed: {e}", exc_info=True)
 
+    # Schedule afternoon refresh 2 hours before first pitch (one-shot, non-fatal)
+    try:
+        _schedule_adaptive_refresh()
+    except Exception as _sar_e:
+        log.warning(f"Adaptive refresh scheduling failed (non-fatal): {_sar_e}")
+
     # Grade yesterday's picks and push results to DB (non-fatal)
     yesterday = (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
     try:
@@ -1347,16 +1353,6 @@ def _start_daily_scheduler():
     t.start()
 
 
-# ── Scheduled 11:30am ET afternoon refresh ──────────────────────────────────────────────
-def _seconds_until_1130am_et() -> float:
-    """Return seconds until next 11:30am Eastern Time."""
-    now    = datetime.now(ET)
-    target = now.replace(hour=11, minute=30, second=0, microsecond=0)
-    if now >= target:
-        target += timedelta(days=1)
-    return (target - now).total_seconds()
-
-
 def _run_afternoon_refresh():
     """Re-run lineup + hitter + odds + umpire + bullpen fatigue scrapers and rebuild dashboard."""
     today = datetime.now(ET).strftime("%Y-%m-%d")
@@ -1432,17 +1428,73 @@ def _run_afternoon_refresh():
     log.info("=== Afternoon refresh complete — dashboard rebuilding ===")
 
 
-def _start_afternoon_scheduler():
-    """Background thread that runs the afternoon refresh at 11:30am ET every day."""
-    def _loop():
-        while True:
-            wait = _seconds_until_1130am_et()
-            log.info(f"Afternoon refresh scheduled in {wait/3600:.1f}h (11:30am ET).")
-            time.sleep(wait)
-            _run_afternoon_refresh()
+def _schedule_adaptive_refresh():
+    """
+    Schedule today's afternoon refresh to fire 2 hours before the first pitch.
+    Called once at the end of the 6am pipeline. One-shot fire -- no recurring loop.
+    Replaces the hardcoded 11:30am scheduler and the every-2-hour odds loop.
+    API usage: 1 odds pull/day (~30/month) vs old ~7/day (~210/month).
+    """
+    import csv as _csv
+    from datetime import timezone as _tz
 
-    t = threading.Thread(target=_loop, daemon=True)
+    today      = datetime.now(ET).strftime("%Y-%m-%d")
+    sched_path = os.path.join(CLEAN_DIR, "mlb_schedule_master.csv")
+
+    earliest_et = None
+    try:
+        with open(sched_path, encoding="utf-8") as f:
+            for row in _csv.DictReader(f):
+                if row.get("game_date") != today:
+                    continue
+                utc_str = row.get("game_time_utc", "").strip()
+                if not utc_str:
+                    continue
+                try:
+                    game_utc = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tz.utc)
+                    game_et  = game_utc.astimezone(ET)
+                    if earliest_et is None or game_et < earliest_et:
+                        earliest_et = game_et
+                except ValueError:
+                    continue
+    except Exception as e:
+        log.warning(f"Adaptive refresh: could not read schedule CSV: {e}")
+
+    if earliest_et is None:
+        log.warning("Adaptive refresh: no game times found for today -- refresh not scheduled.")
+        return
+
+    target_et = earliest_et - timedelta(hours=2)
+    now_et    = datetime.now(ET)
+    wait_secs = (target_et - now_et).total_seconds()
+
+    if wait_secs < 0:
+        if now_et < earliest_et:
+            # Window passed but first pitch hasn't started -- run immediately
+            log.info(
+                f"Adaptive refresh target already passed -- running immediately "
+                f"(first pitch {earliest_et.strftime('%I:%M %p ET')})"
+            )
+            wait_secs = 0
+        else:
+            log.info("Adaptive refresh: first pitch already started -- skipping.")
+            return
+
+    log.info(
+        f"Adaptive refresh scheduled for {target_et.strftime('%I:%M %p ET')} "
+        f"(first pitch {earliest_et.strftime('%I:%M %p ET')}, "
+        f"{wait_secs/3600:.1f}h from now)"
+    )
+
+    def _fire():
+        if wait_secs > 0:
+            time.sleep(wait_secs)
+        log.info("=== Adaptive refresh firing -- 2 hours before first pitch ===")
+        _run_afternoon_refresh()
+
+    t = threading.Thread(target=_fire, daemon=True)
     t.start()
+
 
 
 # ── Startup ─────────────────────────────────────────────────────────────────────────────────────
@@ -1530,7 +1582,6 @@ def warm_cache():
 
 # Start schedulers and warm cache whether run via gunicorn or directly
 _start_daily_scheduler()
-_start_afternoon_scheduler()
 warm_cache()
 
 if __name__ == "__main__":

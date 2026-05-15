@@ -220,3 +220,17 @@ def upload_file(local_path: str | Path, storage_key: str = None) -> bool:
     except Exception as e:
         log.warning(f"upload_file failed for {local_path.name} (non-fatal): {e}")
         return False
+
+
+def upload_hitter_stats(date: str) -> bool:
+    """
+    Upload today's hitter stats JSON to R2 so it survives Railway restarts.
+    Stored as raw/mlb_hitter_stats_{date}.json -- _key_to_local() maps it back
+    to data/raw/ on the next startup download.
+    """
+    local_path = RAW_DIR / f"mlb_hitter_stats_{date}.json"
+    if not local_path.exists():
+        log.warning(f"upload_hitter_stats: {local_path.name} not found -- skipping")
+        return False
+    storage_key = f"raw/mlb_hitter_stats_{date}.json"
+    return upload_file(local_path, storage_key)
