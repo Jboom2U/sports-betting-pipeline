@@ -1799,12 +1799,7 @@ function renderPicks(){
   if(leanArrowEl) leanArrowEl.textContent = "▶";
   let visible = 0;
   ACTIVE_PICKS.forEach(p=>{
-    // TBD starter suppression: TOTAL picks with unknown SP are unreliable
-    if(p.tbd_sp && p.type === "TOTAL") return;   // suppress entirely
-    // ML/RL with TBD SP: cap displayed tier at LEAN so they don't appear as LOCK/STRONG
-    if(p.tbd_sp && p.type !== "TOTAL" && (p.tier === "LOCK" || p.tier === "STRONG")){
-      p = Object.assign({}, p, {tier: "LEAN"});
-    }
+    // TBD starter: \u26a0 badge already warns users -- picks remain visible in their model tier
     const show = (filterType==="all" || p.type===filterType)
               && (filterTier==="all" || p.tier===filterTier)
               && (!filterTeam || p.away.toLowerCase().includes(filterTeam)
