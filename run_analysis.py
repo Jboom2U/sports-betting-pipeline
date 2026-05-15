@@ -657,6 +657,15 @@ def save_analysis(date: str, graded_picks: list, metrics: dict,
         json.dump(payload, f, indent=2)
 
     log.info(f"Analysis saved: {path}")
+
+    # Upload to R2 so yesterday panel survives Railway restarts
+    try:
+        from db.csv_sync import upload_file as _upload_file
+        _upload_file(path, f"picks/mlb_analysis_{date}.json")
+        log.info(f"Analysis JSON uploaded to R2: picks/mlb_analysis_{{date}}.json")
+    except Exception as _e:
+        log.warning(f"Analysis JSON R2 upload failed (non-fatal): {{_e}}")
+
     return path
 
 

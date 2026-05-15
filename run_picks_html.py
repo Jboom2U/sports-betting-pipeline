@@ -1964,7 +1964,7 @@ function renderPicks(){
         <div class="pick-card-props-panel">
           ${buildInlineProps(p.away, p.home)}
         </div>
-        <button class="add-leg-btn" onclick="toggleLeg(event,${p.game_id||0},${JSON.stringify(p.type)},${JSON.stringify(p.label)},${p.conf},${p.ml_away_odds??null},${p.ml_home_odds??null},${JSON.stringify(p.away||'')},${JSON.stringify(p.home||'')},${JSON.stringify(p.team||'')})" title="Add to parlay">➕ Add to Parlay</button>
+        <button class="add-leg-btn" data-leg="${(()=>{pickData.push(p);return pickData.length-1;})()" onclick="toggleLegByIdx(event,+this.dataset.leg)" title="Add to parlay">➕ Add to Parlay</button>
       </div>`;
     }
   });

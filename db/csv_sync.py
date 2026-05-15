@@ -33,6 +33,7 @@ log = logging.getLogger(__name__)
 BASE_DIR  = Path(__file__).parent.parent
 CLEAN_DIR = BASE_DIR / "data" / "clean"
 RAW_DIR   = BASE_DIR / "data" / "raw"
+PICKS_DIR = BASE_DIR / "picks"
 
 # File patterns synced to storage. Raw files are large and transient;
 # clean/ masters are the critical ones — they're what the model reads.
@@ -156,6 +157,8 @@ def _key_to_local(key: str) -> Path | None:
         return CLEAN_DIR / key[len("clean/"):]
     if key.startswith("raw/"):
         return RAW_DIR / key[len("raw/"):]
+    if key.startswith("picks/"):
+        return PICKS_DIR / key[len("picks/"):]
     return None
 
 
