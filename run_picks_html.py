@@ -1713,6 +1713,7 @@ function oddsHtml(p){
 
 // ── Parlay Drawer ─────────────────────────────────────────────
 let selectedLegs = [];  // [{id, type, label, conf, odds, away, home}]
+let pickData = [];       // registry for + buttons -- reset on each renderPicks()
 
 function toggleLeg(evt, gameId, type, label, conf, mlAway, mlHome, away, home, team){
   evt.stopPropagation();
@@ -1733,6 +1734,13 @@ function toggleLeg(evt, gameId, type, label, conf, mlAway, mlHome, away, home, t
   updateParlayDrawer();
   // Update button appearance
   evt.target.classList.toggle("leg-selected", idx === -1);
+}
+
+function toggleLegByIdx(evt, idx){
+  const p = pickData[idx];
+  if(!p) return;
+  toggleLeg(evt, p.game_id, p.type, p.label, p.conf,
+            p.ml_away_odds, p.ml_home_odds, p.away, p.home, p.team);
 }
 
 function parlayPayout(legs){
@@ -1779,6 +1787,7 @@ function removeLeg(i){ selectedLegs.splice(i,1); updateParlayDrawer(); }
 function clearLegs(){ selectedLegs=[]; updateParlayDrawer(); }
 
 function renderPicks(){
+  pickData = [];  // reset registry for fresh + button indices
   const grid = document.getElementById("picksGrid");
   grid.innerHTML = "";
   const leanGridEl = document.getElementById("leanGrid");
