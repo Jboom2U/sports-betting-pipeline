@@ -1492,6 +1492,9 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <div id="yesterdayBanner"></div>
     <div class="section-title">🎯 Individual Picks</div>
     <div class="results-count" id="pickResults"></div>
+    <div id="todayInProgressBanner" style="display:none;background:#1c2128;border:1px solid #30363d;border-left:3px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:12px;color:#8b949e;font-size:.85rem">
+      Today's games are in progress &mdash; showing <strong style="color:#f59e0b">tomorrow's picks</strong> below.
+    </div>
     <div class="picks-grid" id="picksGrid"></div>
 
     <!-- Sharp Money Panel — only shown when movement data exists -->
@@ -1649,6 +1652,11 @@ function switchSlate(slate){
   ACTIVE_P3       = slate === "today" ? DATA_P3       : DATA_P3_NEXT;
   ACTIVE_SCHEDULE = slate === "today" ? DATA_SCHEDULE : DATA_SCHEDULE_NEXT;
   ACTIVE_DATE     = slate === "today" ? DATA_DATE     : DATA_NEXT_DATE;
+  // Update the header date when switching slates
+  const _slateDate = new Date(ACTIVE_DATE + "T12:00:00");
+  const _slateLabel = _slateDate.toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  const _slateTomorrow = slate === "tomorrow" ? ' <span style="background:#f59e0b;color:#000;font-size:.7rem;font-weight:700;padding:2px 10px;border-radius:10px;vertical-align:middle;margin-left:8px;letter-spacing:.05em">TOMORROW</span>' : '';
+  document.getElementById("dateStr").innerHTML = _slateLabel + _slateTomorrow;
   document.querySelectorAll(".date-btn").forEach(b=>{
     b.classList.toggle("active", b.dataset.slate === slate);
   });
@@ -1679,7 +1687,12 @@ function switchSlate(slate){
     <button class="date-btn active" data-slate="today"    onclick="switchSlate('today')"   >${fmtDate(DATA_DATE)}</button>
     <button class="date-btn"        data-slate="tomorrow" onclick="switchSlate('tomorrow')">${fmtDate(DATA_NEXT_DATE)} →</button>
   `;
-  if(DATA_PICKS.length === 0 && DATA_PICKS_NEXT.length > 0){ switchSlate("tomorrow"); }
+  if(DATA_PICKS.length === 0 && DATA_PICKS_NEXT.length > 0){
+    switchSlate("tomorrow");
+    // Show a banner explaining why we auto-switched
+    const _todayBanner = document.getElementById("todayInProgressBanner");
+    if(_todayBanner) _todayBanner.style.display = "block";
+  }
 })();
 
 // Format American odds integer: +150 or -110
