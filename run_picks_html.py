@@ -1790,6 +1790,12 @@ function renderPicks(){
   if(leanArrowEl) leanArrowEl.textContent = "▶";
   let visible = 0;
   ACTIVE_PICKS.forEach(p=>{
+    // TBD starter suppression: TOTAL picks with unknown SP are unreliable
+    if(p.tbd_sp && p.type === "TOTAL") return;   // suppress entirely
+    // ML/RL with TBD SP: cap displayed tier at LEAN so they don't appear as LOCK/STRONG
+    if(p.tbd_sp && p.type !== "TOTAL" && (p.tier === "LOCK" || p.tier === "STRONG")){
+      p = Object.assign({}, p, {tier: "LEAN"});
+    }
     const show = (filterType==="all" || p.type===filterType)
               && (filterTier==="all" || p.tier===filterTier)
               && (!filterTeam || p.away.toLowerCase().includes(filterTeam)
@@ -1958,7 +1964,7 @@ function renderPicks(){
         <div class="pick-card-props-panel">
           ${buildInlineProps(p.away, p.home)}
         </div>
-        <button class="add-leg-btn" onclick="toggleLeg(event,p.game_id,p.type,p.label,p.conf,p.ml_away_odds,p.ml_home_odds,p.away,p.home,p.team)" title="Add to parlay">➕ Add to Parlay</button>
+        <button class="add-leg-btn" onclick="toggleLeg(event,${p.game_id||0},${JSON.stringify(p.type)},${JSON.stringify(p.label)},${p.conf},${p.ml_away_odds??null},${p.ml_home_odds??null},${JSON.stringify(p.away||'')},${JSON.stringify(p.home||'')},${JSON.stringify(p.team||'')})" title="Add to parlay">➕ Add to Parlay</button>
       </div>`;
     }
   });
