@@ -569,6 +569,24 @@ def prep_parlays(parlays):
     return out
 
 
+def prep_thematic_parlays(parlays):
+    out = []
+    for p in parlays:
+        out.append({
+            "thesis":      p["thesis"],
+            "thesis_desc": p["thesis_desc"],
+            "n_legs":      p["n_legs"],
+            "combined":    round(p["combined"] * 100, 1),
+            "payout":      p["payout"],
+            "legs": [
+                {"label": l["label"], "conf": round(l["conf"] * 100, 1),
+                 "tier": l["tier"], "game": l["game"]}
+                for l in p["legs"]
+            ],
+        })
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # KALSHI + ANALYSIS LOADERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1116,6 +1134,15 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   font-style:italic;
 }
 
+.thematic-parlay-card{border-top:3px solid var(--blue) !important}
+.thematic-thesis-badge{
+  font-size:.78rem;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--blue);margin-bottom:4px;
+}
+.thematic-desc{
+  font-size:.74rem;color:var(--sub);line-height:1.5;margin-bottom:2px;font-style:italic;
+}
+
 /* ── PARLAY CARDS ── */
 .parlay-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:36px}
 .parlay-card{
@@ -1527,7 +1554,11 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
       <div class="picks-grid" id="surfacedPropsGrid"></div>
     </div>
 
-    <div class="section-title">🔥 Parlay Recommendations</div>
+    <div class="section-title">🎯 Thematic Parlays</div>
+    <div style="font-size:.78rem;color:var(--sub);margin:-8px 0 12px">Grouped by shared thesis — each parlay has a single reason to exist.</div>
+    <div class="parlay-grid" id="thematicGrid"></div>
+
+    <div class="section-title" style="margin-top:24px">🔥 Best Parlays by Confidence</div>
     <div class="section-tabs">
       <button class="section-tab active" data-parlay="2">2-Leg (+260)</button>
       <button class="section-tab" data-parlay="3">3-Leg (+595)</button>
@@ -1603,6 +1634,8 @@ const DATA_GAMES     = __GAMES__;
 const DATA_TEAM_SCHED = __TEAM_SCHED__;
 const DATA_P2        = __P2__;
 const DATA_P3        = __P3__;
+const DATA_THEMATIC      = __THEMATIC__;
+const DATA_THEMATIC_NEXT = __THEMATIC_NEXT__;
 const DATA_SCORES    = __SCORES__;
 const DATA_PROPS     = __PROPS__;
 const DATA_SCHEDULE  = __SCHEDULE__;
@@ -1620,6 +1653,7 @@ let currentSlate    = "today";
 let ACTIVE_PICKS    = DATA_PICKS;
 let ACTIVE_P2       = DATA_P2;
 let ACTIVE_P3       = DATA_P3;
+let ACTIVE_THEMATIC = DATA_THEMATIC;
 let ACTIVE_SCHEDULE = DATA_SCHEDULE;
 let ACTIVE_DATE     = DATA_DATE;
 
@@ -1658,6 +1692,7 @@ function switchSlate(slate){
   ACTIVE_PICKS    = slate === "today" ? DATA_PICKS    : DATA_PICKS_NEXT;
   ACTIVE_P2       = slate === "today" ? DATA_P2       : DATA_P2_NEXT;
   ACTIVE_P3       = slate === "today" ? DATA_P3       : DATA_P3_NEXT;
+  ACTIVE_THEMATIC = slate === "today" ? DATA_THEMATIC : DATA_THEMATIC_NEXT;
   ACTIVE_SCHEDULE = slate === "today" ? DATA_SCHEDULE : DATA_SCHEDULE_NEXT;
   ACTIVE_DATE     = slate === "today" ? DATA_DATE     : DATA_NEXT_DATE;
   // Update the header date when switching slates
@@ -1682,6 +1717,7 @@ function switchSlate(slate){
   }
   renderPicks();
   renderSchedule();
+  renderThematic();
   renderParlays();
   selectedLegs = [];
   updateParlayDrawer();
@@ -2331,6 +2367,48 @@ function renderYesterday(){
     <div style="margin-bottom:20px">${allFindings}</div>
     <div class="section-title" style="font-size:.78rem">Recommendations</div>
     ${allRecs}`;
+}
+
+// ── Render Thematic Parlays ───────────────────────────────────────────────────
+const THESIS_ICONS = {
+  "Pitching Mismatch": "⚾",
+  "Home Dog Value":    "🐶",
+  "Sharp Action":      "💰",
+  "Bullpen Edge":      "💪",
+  "Market Confirm":    "📊",
+  "Hot Team":          "🔥",
+};
+function renderThematic(){
+  const grid = document.getElementById("thematicGrid");
+  if(!grid) return;
+  grid.innerHTML = "";
+  if(!ACTIVE_THEMATIC || !ACTIVE_THEMATIC.length){
+    grid.innerHTML = `<div class="empty" style="padding:20px 0;color:var(--sub);font-size:.85rem">Not enough qualifying legs with a shared thesis today — check back after lineups confirm.</div>`;
+    return;
+  }
+  ACTIVE_THEMATIC.forEach((par)=>{
+    const icon = THESIS_ICONS[par.thesis] || "\u{1F3AF}";
+    const legsHtml = par.legs.map(l=>`
+      <div class="parlay-leg">
+        <span class="leg-conf leg-${l.tier}">${l.conf}%</span>
+        <div class="leg-info">
+          <div class="leg-label">${l.label}</div>
+          <div class="leg-game">${l.game}</div>
+        </div>
+      </div>`).join("");
+    const BREAKEVEN = {"+260": 27.8, "+595": 14.4};
+    const be   = BREAKEVEN[par.payout] || 20;
+    const edge = (par.combined - be).toFixed(1);
+    grid.innerHTML += `
+      <div class="parlay-card thematic-parlay-card">
+        <div class="thematic-thesis-badge">${icon} ${par.thesis}</div>
+        <div class="thematic-desc">${par.thesis_desc}</div>
+        <div class="parlay-conf" style="margin-top:10px">${par.combined}%<span>combined confidence</span></div>
+        <div class="parlay-ev">+${edge}% edge vs break-even</div>
+        <div class="parlay-breakeven">Break-even at ${par.payout} payout: ${be}% — you're at ${par.combined}%</div>
+        <div class="parlay-legs" style="margin-top:12px">${legsHtml}</div>
+      </div>`;
+  });
 }
 
 // ── Render Parlays ────────────────────────────────────────────────────────────
@@ -3473,6 +3551,7 @@ renderSurfacedProps();
 setTimeout(() => {
   renderSharpMoney();
   renderSharpAction();
+  renderThematic();
   renderParlays();
   renderSchedule();
   renderGames();
@@ -3511,7 +3590,7 @@ def main(date=None, no_open=False):
     # doubles hang time, and burns API quota.
 
     from model.mlb_model import MLBModel
-    from model.mlb_picks import generate_picks, build_parlays
+    from model.mlb_picks import generate_picks, build_parlays, build_thematic_parlays
     from model.mlb_props_model import score_all_props
 
     model = MLBModel()
@@ -3591,13 +3670,15 @@ def main(date=None, no_open=False):
 
     # Now generate picks from the fully filtered game list
     picks     = generate_picks(scored)
-    parlays_2 = build_parlays(picks, legs=2, max_parlays=5)
-    parlays_3 = build_parlays(picks, legs=3, max_parlays=5)
+    parlays_2        = build_parlays(picks, legs=2, max_parlays=5)
+    parlays_3        = build_parlays(picks, legs=3, max_parlays=5)
+    thematic_parlays = build_thematic_parlays(picks)
 
     # Tomorrow picks and parlays
-    picks_next     = generate_picks(scored_next)
-    parlays_2_next = build_parlays(picks_next, legs=2, max_parlays=5)
-    parlays_3_next = build_parlays(picks_next, legs=3, max_parlays=5)
+    picks_next          = generate_picks(scored_next)
+    parlays_2_next      = build_parlays(picks_next, legs=2, max_parlays=5)
+    parlays_3_next      = build_parlays(picks_next, legs=3, max_parlays=5)
+    thematic_next       = build_thematic_parlays(picks_next)
 
     # Load standings for team records
     standings = load_standings()
@@ -3696,18 +3777,22 @@ def main(date=None, no_open=False):
     games_json      = json.dumps(prep_games(scored))
     p2_json         = json.dumps(prep_parlays(parlays_2))
     p3_json         = json.dumps(prep_parlays(parlays_3))
+    thematic_json   = json.dumps(prep_thematic_parlays(thematic_parlays))
     scores_json     = json.dumps(prep_scores_ticker(today_scores))
     team_sched_json = json.dumps(prep_team_schedule(actual_date))
     # Tomorrow data
     picks_next_json = json.dumps(prep_picks(picks_next, kalshi_data={}))
     p2_next_json    = json.dumps(prep_parlays(parlays_2_next))
     p3_next_json    = json.dumps(prep_parlays(parlays_3_next))
+    thematic_next_json = json.dumps(prep_thematic_parlays(thematic_next))
 
     html = (HTML
             .replace("__DATE__",         actual_date)
             .replace("__PICKS__",        picks_json)
             .replace("__GAMES__",        games_json)
             .replace("__P2__",           p2_json)
+            .replace("__THEMATIC__",      thematic_json)
+            .replace("__THEMATIC_NEXT__", thematic_next_json)
             .replace("__P3__",           p3_json)
             .replace("__SCORES__",       scores_json)
             .replace("__PROPS__",        props_json)

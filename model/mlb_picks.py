@@ -211,6 +211,143 @@ def build_parlays(picks: list, legs: int = 2, max_parlays: int = 3) -> list:
     return parlays[:max_parlays]
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THEMATIC PARLAY BUILDER
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Human-readable thesis labels and one-liner descriptions shown on each card.
+THESIS_DEFS = {
+    "Pitching Mismatch":
+        "One starter carries a meaningful ERA edge — pitcher quality is the model's highest-weight signal.",
+    "Home Dog Value":
+        "Home underdog backed by the model — these spots carry positive EV over a full season.",
+    "Sharp Action":
+        "Informed money is moving this direction — steam typically signals edge the public hasn't priced yet.",
+    "Bullpen Edge":
+        "Fresh bullpen facing a fatigued one — late-game leverage strongly favors this side.",
+    "Market Confirm":
+        "Both Kalshi and Polymarket back this side — cross-market consensus adds real confidence.",
+    "Hot Team":
+        "This club has been rolling lately — recent form is a meaningful short-term predictor.",
+}
+
+
+def _tag_pick_thesis(pick: dict) -> list:
+    """Return all thematic tags that apply to this pick (a pick can earn multiple)."""
+    tags = []
+    g    = pick.get("game_data", {})
+    home = g.get("home_team", "")
+    pick_team = pick.get("team", "")
+    is_home   = (pick_team == home)
+
+    pick_era = g.get("home_sp_era_adj") if is_home else g.get("away_sp_era_adj")
+    opp_era  = g.get("away_sp_era_adj") if is_home else g.get("home_sp_era_adj")
+    pick_sp  = ((g.get("home_sp") if is_home else g.get("away_sp")) or "").strip()
+
+    # Pitching Mismatch — material ERA gap on ML or RL picks
+    if pick["type"] in ("ML", "RL") and pick_era and opp_era:
+        if (opp_era - pick_era) >= 0.75 and pick_sp.upper() != "TBD":
+            tags.append("Pitching Mismatch")
+
+    # Home Dog Value — home underdog
+    if pick["type"] == "ML" and is_home:
+        ml_home_odds = g.get("ml_home_odds")
+        try:
+            if ml_home_odds and int(ml_home_odds) > 0:
+                tags.append("Home Dog Value")
+        except (TypeError, ValueError):
+            pass
+
+    # Sharp Action — steam on our pick
+    ml_signal  = g.get("ml_signal", "")
+    sharp_side = g.get("sharp_side", "")
+    if ml_signal == "STEAM" and sharp_side and pick_team in sharp_side:
+        tags.append("Sharp Action")
+
+    # Bullpen Edge — fresh pen vs tired/spent pen
+    pick_fat = ((g.get("home_fatigue_tier") if is_home else g.get("away_fatigue_tier")) or "NORMAL").upper()
+    opp_fat  = ((g.get("away_fatigue_tier") if is_home else g.get("home_fatigue_tier")) or "NORMAL").upper()
+    if pick_fat == "FRESH" and opp_fat in ("TIRED", "SPENT"):
+        tags.append("Bullpen Edge")
+
+    # Market Confirm — both prediction markets agree
+    if g.get("poly_market_signal") == "CONFIRM":
+        tags.append("Market Confirm")
+
+    # Hot Team — meaningful recent form gap
+    pick_wpct = g.get("home_form_wpct") if is_home else g.get("away_form_wpct")
+    opp_wpct  = g.get("away_form_wpct") if is_home else g.get("home_form_wpct")
+    if pick_wpct is not None and opp_wpct is not None and (pick_wpct - opp_wpct) >= 0.15:
+        tags.append("Hot Team")
+
+    return tags
+
+
+def build_thematic_parlays(picks: list) -> list:
+    """
+    Build the best parlay per thesis category.
+    Tries 2-leg combos first; upgrades to 3-leg if it improves combined probability.
+    Returns list of parlay dicts with 'thesis' and 'thesis_desc' fields.
+    """
+    qualified = [
+        p for p in picks
+        if p["conf"] >= PARLAY_MIN and p["tier"] not in ("TOSSUP", "PASS")
+    ]
+
+    # Group by thesis
+    by_thesis: dict = {}
+    for p in qualified:
+        for tag in _tag_pick_thesis(p):
+            by_thesis.setdefault(tag, []).append(p)
+
+    thematic = []
+    for thesis, pool in by_thesis.items():
+        if len(pool) < 2:
+            continue
+
+        best = None
+
+        # Try 2-leg combos
+        for combo in combinations(pool, 2):
+            if len({p["game_id"] for p in combo}) < 2:
+                continue
+            combined = combo[0]["conf"] * combo[1]["conf"]
+            if best is None or combined > best["combined"]:
+                best = _make_thematic(list(combo), thesis)
+
+        # Try 3-leg combos — only if we have enough unique games
+        if len(pool) >= 3:
+            for combo in combinations(pool, 3):
+                if len({p["game_id"] for p in combo}) < 3:
+                    continue
+                combined = combo[0]["conf"] * combo[1]["conf"] * combo[2]["conf"]
+                if best is None or combined > best["combined"]:
+                    best = _make_thematic(list(combo), thesis)
+
+        if best:
+            thematic.append(best)
+
+    thematic.sort(key=lambda x: x["combined"], reverse=True)
+    return thematic
+
+
+def _make_thematic(combo: list, thesis: str) -> dict:
+    n = len(combo)
+    combined = 1.0
+    for p in combo:
+        combined *= p["conf"]
+    return {
+        "legs":        combo,
+        "n_legs":      n,
+        "combined":    round(combined, 4),
+        "payout":      PARLAY_PAYOUTS.get(n, f"+{n*200}"),
+        "summary":     " + ".join(p["label"] for p in combo),
+        "min_leg":     min(p["conf"] for p in combo),
+        "thesis":      thesis,
+        "thesis_desc": THESIS_DEFS.get(thesis, ""),
+    }
+
 # ─────────────────────────────────────────────────────────────────────────────
 # REASONING STRINGS
 # ─────────────────────────────────────────────────────────────────────────────
