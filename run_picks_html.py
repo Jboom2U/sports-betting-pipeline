@@ -246,6 +246,7 @@ def prep_picks(picks, kalshi_data: dict = None):
             # Sportsbook ML odds (American format, from Odds API)
             "ml_away_odds":   gd.get("ml_away_odds"),
             "ml_home_odds":   gd.get("ml_home_odds"),
+            "narrative":      p.get("narrative", ""),
         })
     return out
 
@@ -1106,6 +1107,13 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .pick-reasoning{
   font-size:.74rem;color:var(--sub);line-height:1.5;
   border-top:1px solid var(--border);padding-top:8px;margin-top:4px;
+}
+
+.pick-narrative{
+  font-size:.80rem;color:var(--text);line-height:1.6;
+  background:rgba(255,255,255,.03);border-left:3px solid var(--green);
+  border-radius:0 6px 6px 0;padding:8px 12px;margin-top:8px;
+  font-style:italic;
 }
 
 /* ── PARLAY CARDS ── */
@@ -1977,6 +1985,7 @@ function renderPicks(){
         ${kellyHtml}
         ${oddsHtml(p)}
         <div class="pick-reasoning">${p.reasoning}</div>
+        ${p.narrative ? `<div class="pick-narrative">${p.narrative}</div>` : ""}
         <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
           <span class="toggle-arrow">▶</span> View Player Props for this game
         </div>

@@ -116,6 +116,7 @@ def generate_picks(scored_games: list) -> list:
                 "venue":      g["venue"],
                 "exp_total":  g["exp_total"],
                 "reasoning":  _ml_reasoning(g),
+                "narrative":  _build_narrative(g, "ML", ml_team),
                 "game_data":  g,
             })
 
@@ -142,6 +143,7 @@ def generate_picks(scored_games: list) -> list:
                 "venue":      g["venue"],
                 "exp_total":  g["exp_total"],
                 "reasoning":  _total_reasoning(g),
+                "narrative":  _build_narrative(g, "TOTAL", total_pick),
                 "game_data":  g,
             })
 
@@ -168,6 +170,7 @@ def generate_picks(scored_games: list) -> list:
                 "venue":      g["venue"],
                 "exp_total":  g["exp_total"],
                 "reasoning":  _rl_reasoning(g),
+                "narrative":  _build_narrative(g, "RL", rl_team),
                 "game_data":  g,
             })
 
@@ -337,6 +340,249 @@ def _rl_reasoning(g: dict) -> str:
         if side_form:
             parts.append(f"{rl_team} {side_form*100:.0f}% W last 10")
     return " | ".join(parts)
+
+
+
+def _build_narrative(g: dict, pick_type: str, pick_team: str) -> str:
+    """
+    2-3 plain-English sentences summarising the primary edge, a supporting
+    signal, and any notable concern.  Displayed on each pick card.
+
+    pick_type : "ML" | "TOTAL" | "RL"
+    pick_team : team name we are backing, or "OVER" / "UNDER" for totals
+    """
+    away = g.get("away_team", "")
+    home = g.get("home_team", "")
+
+    away_sp  = (g.get("away_sp") or "TBD").strip()
+    home_sp  = (g.get("home_sp") or "TBD").strip()
+    away_era = g.get("away_sp_era_adj")
+    home_era = g.get("home_sp_era_adj")
+
+    ml_signal  = g.get("ml_signal", "")
+    sharp_side = g.get("sharp_side", "")
+    poly_sig   = g.get("poly_market_signal", "")
+    park_runs  = g.get("park_runs", 100)
+
+    away_fatigue = (g.get("away_fatigue_tier") or "NORMAL").upper()
+    home_fatigue = (g.get("home_fatigue_tier") or "NORMAL").upper()
+
+    ml_home_odds = g.get("ml_home_odds")
+    ml_away_odds = g.get("ml_away_odds")
+
+    # --- helpers ---
+    is_home      = (pick_team == home)
+    opp_team     = away if is_home else home
+    pick_sp      = home_sp if is_home else away_sp
+    opp_sp       = away_sp if is_home else home_sp
+    pick_era     = home_era if is_home else away_era
+    opp_era      = away_era if is_home else home_era
+    pick_fatigue = home_fatigue if is_home else away_fatigue
+    opp_fatigue  = away_fatigue if is_home else home_fatigue
+    pick_odds    = ml_home_odds if is_home else ml_away_odds
+    pick_wpct    = g.get("home_form_wpct") if is_home else g.get("away_form_wpct")
+    opp_wpct     = g.get("away_form_wpct") if is_home else g.get("home_form_wpct")
+
+    sentences = []
+
+    # ── PRIMARY EDGE ──────────────────────────────────────────────────────────
+    primary = None
+
+    if pick_type in ("ML", "RL"):
+        # 1. Steam money ON our side
+        if ml_signal == "STEAM" and sharp_side and pick_team in sharp_side:
+            primary = (
+                f"Sharp money is steaming toward {pick_team} — informed bettors"
+                f" are moving this line and the model agrees."
+            )
+
+        # 2. Meaningful pitcher mismatch
+        if primary is None and pick_era and opp_era:
+            era_gap = opp_era - pick_era   # positive → we have the better arm
+            if era_gap >= 1.5 and pick_sp.upper() != "TBD":
+                primary = (
+                    f"{pick_sp} has a significant pitching edge ({pick_era:.2f} ERA"
+                    f" vs {opp_era:.2f} for {opp_sp}) — a {era_gap:.1f}-run gap"
+                    f" in adjusted ERA is the primary driver here."
+                )
+            elif era_gap >= 0.75 and pick_sp.upper() != "TBD":
+                primary = (
+                    f"{pick_sp} carries a real mound advantage ({pick_era:.2f} ERA"
+                    f" vs {opp_era:.2f} for {opp_sp}), giving {pick_team}"
+                    f" the edge in this matchup."
+                )
+
+        # 3. Home dog value
+        if primary is None and is_home and pick_odds:
+            try:
+                if int(pick_odds) > 0:
+                    primary = (
+                        f"{pick_team} is a home underdog at +{int(pick_odds)}"
+                        f" but the model sees more value here than the market is pricing."
+                    )
+            except (TypeError, ValueError):
+                pass
+
+        # 4. Hot recent form gap
+        if primary is None and pick_wpct is not None and opp_wpct is not None:
+            form_gap = pick_wpct - opp_wpct
+            if form_gap >= 0.15:
+                primary = (
+                    f"{pick_team} has been the hotter club lately"
+                    f" ({int(pick_wpct*100)}% W last 10 vs"
+                    f" {int(opp_wpct*100)}% for {opp_team})"
+                    f" and the model weights recent momentum."
+                )
+
+        # Default
+        if primary is None:
+            ml_conf_pct = round(g.get("ml_conf", 0) * 100)
+            primary = (
+                f"The model projects {pick_team} as the stronger side at"
+                f" {ml_conf_pct}% confidence after accounting for pitcher"
+                f" quality, team offense, and recent form."
+            )
+
+    else:  # TOTAL
+        exp  = g.get("exp_total", 0)
+        line = g.get("total_odds_line") or g.get("total_line", 8.5)
+        edge = abs(exp - line)
+        direction = pick_team   # "OVER" or "UNDER"
+
+        if direction == "OVER" and park_runs >= 108:
+            primary = (
+                f"This is a hitter-friendly venue (run factor {park_runs})"
+                f" and the model projects {exp:.1f} total runs vs a {line}"
+                f" line — a {edge:.1f}-run edge for the OVER."
+            )
+        elif direction == "UNDER" and park_runs <= 96:
+            primary = (
+                f"This pitcher-friendly park (run factor {park_runs})"
+                f" suppresses scoring, and the model only projects {exp:.1f}"
+                f" runs vs the {line} line — {edge:.1f} runs of UNDER edge."
+            )
+        elif away_era and home_era:
+            avg_era = (away_era + home_era) / 2
+            if avg_era <= 3.50 and direction == "UNDER":
+                primary = (
+                    f"Elite pitching on both sides (avg ERA {avg_era:.2f})"
+                    f" backs the UNDER — model projects just {exp:.1f} runs"
+                    f" vs a {line} line."
+                )
+            elif avg_era >= 4.80 and direction == "OVER":
+                primary = (
+                    f"Weak starters from both sides (avg ERA {avg_era:.2f})"
+                    f" fuel the OVER — model projects {exp:.1f} runs"
+                    f" vs a {line} line."
+                )
+        if primary is None:
+            primary = (
+                f"The model projects {exp:.1f} total runs, putting the {direction}"
+                f" {edge:.1f} runs ahead of the {line} line based on pitcher"
+                f" quality and park context."
+            )
+
+    sentences.append(primary)
+
+    # ── SUPPORTING SIGNAL ─────────────────────────────────────────────────────
+    support = None
+
+    if pick_type in ("ML", "RL"):
+        # Bullpen fatigue edge
+        if pick_fatigue == "FRESH" and opp_fatigue in ("TIRED", "SPENT"):
+            support = (
+                f"{pick_team}'s bullpen is fresh while {opp_team}'s pen is"
+                f" {opp_fatigue.lower()} — late-game leverage strongly favors"
+                f" {pick_team}."
+            )
+        elif opp_fatigue == "SPENT":
+            support = (
+                f"The opposing bullpen is spent from heavy recent usage —"
+                f" {pick_team} should see vulnerable relievers late."
+            )
+        # Markets confirm
+        if support is None and poly_sig == "CONFIRM":
+            support = (
+                "Both Kalshi and Polymarket back this side as well,"
+                " adding cross-market confirmation on top of the model signal."
+            )
+        # Park note
+        if support is None and park_runs >= 108:
+            support = (
+                f"The hitter-friendly park (run factor {park_runs})"
+                f" can extend margins — a blowout here is a real possibility."
+            )
+        elif support is None and park_runs <= 93:
+            support = (
+                f"The pitcher-friendly venue (run factor {park_runs})"
+                f" keeps games tight — ML value beats the run-line risk here."
+            )
+        # Hot form backup
+        if support is None and pick_wpct is not None and pick_wpct >= 0.65:
+            support = (
+                f"{pick_team} has been rolling recently"
+                f" ({int(pick_wpct*100)}% W last 10 games),"
+                f" adding momentum on top of the model edge."
+            )
+
+    else:  # TOTAL
+        if poly_sig == "CONFIRM":
+            support = (
+                "Both prediction markets align with this call,"
+                " which adds confidence beyond the model alone."
+            )
+        elif pick_team == "OVER" and (
+            away_fatigue in ("TIRED", "SPENT") or home_fatigue in ("TIRED", "SPENT")
+        ):
+            tired_team = away if away_fatigue in ("TIRED", "SPENT") else home
+            support = (
+                f"{tired_team}'s bullpen fatigue could leave the door open"
+                f" for extra runs late — favors the OVER."
+            )
+        elif pick_team == "UNDER" and away_fatigue == "FRESH" and home_fatigue == "FRESH":
+            support = (
+                "Both bullpens are fresh, which typically means tighter"
+                " late-inning control — favorable for the UNDER."
+            )
+
+    if support:
+        sentences.append(support)
+
+    # ── CONCERN / FLAG ────────────────────────────────────────────────────────
+    concern = None
+
+    if pick_type in ("ML", "RL"):
+        if poly_sig == "DIVERGE":
+            concern = (
+                "Note: prediction markets are leaning the other way —"
+                " worth monitoring line movement closer to first pitch."
+            )
+        elif pick_odds:
+            try:
+                if int(pick_odds) < -220:
+                    concern = (
+                        f"The heavy juice ({pick_odds}) means you need to hit"
+                        f" this at a high clip to be profitable — Kelly sizing"
+                        f" is conservative here."
+                    )
+            except (TypeError, ValueError):
+                pass
+        if concern is None and ml_signal == "STEAM" and sharp_side and pick_team not in sharp_side:
+            concern = (
+                f"Caution: steam action is on {sharp_side}, which diverges"
+                f" from this pick — monitor before game time."
+            )
+    else:  # TOTAL
+        if poly_sig == "DIVERGE":
+            concern = (
+                "Note: prediction markets lean the opposite direction —"
+                " worth checking for late weather or lineup changes."
+            )
+
+    if concern:
+        sentences.append(concern)
+
+    return " ".join(sentences)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

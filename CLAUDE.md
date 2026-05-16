@@ -266,11 +266,12 @@ HR (0.5+), HITS (0.5+), TB (1.5+), RBI (0.5+), R (0.5+), SB (0.5+), K (SP strike
 - TBD starter suppression — TOTAL picks suppressed when either SP is TBD, RL picks suppressed when either SP is TBD, ML picks downgrade one tier when both SPs are TBD (uses literal "TBD" string check only, not sp_missing flag)
 - Run line minimum edge threshold — RL picks now require 60%+ confidence (raised from 48% TOSSUP floor); filters thin-edge RL noise that was producing -52% ROI
 - Data consistency fix — save_picks() changed from ON CONFLICT DO NOTHING to DO UPDATE so DB always mirrors displayed picks; run_picks_html.py upserts picks to DB on every regeneration; actual_result (grade) excluded from UPDATE SET so existing grades are never overwritten
+- Pick card narrative — `_build_narrative(g, pick_type, pick_team)` in model/mlb_picks.py generates 2-3 plain-English sentences per pick card synthesizing primary edge (pitcher mismatch, sharp action, home dog, hot form), supporting signal (bullpen fatigue, market confirm, park factor), and any concern (market diverge, heavy juice, opposing steam). Displayed in `.pick-narrative` green-bordered div in run_picks_html.py
 
 ### Active Work Queue (in priority order)
 1. **Game picks at 6am independent of lineups** — ML/RL/total picks should publish immediately after 6am pipeline. Lineup confirmation only needed for props, not game picks.
 2. **Projected props** — publish props early for everyday regulars flagged as PROJECTED, update to CONFIRMED or drop when official lineup posts. Mirrors sportsbook pre-lineup prop behavior.
-3. **Pick card narrative** — 2-3 sentence plain-English explanation on each card synthesizing top contributing factors (pitcher mismatch, rest edge, market signal, etc.)
+3. **Pick card narrative** — DONE: `_build_narrative()` in mlb_picks.py generates 2-3 sentence plain-English explanation per card (pitcher mismatch, rest/fatigue edge, sharp action, market signal, home dog value). Displayed in `.pick-narrative` div on each card with a green left-border accent.
 4. **Thematic parlays** — group parlay legs by shared thesis (Pitching Mismatch, Home Dog Value, Rest Advantage, Fresh Pen, Sharp Action) instead of flat confidence stacking.
 5. **Fix Kalshi market matching** — scraper logs "Parsed 0 unique game markets"; all picks currently NEUTRAL on market signal.
 
