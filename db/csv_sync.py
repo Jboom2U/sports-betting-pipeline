@@ -42,7 +42,8 @@ SYNC_PATTERNS = [
     (CLEAN_DIR, "clean/", ["*.csv"]),          # all clean master CSVs
     (RAW_DIR,   "raw/",   ["mlb_weather_*.csv",
                             "mlb_line_movement_*.csv",
-                            "mlb_odds_master.csv"]),  # smaller raw files worth keeping
+                            "mlb_odds_master.csv",
+                            "mlb_hitter_stats_*.json"]),  # hitter stats for projected props
 ]
 
 
