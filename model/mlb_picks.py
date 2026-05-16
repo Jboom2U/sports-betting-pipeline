@@ -3,10 +3,10 @@ mlb_picks.py
 Converts scored games into ranked individual picks and parlay recommendations.
 
 Confidence tiers:
-  LOCK   68%+  (strongest model signal)
-  STRONG 62-68%
-  LEAN   52-62%
-  TOSSUP 48-52% (shown for coverage, no Kelly recommendation)
+  LOCK   75%+  (strongest model signal)
+  STRONG 68-75%
+  LEAN   60-68%
+  TOSSUP 48-60% (shown for coverage, no Kelly recommendation)
   PASS   <48%  (not included in output)
 
 Parlay rules:
@@ -28,6 +28,21 @@ STRONG_THRESH = 0.68   # raised from 0.62
 LEAN_THRESH   = 0.60   # raised from 0.52 -- sub-60% not worth showing
 TOSSUP_THRESH = 0.48
 PARLAY_MIN    = 0.57   # minimum per-leg confidence for parlay inclusion
+
+# Run line requires beating a -1.5 spread — needs meaningfully more edge than ML.
+# Only publish RL picks at LEAN or better (60%+) to filter thin-edge noise.
+RL_MIN_THRESH = LEAN_THRESH  # 0.60
+
+# TBD starter penalty: when a probable pitcher is literally "TBD" (no assignment),
+# the model fills with league-average ERA which inflates fake confidence.
+# Rules (only on literal "TBD" string — not on missing stats, which is too broad
+# and caused the previous hotfix revert):
+#   - TOTAL picks: suppress entirely when EITHER SP is TBD (run total unreliable)
+#   - ML picks: downgrade one tier when BOTH SPs are TBD
+#   - RL picks: suppress entirely when EITHER SP is TBD (spread needs real edge)
+TBD_SUPPRESS_TOTAL_EITHER = True
+TBD_SUPPRESS_RL_EITHER    = True
+TBD_DOWNGRADE_ML_BOTH     = True
 
 # Approximate payout at -110 per leg (American odds)
 PARLAY_PAYOUTS = {2: "+260", 3: "+595", 4: "+1228", 5: "+2435"}
@@ -70,11 +85,22 @@ def generate_picks(scored_games: list) -> list:
     for g in scored_games:
         game_label = f"{g['away_team']} @ {g['home_team']}"
 
+        # TBD starter flags — only suppress on literal "TBD", not on missing stats
+        away_sp_tbd = (g.get("away_sp", "") or "").strip().upper() == "TBD"
+        home_sp_tbd = (g.get("home_sp", "") or "").strip().upper() == "TBD"
+        either_tbd  = away_sp_tbd or home_sp_tbd
+        both_tbd    = away_sp_tbd and home_sp_tbd
+
         # ── Moneyline ──────────────────────────────────────────────────────
         ml_conf = g["ml_conf"]
+        # Downgrade one tier when BOTH starters are TBD (model has no pitcher data at all)
+        if both_tbd and TBD_DOWNGRADE_ML_BOTH:
+            if   ml_conf >= LOCK_THRESH:   ml_conf = STRONG_THRESH
+            elif ml_conf >= STRONG_THRESH: ml_conf = LEAN_THRESH
+            elif ml_conf >= LEAN_THRESH:   ml_conf = TOSSUP_THRESH
+            log.debug(f"ML pick downgraded (both SP TBD): {game_label}")
         if ml_conf >= TOSSUP_THRESH:
-            # opp_team: whichever team is NOT the ml_team
-            ml_team = g["ml_team"]
+            ml_team  = g["ml_team"]
             opp_team = g["home_team"] if ml_team == g["away_team"] else g["away_team"]
             picks.append({
                 "type":       "ML",
@@ -94,10 +120,14 @@ def generate_picks(scored_games: list) -> list:
             })
 
         # ── Totals ─────────────────────────────────────────────────────────
+        # Suppress entirely when either SP is TBD — run totals are unreliable
+        # without real pitcher data (model falls back to league-average ERA).
         tot_conf = g["total_conf"]
-        if tot_conf >= TOSSUP_THRESH:
+        if either_tbd and TBD_SUPPRESS_TOTAL_EITHER:
+            log.debug(f"TOTAL pick suppressed (SP TBD): {game_label}")
+        elif tot_conf >= TOSSUP_THRESH:
             total_pick = g["total_pick"]
-            opp_side = "UNDER" if total_pick == "OVER" else "OVER"
+            opp_side   = "UNDER" if total_pick == "OVER" else "OVER"
             picks.append({
                 "type":       "TOTAL",
                 "label":      f"{total_pick} {g['total_line']}",
@@ -116,9 +146,13 @@ def generate_picks(scored_games: list) -> list:
             })
 
         # ── Run Line ───────────────────────────────────────────────────────
+        # Two gates: either SP TBD → suppress; confidence below RL_MIN_THRESH → suppress.
+        # RL requires beating -1.5 so needs real pitcher data and a genuine edge.
         rl_conf = g["rl_conf"]
-        if rl_conf >= TOSSUP_THRESH and g["rl_team"]:
-            rl_team = g["rl_team"]
+        if either_tbd and TBD_SUPPRESS_RL_EITHER:
+            log.debug(f"RL pick suppressed (SP TBD): {game_label}")
+        elif rl_conf >= RL_MIN_THRESH and g["rl_team"]:
+            rl_team  = g["rl_team"]
             opp_team = g["home_team"] if rl_team == g["away_team"] else g["away_team"]
             picks.append({
                 "type":       "RL",
