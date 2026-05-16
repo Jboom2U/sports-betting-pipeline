@@ -27,8 +27,14 @@ log = logging.getLogger(__name__)
 def save_picks(picks: list, pick_date: str) -> int:
     """
     Upsert all picks for a given date into the picks table.
-    Uses ON CONFLICT DO NOTHING so re-runs don't duplicate rows.
-    Returns number of rows inserted.
+
+    ON CONFLICT DO UPDATE keeps the DB in sync with what's actually displayed.
+    The afternoon refresh regenerates picks (updated odds, pitcher, lineups) and
+    may change which team is picked for a game — this ensures the DB reflects
+    the latest displayed pick so the grader can match them correctly.
+
+    IMPORTANT: actual_result (the grade) is intentionally excluded from the
+    UPDATE SET so that grades written by run_analysis.py are never overwritten.
     """
     if not picks:
         return 0
@@ -48,7 +54,14 @@ def save_picks(picks: list, pick_date: str) -> int:
                          conf, tier, reasoning, market_signal, actual_result)
                     VALUES
                         (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
-                    ON CONFLICT (pick_date, game_id, pick_type) DO NOTHING
+                    ON CONFLICT (pick_date, game_id, pick_type) DO UPDATE SET
+                        label         = EXCLUDED.label,
+                        team          = EXCLUDED.team,
+                        game          = EXCLUDED.game,
+                        conf          = EXCLUDED.conf,
+                        tier          = EXCLUDED.tier,
+                        reasoning     = EXCLUDED.reasoning,
+                        market_signal = COALESCE(picks.market_signal, EXCLUDED.market_signal)
                     """,
                     (
                         pick_date,
@@ -64,7 +77,7 @@ def save_picks(picks: list, pick_date: str) -> int:
                     )
                 )
                 inserted += cur.rowcount
-            log.info(f"Picks saved to DB: {inserted} new rows for {pick_date}.")
+            log.info(f"Picks upserted to DB: {inserted} rows for {pick_date}.")
         except Exception as e:
             log.warning(f"save_picks DB write failed (non-fatal): {e}")
             return 0

@@ -3755,6 +3755,18 @@ def main(date=None, no_open=False):
         log.info(f"Picks HTML + CSV uploaded to R2 (picks/mlb_picks_{actual_date}.html/.csv)")
     except Exception as _e:
         log.warning(f"R2 HTML upload failed (non-fatal): {_e}")
+
+    # Upsert picks to DB so it always mirrors what's displayed on the dashboard.
+    # This runs on EVERY regeneration (6am pipeline AND afternoon refresh) so that
+    # if the afternoon refresh changes which team is picked for a game, the DB
+    # label updates too — keeping it in sync with the CSV that run_analysis.py grades.
+    # actual_result (the grade) is preserved by the ON CONFLICT clause in save_picks().
+    try:
+        from db.picks_store import save_picks as _db_save_picks
+        _db_save_picks(picks, actual_date)
+    except Exception as _dbe:
+        log.warning(f"DB picks upsert failed (non-fatal): {_dbe}")
+
     log.info(f"{len(scored)} games | {len(picks)} picks | "
              f"{len(parlays_2)} 2-leg parlays | {len(parlays_3)} 3-leg parlays")
 
