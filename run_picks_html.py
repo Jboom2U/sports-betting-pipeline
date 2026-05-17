@@ -1066,6 +1066,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .inline-prop-tier-STRONG{color:var(--blue)}
 .inline-prop-tier-LEAN  {color:var(--green)}
 .inline-props-empty{font-size:.74rem;color:var(--sub);padding:6px 0;font-style:italic}
+.inline-prop-add{background:none;border:1px solid rgba(255,255,255,.18);border-radius:4px;color:var(--sub);cursor:pointer;font-size:.70rem;padding:1px 6px;margin-left:6px;transition:background .15s,color .15s;flex-shrink:0}
+.inline-prop-add:hover{background:rgba(255,255,255,.08);color:var(--text)}
+.inline-prop-add.prop-selected{background:var(--green);border-color:var(--green);color:#000;font-weight:700}
+.inline-prop.prop-in-parlay{background:rgba(74,222,128,.06);border-radius:4px}
 .pick-card.tier-LOCK  {border-top:3px solid var(--gold)}
 .pick-card.tier-STRONG{border-top:3px solid var(--blue)}
 .pick-card.tier-LEAN  {border-top:3px solid var(--green);opacity:.82}
@@ -1824,8 +1828,9 @@ function updateParlayDrawer(){
   const americanStr = american > 0 ? "+"+american : String(american);
   const legsHtml = selectedLegs.map((l,i) => {
     const oddsStr = l.odds != null ? (l.odds > 0 ? "+"+l.odds : String(l.odds)) : "(model)";
+    const typeBadge = l.type === "PROP" ? `<span style="font-size:.65rem;background:rgba(74,222,128,.2);color:var(--green);border-radius:3px;padding:1px 4px;margin-right:4px">PROP</span>` : "";
     return `<div class="drawer-leg">
-      <span class="drawer-leg-label">${l.label}</span>
+      <span class="drawer-leg-label">${typeBadge}${l.label}</span>
       <span class="drawer-leg-odds">${oddsStr}</span>
       <button class="drawer-remove" onclick="removeLeg(${i})">×</button>
     </div>`;
@@ -1840,8 +1845,41 @@ function updateParlayDrawer(){
   `;
 }
 
-function removeLeg(i){ selectedLegs.splice(i,1); updateParlayDrawer(); }
-function clearLegs(){ selectedLegs=[]; updateParlayDrawer(); }
+function removeLeg(i){ selectedLegs.splice(i,1); updateParlayDrawer(); refreshPropButtons(); }
+function clearLegs(){ selectedLegs=[]; updateParlayDrawer(); refreshPropButtons(); }
+
+function togglePropLeg(evt, propId, label, conf){
+  evt.stopPropagation();
+  const btn = evt.currentTarget;
+  const existing = selectedLegs.findIndex(l => l.id === propId);
+  if(existing !== -1){
+    selectedLegs.splice(existing, 1);
+    btn.textContent = "+";
+    btn.classList.remove("prop-selected");
+    btn.closest(".inline-prop").classList.remove("prop-in-parlay");
+  } else {
+    const odds = confToAmerican(conf);
+    selectedLegs.push({id: propId, type: "PROP", label, conf, odds, away: "", home: ""});
+    btn.textContent = "✓";
+    btn.classList.add("prop-selected");
+    btn.closest(".inline-prop").classList.add("prop-in-parlay");
+  }
+  updateParlayDrawer();
+}
+
+function refreshPropButtons(){
+  // Sync all prop + buttons after external removals (clear all, remove from drawer)
+  document.querySelectorAll(".inline-prop-add").forEach(btn => {
+    const onclick = btn.getAttribute("onclick") || "";
+    const m = onclick.match(/togglePropLeg\(event,'([^']+)'/);
+    if(!m) return;
+    const propId = m[1];
+    const inParlay = selectedLegs.some(l => l.id === propId);
+    btn.textContent = inParlay ? "✓" : "+";
+    btn.classList.toggle("prop-selected", inParlay);
+    btn.closest(".inline-prop").classList.toggle("prop-in-parlay", inParlay);
+  });
+}
 
 function renderPicks(){
   pickData = [];  // reset registry for fresh + button indices
@@ -2128,10 +2166,13 @@ function buildInlineProps(away, home){
   return sorted.map(p => {
     const betDesc = propLabel(p.prop_type, p.line);   // e.g. "Hits Over 0.5"
     const tierCls = `inline-prop-tier-${p.tier||"LEAN"}`;
-    return `<div class="inline-prop">
+    const propId = `prop::${p.away}::${p.home}::${p.player_name}::${p.prop_type}::${p.line}`;
+    const propLabel2 = `${p.player_name||"?"} ${betDesc}`;
+    return `<div class="inline-prop" id="prop-row-${CSS.escape(propId)}">
       <span class="inline-prop-player">${p.player_name||"—"}</span>
       <span class="inline-prop-line">${betDesc}</span>
       <span class="inline-prop-conf ${tierCls}">${p.conf||"—"}% ${tierIcon(p.tier||"LEAN")}</span>
+      <button class="inline-prop-add" onclick="togglePropLeg(event,'${propId.replace(/'/g,"\'")}','${propLabel2.replace(/'/g,"\'")}',${p.conf||50})" title="Add prop to parlay">+</button>
     </div>`;
   }).join("");
 }

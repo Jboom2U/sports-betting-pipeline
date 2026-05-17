@@ -47,7 +47,16 @@ os.makedirs(CLEAN_DIR, exist_ok=True)
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 # Known Kalshi series tickers for MLB game winner markets.
-MLB_SERIES = ["KXMLBW", "MLBWINNER", "KXMLB"]
+# Series tickers — Kalshi renames these occasionally; list is exhaustive
+MLB_SERIES = [
+    "KXMLBW",    # historical game winner
+    "KXMLB",     # historical general MLB
+    "MLBWINNER", # alternate name
+    "KXMLBGW",   # game winner variant
+    "MLB",       # short form
+    "MLBW",      # another variant
+    "KXMLBG",    # game-level
+]
 
 # Model vs Kalshi signal thresholds
 AGREE_THRESHOLD    = 0.04   # within 4 pp -> NEUTRAL
@@ -169,31 +178,71 @@ def fetch_all_mlb_markets(api_key: str) -> list:
         log.info("Known series yielded no markets — trying broad search")
         all_markets = _broad_search(api_key)
 
+    if not all_markets:
+        log.info("Broad search empty — trying events endpoint")
+        all_markets = _search_events(api_key)
+
     return all_markets
 
 
 def _broad_search(api_key: str) -> list:
-    """Search all open markets for anything matching 'mlb' or 'baseball'."""
-    url = f"{KALSHI_BASE}/markets"
-    try:
-        resp = requests.get(
-            url,
-            params={"limit": 200, "status": "open"},
-            headers=_headers(api_key),
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        log.warning(f"Broad Kalshi search failed: {e}")
+    """
+    Paginated broad search across all open markets.
+    Matches any market whose title, subtitle, or ticker references MLB teams
+    or keywords.  More permissive than series-ticker lookup.
+    """
+    url      = f"{KALSHI_BASE}/markets"
+    cursor   = None
+    all_raw  = []
+
+    # Collect up to 1 000 open markets (5 pages x 200)
+    for _ in range(5):
+        params = {"limit": 200, "status": "open"}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            resp = requests.get(url, params=params, headers=_headers(api_key), timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            log.warning(f"Broad Kalshi search failed: {e}")
+            break
+        page = data.get("markets", [])
+        all_raw.extend(page)
+        cursor = data.get("cursor")
+        if not cursor or not page:
+            break
+
+    if not all_raw:
+        log.warning("Broad search returned 0 markets — Kalshi may be unreachable or auth failed")
+        # Log first raw response for diagnostics
+        try:
+            resp2 = requests.get(url, params={"limit": 5}, headers=_headers(api_key), timeout=10)
+            log.warning(f"Kalshi diagnostic: status={resp2.status_code} body={resp2.text[:300]}")
+        except Exception as _de:
+            log.warning(f"Kalshi diagnostic failed: {_de}")
         return []
 
-    mlb_markets = [
-        m for m in data.get("markets", [])
-        if "mlb" in m.get("title", "").lower()
-        or "baseball" in m.get("title", "").lower()
-    ]
-    log.info(f"Broad search found {len(mlb_markets)} MLB-related markets")
+    log.info(f"Broad search: fetched {len(all_raw)} total open markets from Kalshi")
+
+    # Build keyword set from all team aliases
+    team_words = set(TEAM_ALIASES.keys()) | {
+        "mlb", "baseball", "major league", "world series",
+        "yankees", "red sox", "mets", "cubs", "dodgers",
+    }
+
+    mlb_markets = []
+    for m in all_raw:
+        text = " ".join([
+            (m.get("title")    or ""),
+            (m.get("subtitle") or ""),
+            (m.get("ticker")   or ""),
+            (m.get("event_ticker") or ""),
+        ]).lower()
+        if any(word in text for word in team_words):
+            mlb_markets.append(m)
+
+    log.info(f"Broad search found {len(mlb_markets)} MLB-related markets (from {len(all_raw)} total)")
     return mlb_markets
 
 
@@ -233,6 +282,48 @@ TEAM_ALIASES = {
     "blue jays":    "Toronto Blue Jays",
     "nationals":    "Washington Nationals",
 }
+
+
+def _search_events(api_key: str) -> list:
+    """
+    Try Kalshi /events endpoint — Kalshi groups markets under events.
+    Returns markets extracted from any MLB-related event.
+    """
+    url = f"{KALSHI_BASE}/events"
+    all_markets = []
+    cursor = None
+    team_words = set(TEAM_ALIASES.keys()) | {"mlb", "baseball"}
+
+    for _ in range(3):
+        params = {"limit": 100, "status": "open"}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            resp = requests.get(url, params=params, headers=_headers(api_key), timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            log.debug(f"Kalshi /events fetch failed: {e}")
+            break
+
+        for event in data.get("events", []):
+            text = " ".join([
+                (event.get("title") or ""),
+                (event.get("ticker") or ""),
+                (event.get("category") or ""),
+            ]).lower()
+            if any(w in text for w in team_words):
+                # Pull the nested markets list if present
+                for m in event.get("markets", []):
+                    m["event_ticker"] = event.get("ticker", "")
+                    all_markets.append(m)
+
+        cursor = data.get("cursor")
+        if not cursor or not data.get("events"):
+            break
+
+    log.info(f"Events search found {len(all_markets)} markets inside MLB events")
+    return all_markets
 
 
 def _match_team(text: str) -> str:
