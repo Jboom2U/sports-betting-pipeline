@@ -276,7 +276,7 @@ HR (0.5+), HITS (0.5+), TB (1.5+), RBI (0.5+), R (0.5+), SB (0.5+), K (SP strike
 4. **Thematic parlays** — DONE: `build_thematic_parlays()` in mlb_picks.py groups picks by thesis tag (Pitching Mismatch, Home Dog Value, Sharp Action, Bullpen Edge, Market Confirm, Hot Team). `_tag_pick_thesis()` assigns tags per pick based on ERA gap, home dog odds, steam signal, fatigue tier, market signal, and recent form. Rendered in a dedicated 🎯 Thematic Parlays section above the regular confidence-stacked parlays, with thesis badge, one-liner description, and edge-vs-breakeven callout.
 5. **Fix Kalshi market matching** — DONE: `scrapers/mlb_kalshi_scraper.py` expanded `MLB_SERIES` to 7 tickers, replaced `_broad_search()` with paginated + team-name-aware version (5 pages × 200 results), added `_search_events()` fallback using Kalshi `/events` endpoint. Next pipeline run will confirm market signals populate.
 6. **Prop-to-parlay picker** — user wants to tap individual prop rows inside a game card and add them to the parlay builder (same card as ML/RL/total). In-card prop list becomes interactive; each row has a +/− toggle; parlay builder at bottom accumulates game picks + props together.
-7. **Yesterday count discrepancy** — banner shows picks from `mlb_analysis_{date}.json` (CSV-graded); performance page reads from PostgreSQL. Different pick counts suggest TOSSUP or prop picks being counted differently. Needs investigation.
+7. **Yesterday count discrepancy** — FIXED: `run_analysis.py` now filters TOSSUP picks into `graded_display` before passing to `save_analysis()` and `push_grades_to_db()`. TOSSUP picks (48-60%) were in the analysis JSON (Yesterday banner) but never saved to DB, causing a 4-pick gap. Both sources now exclude TOSSUPs and should match.
 
 ### Next Up — Model Improvements
 - Tune Pythagorean weights using accumulated backtesting data (need ~4 weeks of graded picks first)
@@ -297,11 +297,4 @@ HR (0.5+), HITS (0.5+), TB (1.5+), RBI (0.5+), R (0.5+), SB (0.5+), K (SP strike
 
 ## Known Issues / Watch Points
 - **Odds API free tier** — 500 req/month. Adaptive refresh replaced the every-2-hour loop so usage is now ~1 pull/day (~30/month). As of mid-May 2026: ~92 requests remaining. Resets June 1st. Quota warnings logged at 150/75/25 remaining.
-- **Probable pitchers stale at 6am** — the morning pipeline locks in whatever the MLB API says. The afternoon upsert corrects this. If a starter is scratched after the afternoon refresh has already fired, the dashboard won't update until the next manual `/refresh` or next morning's pipeline.
-- **Polymarket sandbox** can't reach gamma-api.polymarket.com (proxy 403) — scraper built from API docs, untested until Railway runs it
-- **statalizers-pipeline** R2 bucket — empty, created by accident, can be deleted from Cloudflare
-- **Kalshi 0 game markets** — Fix deployed (expanded tickers, paginated search, events fallback). Will confirm after next pipeline run at 6am ET.
-
-## Session Notes
-- New chat sessions: say "read CLAUDE.md" and Claude will load full context
-- File path: `C:\Users\Jskel\OneDrive\Documents\GitHub\sports-betting-pipeline\CLAUDE.md`
+- **Probable pitchers stale at 6am** — the morning pipeline locks in whatever the MLB API says. The afternoon upsert corrects this. If a starter is

@@ -937,17 +937,20 @@ def run(date: str):
         graded.append({**p, "result": result_str, "profit": profit,
                         "result_game": result_obj})
 
+    # Exclude TOSSUP picks from display/DB so Yesterday banner matches performance page
+    graded_display = [p for p in graded if p.get("tier", "").upper() != "TOSSUP"]
+
     # Compute metrics
-    metrics  = compute_metrics(graded)
-    findings = generate_findings(metrics, graded)
-    recs     = generate_recommendations(metrics, graded)
+    metrics  = compute_metrics(graded_display)
+    findings = generate_findings(metrics, graded_display)
+    recs     = generate_recommendations(metrics, graded_display)
 
     # Output
-    print_report(date, graded, metrics, findings, recs)
-    save_analysis(date, graded, metrics, findings, recs)
+    print_report(date, graded_display, metrics, findings, recs)
+    save_analysis(date, graded_display, metrics, findings, recs)
 
     # Persist grades to PostgreSQL (non-fatal if DB unavailable)
-    push_grades_to_db(graded, date)
+    push_grades_to_db(graded_display, date)
 
     # Backfill market_signal on any picks that don't have it yet (non-fatal)
     try:
