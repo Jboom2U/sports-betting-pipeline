@@ -561,6 +561,7 @@ def _build_narrative(g: dict, pick_type: str, pick_team: str) -> str:
                 pass
 
         # 4. Hot recent form gap
+        primary_used_form = False
         if primary is None and pick_wpct is not None and opp_wpct is not None:
             form_gap = pick_wpct - opp_wpct
             if form_gap >= 0.15:
@@ -570,6 +571,7 @@ def _build_narrative(g: dict, pick_type: str, pick_team: str) -> str:
                     f" {int(opp_wpct*100)}% for {opp_team})"
                     f" and the model weights recent momentum."
                 )
+                primary_used_form = True
 
         # Default
         if primary is None:
@@ -654,8 +656,8 @@ def _build_narrative(g: dict, pick_type: str, pick_team: str) -> str:
                 f"The pitcher-friendly venue (run factor {park_runs})"
                 f" keeps games tight — ML value beats the run-line risk here."
             )
-        # Hot form backup
-        if support is None and pick_wpct is not None and pick_wpct >= 0.65:
+        # Hot form backup — skip if primary edge already called out form
+        if support is None and not primary_used_form and pick_wpct is not None and pick_wpct >= 0.65:
             support = (
                 f"{pick_team} has been rolling recently"
                 f" ({int(pick_wpct*100)}% W last 10 games),"
