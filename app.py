@@ -385,20 +385,14 @@ def _regenerate_in_background():
                     _cache["r2_seeded"] = False
                     log.info(f"Background cache refresh complete in {int(time.time()-started)}s.")
                 elif _cache["html"] is not None:
-                    # main() returned None (games started / no upcoming slate).
-                    # If cache came from R2 seed (old code HTML), force a DB-based
-                    # rebuild so new code template is applied immediately after deploy.
-                    if _cache.get("r2_seeded"):
-                        log.info("R2-seeded cache + None generation — forcing DB fallback with new code template.")
-                        fallback = _picks_html_from_db()
-                        if fallback:
-                            _cache["html"] = fallback
-                        _cache["r2_seeded"] = False
-                    else:
-                        log.info(
-                            "Dashboard generation returned None — preserving existing cached "
-                            f"dashboard ({int(time.time()-started)}s). Site stays populated."
-                        )
+                    # main() returned None (games started / no upcoming slate) but we
+                    # already have the rich morning dashboard in cache — keep it so the
+                    # site stays populated all day without reverting to a stripped-down page.
+                    _cache.pop("r2_seeded", None)
+                    log.info(
+                        "Dashboard generation returned None — preserving existing cached "
+                        f"dashboard ({int(time.time()-started)}s). Site stays populated."
+                    )
                 else:
                     # Nothing in cache and nothing generated — last resort DB fallback.
                     fallback = _picks_html_from_db()
