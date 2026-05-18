@@ -1914,6 +1914,7 @@ function renderPicks(){
       ${wb('warn-thin',   p.thin_edge,   'Close Call')}
       ${wb('warn-heavy',  p.heavy_fav,   'Heavy Favorite')}
       ${wb('warn-lineup', p.unconfirmed, 'Lineup Not Set')}
+      ${p.lineup_projected ? `<span class="warn-badge warn-lineup active" style="background:rgba(255,183,77,.12);color:#ffb74d;border-color:rgba(255,183,77,.3)">📋 Projected Lineup</span>` : ""}
     </div>`;
 
     // Favorite tier — always shown on every card

@@ -704,23 +704,32 @@ class MLBModel:
     # ── Lineup OPS ────────────────────────────────────────────────────────────
     def get_lineup_ops(self, game_id: str, side: str) -> float | None:
         """
-        If confirmed lineups exist, compute weighted OPS for the top 9 batters.
+        Compute weighted OPS for the batting lineup.
+        Prefers today's confirmed lineup; falls back to projected lineup
+        (most recent confirmed batting order) when official lineup not yet posted.
         side: 'away' or 'home'
-        Returns None if lineup not confirmed.
         """
         gid = str(game_id)
-        if gid not in self.lineups:
-            return None
-        game = self.lineups[gid]
-        if not game.get("lineup_confirmed"):
-            return None
-        players = game.get(f"{side}_lineup", [])
-        if not players:
-            return None
-        ops_vals = [p.get("ops") for p in players if p.get("ops") and float(p.get("ops", 0)) > 0]
-        if not ops_vals:
-            return None
-        return round(sum(ops_vals) / len(ops_vals), 3)
+        game = self.lineups.get(gid, {})
+
+        # Prefer confirmed lineup
+        if game.get("lineup_confirmed"):
+            players = game.get(f"{side}_lineup", [])
+            ops_vals = [p.get("ops") for p in players if p.get("ops") and float(p.get("ops", 0)) > 0]
+            if ops_vals:
+                return round(sum(ops_vals) / len(ops_vals), 3)
+
+        # Fall back to projected lineup (most recent confirmed batting order per team)
+        team_name = game.get(f"{side}_team", "")
+        proj = self.projected_lineups.get(team_name, {})
+        if proj:
+            players = proj.get("players", [])
+            ops_vals = [p.get("ops") for p in players if p.get("ops") and float(p.get("ops", 0)) > 0]
+            if ops_vals:
+                log.debug(f"Using projected lineup OPS for {team_name} (from {proj.get('date','?')})")
+                return round(sum(ops_vals) / len(ops_vals), 3)
+
+        return None
 
     # ── Recent Form ───────────────────────────────────────────────────────────
     def recent_form(self, team: str, n: int = 10) -> dict:
@@ -1179,10 +1188,17 @@ class MLBModel:
             "home_bp_whip":   home_bp["whip"],
             "home_bp_found":  home_bp["found"],
 
-            # Lineup OPS (if confirmed)
+            # Lineup OPS (confirmed or projected fallback)
             "away_lineup_ops": self.get_lineup_ops(game_id_str, "away"),
             "home_lineup_ops": self.get_lineup_ops(game_id_str, "home"),
             "lineup_confirmed": bool(self.lineups.get(game_id_str, {}).get("lineup_confirmed")),
+            "lineup_projected": (
+                not bool(self.lineups.get(game_id_str, {}).get("lineup_confirmed"))
+                and bool(
+                    self.projected_lineups.get(self.lineups.get(game_id_str, {}).get("away_team", ""))
+                    or self.projected_lineups.get(self.lineups.get(game_id_str, {}).get("home_team", ""))
+                )
+            ),
 
             # Picks
             "home_wp":        home_wp,
