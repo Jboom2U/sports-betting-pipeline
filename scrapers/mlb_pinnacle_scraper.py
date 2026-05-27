@@ -1,0 +1,602 @@
+"""
+mlb_pinnacle_scraper.py
+Pulls live MLB odds from Pinnacle's public guest API — no authentication required.
+Used as a fallback when The Odds API quota is exhausted.
+
+Outputs to the same mlb_odds_master.csv and mlb_line_movement_*.csv files so the
+model receives equivalent signals regardless of which source ran.
+
+Pinnacle endpoints (unauthenticated):
+  Matchups : https://guest.api.arcadia.pinnacle.com/0.1/leagues/246/matchups?brandId=0
+  Markets  : https://guest.api.arcadia.pinnacle.com/0.1/leagues/246/markets/straight
+
+Market key mapping:
+  "s;0;ml" — moneyline (2-way)
+  "s;0;ou" — over/under (total)
+  "s;0;s"  — spread / run line
+"""
+
+import csv
+import logging
+import os
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import requests
+
+log = logging.getLogger(__name__)
+
+BASE_DIR  = Path(__file__).parent.parent
+RAW_DIR   = BASE_DIR / "data" / "raw"
+CLEAN_DIR = BASE_DIR / "data" / "clean"
+RAW_DIR.mkdir(parents=True, exist_ok=True)
+CLEAN_DIR.mkdir(parents=True, exist_ok=True)
+
+ET = ZoneInfo("America/New_York")
+
+PINNACLE_BASE   = "https://guest.api.arcadia.pinnacle.com/0.1"
+MLB_LEAGUE_ID   = 246
+MATCHUPS_URL    = f"{PINNACLE_BASE}/leagues/{MLB_LEAGUE_ID}/matchups?brandId=0"
+MARKETS_URL     = f"{PINNACLE_BASE}/leagues/{MLB_LEAGUE_ID}/markets/straight"
+
+# Movement thresholds (American odds points) — same as mlb_odds_scraper.py
+STEAM_THRESH = 8
+DRIFT_THRESH = 3
+
+# Pinnacle → internal team name map
+# Covers standard full names; add variants as needed.
+TEAM_NAME_MAP = {
+    # American League East
+    "New York Yankees":          "New York Yankees",
+    "Boston Red Sox":            "Boston Red Sox",
+    "Tampa Bay Rays":            "Tampa Bay Rays",
+    "Toronto Blue Jays":         "Toronto Blue Jays",
+    "Baltimore Orioles":         "Baltimore Orioles",
+    # American League Central
+    "Cleveland Guardians":       "Cleveland Guardians",
+    "Cleveland Indians":         "Cleveland Guardians",   # legacy name
+    "Chicago White Sox":         "Chicago White Sox",
+    "Minnesota Twins":           "Minnesota Twins",
+    "Kansas City Royals":        "Kansas City Royals",
+    "Detroit Tigers":            "Detroit Tigers",
+    # American League West
+    "Houston Astros":            "Houston Astros",
+    "Texas Rangers":             "Texas Rangers",
+    "Seattle Mariners":          "Seattle Mariners",
+    "Los Angeles Angels":        "Los Angeles Angels",
+    "Oakland Athletics":         "Oakland Athletics",
+    "Athletics":                 "Oakland Athletics",
+    "Sacramento River Cats":     "Oakland Athletics",    # temporary ballpark name
+    # National League East
+    "New York Mets":             "New York Mets",
+    "Atlanta Braves":            "Atlanta Braves",
+    "Philadelphia Phillies":     "Philadelphia Phillies",
+    "Miami Marlins":             "Miami Marlins",
+    "Washington Nationals":      "Washington Nationals",
+    # National League Central
+    "Milwaukee Brewers":         "Milwaukee Brewers",
+    "Chicago Cubs":              "Chicago Cubs",
+    "St. Louis Cardinals":       "St. Louis Cardinals",
+    "Pittsburgh Pirates":        "Pittsburgh Pirates",
+    "Cincinnati Reds":           "Cincinnati Reds",
+    # National League West
+    "Los Angeles Dodgers":       "Los Angeles Dodgers",
+    "San Francisco Giants":      "San Francisco Giants",
+    "San Diego Padres":          "San Diego Padres",
+    "Arizona Diamondbacks":      "Arizona Diamondbacks",
+    "Colorado Rockies":          "Colorado Rockies",
+}
+
+# Reuse SNAPSHOT_FIELDNAMES / MOVEMENT_FIELDNAMES from the primary odds scraper
+# so we can append to the same CSV files without import cycles.
+SNAPSHOT_FIELDNAMES = [
+    "snapshot_id", "snapshot_time", "game_id", "game_date", "game_time_utc",
+    "away_team", "home_team",
+    "ml_away", "ml_home",
+    "rl_away_line", "rl_away_price", "rl_home_line", "rl_home_price",
+    "total_line", "total_over_price", "total_under_price",
+    "total_line_min", "total_line_max",
+    "books_used",
+    "dk_ml_away", "dk_ml_home", "dk_total",
+    "disc_ml_away", "disc_ml_home", "disc_total",
+]
+
+MOVEMENT_FIELDNAMES = [
+    "game_id", "away_team", "home_team", "game_date",
+    "snap1_time", "snap2_time",
+    "ml_away_open", "ml_away_now", "ml_away_move",
+    "ml_home_open", "ml_home_now", "ml_home_move",
+    "total_open", "total_now", "total_move",
+    "ml_signal", "total_signal",
+    "sharp_side",
+    "timestamp",
+]
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; mlb-betting-pipeline/1.0)",
+    "Accept":     "application/json",
+    "Origin":     "https://www.pinnacle.com",
+    "Referer":    "https://www.pinnacle.com/",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FETCH
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get(url: str, timeout: int = 20) -> dict | list:
+    resp = requests.get(url, headers=HEADERS, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def fetch_matchups() -> list:
+    """Return raw matchups list from Pinnacle."""
+    data = _get(MATCHUPS_URL)
+    if isinstance(data, list):
+        return data
+    return data.get("matchups", data.get("results", []))
+
+
+def fetch_markets() -> list:
+    """Return raw markets list from Pinnacle."""
+    data = _get(MARKETS_URL)
+    if isinstance(data, list):
+        return data
+    return data.get("markets", data.get("results", []))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PARSE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _normalize_team(name: str) -> str:
+    """Map Pinnacle team name to our internal name. Falls back to the raw name."""
+    return TEAM_NAME_MAP.get(name, name)
+
+
+def _parse_matchups(raw: list) -> dict:
+    """
+    Build index: matchupId -> {away_team, home_team, game_time_utc, game_date,
+                               away_participant_id, home_participant_id}
+    Only includes regular (non-parlay) MLB matchups for today.
+    """
+    now_et = datetime.now(ET)
+    today  = now_et.strftime("%Y-%m-%d")
+    index  = {}
+
+    for m in raw:
+        # Skip parlays and non-standard matchups
+        matchup_type = m.get("type", "")
+        if matchup_type not in ("", "matchup", None):
+            continue
+
+        # Some responses wrap participants differently
+        participants = m.get("participants", [])
+        if not participants and "teams" in m:
+            participants = m["teams"]
+        if len(participants) < 2:
+            continue
+
+        matchup_id = m.get("id") or m.get("matchupId")
+        if matchup_id is None:
+            continue
+
+        # Determine commence time — may be in startTime, startDateIso, or startDate
+        start_raw = (m.get("startTime") or m.get("startDateIso") or
+                     m.get("startDate") or m.get("startTimeIso") or "")
+
+        game_time_utc = ""
+        game_date     = today   # fallback
+
+        if start_raw:
+            # Pinnacle returns ms epoch or ISO strings
+            if isinstance(start_raw, (int, float)):
+                dt_utc = datetime.fromtimestamp(start_raw / 1000, tz=timezone.utc)
+            else:
+                # ISO string — may or may not have timezone
+                start_clean = str(start_raw).replace("Z", "+00:00")
+                try:
+                    dt_utc = datetime.fromisoformat(start_clean)
+                    if dt_utc.tzinfo is None:
+                        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+                except Exception:
+                    dt_utc = None
+
+            if dt_utc:
+                game_time_utc = dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                game_date     = dt_utc.astimezone(ET).strftime("%Y-%m-%d")
+
+        # Only process today's games
+        if game_date != today:
+            continue
+
+        # Map participants to home/away
+        away_name = away_pid = None
+        home_name = home_pid = None
+
+        for p in participants:
+            name      = p.get("name", "")
+            alignment = (p.get("alignment") or p.get("type") or "").lower()
+            pid       = p.get("id") or p.get("participantId")
+
+            if alignment in ("away", "0"):
+                away_name = _normalize_team(name)
+                away_pid  = pid
+            elif alignment in ("home", "1"):
+                home_name = _normalize_team(name)
+                home_pid  = pid
+
+        # Fallback: first = away, second = home
+        if not away_name and len(participants) >= 2:
+            away_name = _normalize_team(participants[0].get("name", ""))
+            away_pid  = participants[0].get("id") or participants[0].get("participantId")
+            home_name = _normalize_team(participants[1].get("name", ""))
+            home_pid  = participants[1].get("id") or participants[1].get("participantId")
+
+        if not away_name or not home_name:
+            continue
+
+        index[matchup_id] = {
+            "away_team":           away_name,
+            "home_team":           home_name,
+            "game_time_utc":       game_time_utc,
+            "game_date":           game_date,
+            "away_participant_id": away_pid,
+            "home_participant_id": home_pid,
+        }
+
+    return index
+
+
+def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str) -> list:
+    """
+    Merge markets with matchup metadata and return a list of snapshot rows,
+    one row per game, in SNAPSHOT_FIELDNAMES format.
+    """
+    # Group markets by matchupId
+    by_matchup: dict[int, dict] = {}
+    for mkt in raw:
+        mid = mkt.get("matchupId") or mkt.get("matchup_id")
+        if mid is None or mid not in matchup_index:
+            continue
+        if mid not in by_matchup:
+            by_matchup[mid] = {"ml": None, "ou": None, "spread": None}
+
+        key    = mkt.get("key", "")
+        prices = mkt.get("prices", [])
+
+        if "ml" in key or key == "s;0;ml":
+            by_matchup[mid]["ml"] = prices
+        elif "ou" in key or key == "s;0;ou":
+            by_matchup[mid]["ou"] = prices
+        elif key == "s;0;s" or "spread" in key:
+            by_matchup[mid]["spread"] = prices
+
+    rows = []
+    for mid, meta in matchup_index.items():
+        markets = by_matchup.get(mid, {})
+        if not markets or not markets.get("ml"):
+            # No odds data at all — skip this game
+            continue
+
+        away_pid = meta["away_participant_id"]
+        home_pid = meta["home_participant_id"]
+
+        def price_for(pid, prices):
+            """Extract American-odds price for a participant."""
+            if not prices or pid is None:
+                return None
+            for p in prices:
+                if p.get("participantId") == pid or p.get("participant_id") == pid:
+                    val = p.get("price") or p.get("value")
+                    try:
+                        return int(round(float(val)))
+                    except (TypeError, ValueError):
+                        return None
+            return None
+
+        def point_for(pid, prices):
+            """Extract handicap/spread point value."""
+            if not prices or pid is None:
+                return None
+            for p in prices:
+                if p.get("participantId") == pid or p.get("participant_id") == pid:
+                    val = p.get("designation") or p.get("points") or p.get("handicap")
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        return None
+            return None
+
+        def total_line_from_ou(prices):
+            """Pinnacle OU prices carry the line as 'designation' (e.g. '8.5')."""
+            if not prices:
+                return None
+            for p in prices:
+                val = p.get("designation") or p.get("points") or p.get("line")
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    pass
+            return None
+
+        def over_price(prices):
+            if not prices:
+                return None
+            for p in prices:
+                d = (p.get("designation") or "").lower()
+                if d == "over" or p.get("side") == "over":
+                    try:
+                        return int(round(float(p.get("price") or p.get("value"))))
+                    except (TypeError, ValueError):
+                        pass
+            return None
+
+        def under_price(prices):
+            if not prices:
+                return None
+            for p in prices:
+                d = (p.get("designation") or "").lower()
+                if d == "under" or p.get("side") == "under":
+                    try:
+                        return int(round(float(p.get("price") or p.get("value"))))
+                    except (TypeError, ValueError):
+                        pass
+            return None
+
+        ml_prices  = markets.get("ml") or []
+        ou_prices  = markets.get("ou") or []
+        spr_prices = markets.get("spread") or []
+
+        ml_away = price_for(away_pid, ml_prices)
+        ml_home = price_for(home_pid, ml_prices)
+
+        rl_away_line  = point_for(away_pid, spr_prices)
+        rl_home_line  = point_for(home_pid, spr_prices)
+        rl_away_price = price_for(away_pid, spr_prices)
+        rl_home_price = price_for(home_pid, spr_prices)
+
+        total    = total_line_from_ou(ou_prices)
+        over_p   = over_price(ou_prices)
+        under_p  = under_price(ou_prices)
+
+        # game_id: use matchup id as string
+        game_id = f"pinnacle_{mid}"
+
+        snap_id = f"{str(mid)[:8]}_{snapshot_time[:13]}"
+
+        rows.append({
+            "snapshot_id":       snap_id,
+            "snapshot_time":     snapshot_time,
+            "game_id":           game_id,
+            "game_date":         meta["game_date"],
+            "game_time_utc":     meta["game_time_utc"],
+            "away_team":         meta["away_team"],
+            "home_team":         meta["home_team"],
+            "ml_away":           ml_away,
+            "ml_home":           ml_home,
+            "rl_away_line":      rl_away_line,
+            "rl_away_price":     rl_away_price,
+            "rl_home_line":      rl_home_line,
+            "rl_home_price":     rl_home_price,
+            "total_line":        total,
+            "total_over_price":  over_p,
+            "total_under_price": under_p,
+            "total_line_min":    total,
+            "total_line_max":    total,
+            "books_used":        1,   # single book (Pinnacle)
+            "dk_ml_away":        None,
+            "dk_ml_home":        None,
+            "dk_total":          None,
+            "disc_ml_away":      None,
+            "disc_ml_home":      None,
+            "disc_total":        None,
+        })
+
+    return rows
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MOVEMENT DETECTION  (mirrors mlb_odds_scraper.py logic)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _signal(move: float | None) -> str:
+    if move is None:
+        return "NO_DATA"
+    abs_m = abs(move)
+    if abs_m >= STEAM_THRESH:
+        return "STEAM"
+    if abs_m >= DRIFT_THRESH:
+        return "DRIFT"
+    return "STABLE"
+
+
+def _num(val):
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def load_previous_snapshot(today: str) -> list:
+    """Load earliest stored snapshot for today's games (opening-line baseline)."""
+    master = CLEAN_DIR / "mlb_odds_master.csv"
+    if not master.exists():
+        return []
+    with open(master, encoding="utf-8") as f:
+        rows = [r for r in csv.DictReader(f) if r.get("game_date") == today]
+    earliest = {}
+    for r in rows:
+        k = (r.get("away_team", ""), r.get("home_team", ""))
+        if k not in earliest or r.get("snapshot_time", "") < earliest[k].get("snapshot_time", ""):
+            earliest[k] = r
+    return list(earliest.values())
+
+
+def detect_movement(prev_snaps: list, curr_snaps: list, ts: str) -> list:
+    prev_map = {(r.get("away_team", ""), r.get("home_team", "")): r for r in prev_snaps}
+    movements = []
+
+    for curr in curr_snaps:
+        k    = (curr.get("away_team", ""), curr.get("home_team", ""))
+        prev = prev_map.get(k)
+        if not prev:
+            continue
+
+        def safe_move(field):
+            cv, pv = _num(curr.get(field)), _num(prev.get(field))
+            return round(cv - pv, 1) if cv is not None and pv is not None else None
+
+        ml_away_move = safe_move("ml_away")
+        ml_home_move = safe_move("ml_home")
+        total_move   = safe_move("total_line")
+
+        combined_ml_move = ml_away_move if ml_away_move is not None else ml_home_move
+        ml_signal        = _signal(combined_ml_move)
+        total_signal     = _signal(total_move)
+
+        sharp_side = ""
+        if ml_away_move is not None and abs(ml_away_move) >= DRIFT_THRESH:
+            sharp_side = curr["away_team"] if ml_away_move < 0 else curr["home_team"]
+        elif ml_home_move is not None and abs(ml_home_move) >= DRIFT_THRESH:
+            sharp_side = curr["home_team"] if ml_home_move < 0 else curr["away_team"]
+
+        movements.append({
+            "game_id":       curr.get("game_id", ""),
+            "away_team":     curr.get("away_team", ""),
+            "home_team":     curr.get("home_team", ""),
+            "game_date":     curr.get("game_date", ""),
+            "snap1_time":    prev.get("snapshot_time", ""),
+            "snap2_time":    curr.get("snapshot_time", ""),
+            "ml_away_open":  prev.get("ml_away"),
+            "ml_away_now":   curr.get("ml_away"),
+            "ml_away_move":  ml_away_move,
+            "ml_home_open":  prev.get("ml_home"),
+            "ml_home_now":   curr.get("ml_home"),
+            "ml_home_move":  ml_home_move,
+            "total_open":    prev.get("total_line"),
+            "total_now":     curr.get("total_line"),
+            "total_move":    total_move,
+            "ml_signal":     ml_signal,
+            "total_signal":  total_signal,
+            "sharp_side":    sharp_side,
+            "timestamp":     ts,
+        })
+
+    return movements
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SAVE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def save_snapshot(rows: list):
+    master     = CLEAN_DIR / "mlb_odds_master.csv"
+    write_hdr  = not master.exists()
+    with open(master, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=SNAPSHOT_FIELDNAMES)
+        if write_hdr:
+            w.writeheader()
+        w.writerows(rows)
+    log.info(f"[Pinnacle] Saved {len(rows)} snapshot rows to mlb_odds_master.csv")
+
+
+def save_movement(rows: list, today: str):
+    if not rows:
+        return
+    path      = CLEAN_DIR / f"mlb_line_movement_{today}.csv"
+    write_hdr = not path.exists()
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=MOVEMENT_FIELDNAMES)
+        if write_hdr:
+            w.writeheader()
+        w.writerows(rows)
+    log.info(f"[Pinnacle] Saved {len(rows)} movement rows to mlb_line_movement_{today}.csv")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run() -> dict:
+    log.info("=" * 60)
+    log.info("Pinnacle Odds Scraper started (no-auth fallback)")
+    log.info("=" * 60)
+
+    now_et        = datetime.now(ET)
+    today         = now_et.strftime("%Y-%m-%d")
+    snapshot_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts_label      = now_et.strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        raw_matchups = fetch_matchups()
+        log.info(f"[Pinnacle] Fetched {len(raw_matchups)} raw matchup entries")
+    except Exception as e:
+        log.error(f"[Pinnacle] Matchup fetch failed: {e}")
+        return {"snapshots": 0, "movements": 0, "error": str(e), "source": "pinnacle"}
+
+    try:
+        raw_markets = fetch_markets()
+        log.info(f"[Pinnacle] Fetched {len(raw_markets)} raw market entries")
+    except Exception as e:
+        log.error(f"[Pinnacle] Markets fetch failed: {e}")
+        return {"snapshots": 0, "movements": 0, "error": str(e), "source": "pinnacle"}
+
+    matchup_index = _parse_matchups(raw_matchups)
+    log.info(f"[Pinnacle] {len(matchup_index)} today's games indexed from matchups")
+
+    if not matchup_index:
+        log.warning("[Pinnacle] No games for today found in matchup response.")
+        return {"snapshots": 0, "movements": 0, "source": "pinnacle"}
+
+    curr_snaps = _parse_markets(raw_markets, matchup_index, snapshot_time)
+    log.info(f"[Pinnacle] Parsed {len(curr_snaps)} game snapshots with odds")
+
+    for snap in curr_snaps:
+        log.info(
+            f"[Pinnacle] {snap['away_team']} @ {snap['home_team']} | "
+            f"ML: {snap['ml_away']} / {snap['ml_home']} | "
+            f"Total: {snap['total_line']}"
+        )
+
+    # Movement detection
+    prev_snaps = load_previous_snapshot(today)
+    movements  = detect_movement(prev_snaps, curr_snaps, ts_label) if prev_snaps else []
+
+    for m in movements:
+        sig = m.get("ml_signal", "")
+        if sig in ("STEAM", "DRIFT"):
+            log.info(
+                f"[Pinnacle] LINE MOVE [{sig}] "
+                f"{m['away_team']} @ {m['home_team']} | "
+                f"ML: {m.get('ml_away_open')} -> {m.get('ml_away_now')} away | "
+                f"Sharp: {m.get('sharp_side', '?')} | "
+                f"Total: {m.get('total_open')} -> {m.get('total_now')}"
+            )
+
+    save_snapshot(curr_snaps)
+    save_movement(movements, today)
+
+    log.info(
+        f"[Pinnacle] Complete — {len(curr_snaps)} snapshots | "
+        f"{len(movements)} movement records"
+    )
+    return {
+        "snapshots":  len(curr_snaps),
+        "movements":  len(movements),
+        "source":     "pinnacle",
+    }
+
+
+if __name__ == "__main__":
+    import sys
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+    result = run()
+    print(result)

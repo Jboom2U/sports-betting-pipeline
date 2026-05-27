@@ -75,12 +75,21 @@ def main():
         log.warning(f"Pitcher refresh failed (non-fatal): {e}")
 
     # ── Step 1: Refresh odds (lines move all morning) ─────────────────────────
+    # Primary: The Odds API. Fallback: Pinnacle guest API (no auth, no quota).
     try:
         from scrapers.mlb_odds_scraper import run as run_odds
-        result = run_odds()
-        log.info(f"Odds refreshed: {result}")
+        odds_result = run_odds()
+        log.info(f"Odds refreshed: {odds_result}")
+        if odds_result.get("quota_exceeded") or odds_result.get("snapshots", 0) == 0:
+            raise RuntimeError("Odds API quota exhausted — switching to Pinnacle fallback")
     except Exception as e:
-        log.warning(f"Odds refresh failed (non-fatal): {e}")
+        log.warning(f"Odds API unavailable ({e}) — trying Pinnacle fallback")
+        try:
+            from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
+            pinnacle_result = run_pinnacle()
+            log.info(f"Pinnacle fallback odds: {pinnacle_result}")
+        except Exception as pe:
+            log.warning(f"Pinnacle fallback also failed (non-fatal): {pe}")
 
     # ── Step 1b: Refresh umpire assignments (can post/change up to game time) ──
     try:
