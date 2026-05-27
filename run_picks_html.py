@@ -3906,6 +3906,24 @@ def main(date=None, no_open=False):
     log.info(f"{len(scored)} games | {len(picks)} picks | "
              f"{len(parlays_2)} 2-leg parlays | {len(parlays_3)} 3-leg parlays")
 
+    # Alert if a full slate scored very few games — means upstream data broke
+    try:
+        from db.csv_sync import storage_available as _storage_ok
+        _on_railway = _storage_ok()
+    except Exception:
+        _on_railway = False
+    if _on_railway and len(scored) < 5 and len(picks) < 8:
+        try:
+            from alerts import send_alert
+            send_alert(
+                f"Low pick count: only {len(scored)} games scored ({len(picks)} picks)",
+                f"Expected 10+ games on a full slate but only {len(scored)} scored.\n"
+                "This usually means the schedule scraper, normalizer, or model data broke.\n"
+                "Check Railway logs for errors in Steps 1-2 of the pipeline.",
+            )
+        except Exception:
+            pass
+
     if not no_open:
         import webbrowser as _wb
         _wb.open(f"file:///{os.path.abspath(latest_path)}")

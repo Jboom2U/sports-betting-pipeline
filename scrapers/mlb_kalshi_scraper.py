@@ -32,6 +32,7 @@ import csv
 import json
 import logging
 import re
+import time
 from datetime import datetime
 
 import requests
@@ -173,6 +174,7 @@ def fetch_all_mlb_markets(api_key: str) -> list:
             if t not in seen_tickers:
                 seen_tickers.add(t)
                 all_markets.append(m)
+        time.sleep(1.2)   # avoid 429 rate limiting across series calls
 
     if not all_markets:
         log.info("Known series yielded no markets — trying broad search")
@@ -646,7 +648,17 @@ def run(target_date: str = None) -> str:
     save_raw(date, raw_markets)
     games = extract_game_probabilities(raw_markets)
     if not games:
-        return f"No parseable MLB game markets for {date}"
+        log.warning(f"Kalshi snapshot complete: No parseable MLB game markets for {date}")
+        try:
+            from alerts import send_alert
+            send_alert(
+                "Kalshi: 0 game markets found",
+                f"All 7 series tickers + both fallbacks returned 0 MLB game markets for {date}.\n"
+                "Kalshi signal will be missing from today's picks.",
+            )
+        except Exception:
+            pass
+        return f"Kalshi snapshot complete: No parseable MLB game markets for {date}"
 
     # Load earliest snapshot BEFORE saving this one (so we compare against baseline)
     prev_snaps = load_earliest_snapshot(date)

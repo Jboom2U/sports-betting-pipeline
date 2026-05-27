@@ -28,6 +28,12 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# ── Alerting (non-fatal — silently disabled if ALERT_EMAIL_* vars not set) ────
+try:
+    from alerts import send_alert as _send_alert
+except ImportError:
+    def _send_alert(subject, body="", exc=None): pass
+
 # ── Persistence layer (non-fatal — works without DATABASE_URL / STORAGE_*) ────
 try:
     from db.schema import create_all as _db_create_all
@@ -110,6 +116,11 @@ def _run_full_pipeline():
         log.info("Pipeline complete.")
     except Exception as e:
         log.error(f"Pipeline failed: {e}", exc_info=True)
+        _send_alert(
+            "6am pipeline FAILED",
+            f"The morning pipeline crashed — today's picks may not have generated.\n\nError: {e}",
+            exc=e,
+        )
 
     # Schedule afternoon refresh 2 hours before first pitch (one-shot, non-fatal)
     try:
@@ -237,6 +248,13 @@ def _run_lineup_refresh():
         lineups  = run_lineups(target_date=today)
         confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
         log.info(f"Lineup refresh: {len(lineups)} games, {confirmed} confirmed")
+        # Alert if it's past 3pm ET and still zero confirmed lineups
+        if confirmed == 0 and len(lineups) > 0 and datetime.now(ET).hour >= 15:
+            _send_alert(
+                "Lineup scraper: 0 confirmed lineups after 3pm ET",
+                f"The lineup scraper returned {len(lineups)} games but 0 confirmed lineups.\n"
+                "Player props and lineup-adjusted picks may be missing or stale.",
+            )
         if confirmed > 0:
             from scrapers.mlb_hitter_scraper import run as run_hitters
             run_hitters(target_date=today)
@@ -402,6 +420,11 @@ def _regenerate_in_background():
                 _cache["generating"] = False
         except Exception as e:
             log.error(f"Background generation failed: {e}", exc_info=True)
+            _send_alert(
+                "Dashboard generation failed",
+                f"The dashboard cache refresh crashed — site may be serving stale picks.\n\nError: {e}",
+                exc=e,
+            )
             with _cache_lock:
                 _cache["generating"] = False
         except BaseException as e:
@@ -1614,7 +1637,7 @@ def warm_cache():
         except Exception as _r2e:
             log.debug(f"R2 cache seed skipped: {_r2e}")
 
-        # ── Step 4: Dashboard cache ──────────────────────────────────────────────────────────────────────────────────
+        # ── Step 4: Dashboard cache ──────────────────────────────────────────────────────────────────────────────────────────────────
         log.info("Warming dashboard cache...")
         _regenerate_in_background()
 

@@ -126,11 +126,31 @@ def main(date=None):
     except Exception as e:
         log.warning(f"Odds API unavailable ({e}) — trying Pinnacle fallback")
         try:
+            from alerts import send_alert
+            send_alert(
+                "Odds API quota exhausted — Pinnacle fallback active",
+                "The Odds API quota ran out. Pinnacle guest API is being used as fallback.\n"
+                "Picks will still generate with line movement signals.\n"
+                "Quota resets on the 1st of next month.",
+            )
+        except Exception:
+            pass
+        try:
             from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
             pinnacle_result = run_pinnacle()
             log.info(f"Pinnacle fallback odds: {pinnacle_result}")
         except Exception as pe:
             log.warning(f"Pinnacle fallback also failed (non-fatal): {pe}")
+            try:
+                from alerts import send_alert
+                send_alert(
+                    "BOTH odds sources dead — no line movement signals",
+                    "The Odds API quota is exhausted AND the Pinnacle fallback failed.\n"
+                    f"Pinnacle error: {pe}\n\n"
+                    "Picks will generate without sharp money signals until one source recovers.",
+                )
+            except Exception:
+                pass
 
     # ── Step 4: Weather for today's games ─────────────────────────────────────
     try:
