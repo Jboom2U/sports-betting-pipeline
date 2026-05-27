@@ -93,8 +93,9 @@ class MLBModel:
         self.scores          = []   # all historical game rows
         self.schedule        = []   # upcoming schedule rows
         self.bullpen         = {}   # team_name -> stats_dict (current season)
-        self.lineups         = {}   # game_id -> {away_lineup, home_lineup, confirmed}
-        self.umpires          = {}   # game_id -> umpire enriched dict
+        self.lineups             = {}   # game_id -> {away_lineup, home_lineup, confirmed}
+        self.projected_lineups   = {}   # team_name -> {players, date} — fallback when confirmed lineup not posted
+        self.umpires              = {}   # game_id -> umpire enriched dict
         self.pitcher_statcast = {}   # pitcher_name_lower -> statcast stat dict
         self.bullpen_fatigue  = {}   # team_name -> fatigue dict
         self.polymarket       = {}   # sorted (team_a, team_b) -> prob dict
@@ -232,6 +233,14 @@ class MLBModel:
                     self.lineups[gid] = game
             log.info(f"Lineups loaded: {len(self.lineups)} games "
                      f"({sum(1 for g in self.lineups.values() if g.get('lineup_confirmed'))} confirmed)")
+
+        # Projected lineups — most recent confirmed batting order per team (OPS fallback)
+        proj_file = os.path.join(CLEAN_DIR, "mlb_projected_lineups.json")
+        if os.path.exists(proj_file):
+            import json as _json2
+            with open(proj_file, encoding="utf-8") as f:
+                self.projected_lineups = _json2.load(f)
+            log.info(f"Projected lineups loaded: {len(self.projected_lineups)} teams")
 
         # Bullpen fatigue (reliever workload over last 3 days)
         fatigue_file = os.path.join(raw_dir, f"mlb_bullpen_fatigue_{today_str}.json")
