@@ -194,14 +194,19 @@ class MLBModel:
             log.info(f"Odds loaded: {len(self.odds)} games")
 
         import glob
+        _today_str = datetime.now().strftime("%Y-%m-%d")
         movement_files = sorted(
             glob.glob(os.path.join(CLEAN_DIR, "mlb_line_movement_*.csv")), reverse=True
         )
         if movement_files:
-            for row in read_csv(movement_files[0]):
-                k = (row.get("away_team",""), row.get("home_team",""))
-                self.line_movement[k] = row
-            log.info(f"Line movement loaded: {len(self.line_movement)} records")
+            latest_file = movement_files[0]
+            if _today_str in os.path.basename(latest_file):
+                for row in read_csv(latest_file):
+                    k = (row.get("away_team",""), row.get("home_team",""))
+                    self.line_movement[k] = row
+                log.info(f"Line movement loaded: {len(self.line_movement)} records from {os.path.basename(latest_file)}")
+            else:
+                log.info(f"Line movement: newest file is {os.path.basename(latest_file)} (not today) — skipping stale data, no sharp action signals")
 
         # Bullpen stats: team_name -> row (current season preferred)
         bullpen_master = os.path.join(CLEAN_DIR, "mlb_bullpen_master.csv")
