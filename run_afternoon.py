@@ -186,6 +186,22 @@ def main():
     except Exception as e:
         log.error(f"HTML rebuild failed: {e}", exc_info=True)
 
+    # ── Step 5: Upload odds master + line movement to R2 ─────────────────────
+    # -- Step 5: Upload odds master + line movement to R2
+    # CRITICAL: Railway containers are ephemeral. Without this upload, any
+    # redeploy after the afternoon refresh loses the second Pinnacle snapshot.
+    # The next startup restores R2's 6am-only version, leaving no baseline
+    # for movement detection -- killing sharp action signals.
+    try:
+        from db.csv_sync import upload_all as csv_upload_all, storage_available
+        if storage_available():
+            n_uploaded = csv_upload_all()
+            log.info(f"Afternoon R2 upload complete: {n_uploaded} file(s).")
+        else:
+            log.debug("Object storage not configured -- skipping afternoon R2 upload.")
+    except Exception as e:
+        log.warning(f"Afternoon R2 upload failed (non-fatal): {e}")
+
     log.info("=" * 60)
     log.info("AFTERNOON REFRESH COMPLETE")
     log.info("=" * 60)

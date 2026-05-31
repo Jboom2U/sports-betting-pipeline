@@ -1595,8 +1595,17 @@ def warm_cache():
         if _needs_pipeline_run():
             log.info("No pipeline data for today -- running full pipeline on startup...")
             _run_full_pipeline()
+            # _schedule_adaptive_refresh() is called inside _run_full_pipeline()
         else:
             log.info("Today's pipeline data exists -- skipping full pipeline run.")
+            # Container may have restarted mid-day (deploy/crash) and lost the afternoon
+            # refresh thread. Re-schedule it here so deploys after 6am don't silently
+            # kill the lineups + odds refresh. _schedule_adaptive_refresh() is a no-op
+            # if first pitch has already started.
+            try:
+                _schedule_adaptive_refresh()
+            except Exception as _sar_e:
+                log.warning(f"Adaptive refresh re-scheduling failed (non-fatal): {_sar_e}")
 
         # ── Step 3b: Seed cache from R2 HTML ───────────────────────
         # If Railway restarted mid-day after a deploy, the in-memory cache is gone but
@@ -1637,7 +1646,7 @@ def warm_cache():
         except Exception as _r2e:
             log.debug(f"R2 cache seed skipped: {_r2e}")
 
-        # ── Step 4: Dashboard cache ──────────────────────────────────────────────────────────────────────────────────────────────────
+        # -- Step 4: Dashboard cache
         log.info("Warming dashboard cache...")
         _regenerate_in_background()
 
