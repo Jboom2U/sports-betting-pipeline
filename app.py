@@ -179,12 +179,25 @@ def _needs_odds_snapshot() -> bool:
 def _run_odds_snapshot():
     """Take a fresh odds + Kalshi snapshot. Non-fatal — powers the Sharp Action panel."""
     log.info("Taking mid-day odds + Kalshi snapshot...")
+    odds_ok = False
     try:
         from scrapers.mlb_odds_scraper import run as run_odds
         result = run_odds()
         log.info(f"Odds snapshot complete: {result}")
+        if not result.get("quota_exceeded") and result.get("snapshots", 0) > 0:
+            odds_ok = True
     except Exception as e:
         log.warning(f"Odds snapshot failed (non-fatal): {e}")
+
+    if not odds_ok:
+        # Odds API unavailable or quota exhausted — try Pinnacle (no auth, no quota)
+        try:
+            from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
+            pin_result = run_pinnacle()
+            log.info(f"Pinnacle mid-day snapshot: {pin_result}")
+        except Exception as pe:
+            log.warning(f"Pinnacle mid-day snapshot failed (non-fatal): {pe}")
+
     try:
         from scrapers.mlb_kalshi_scraper import run as run_kalshi
         k_result = run_kalshi()
