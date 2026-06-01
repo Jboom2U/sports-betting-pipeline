@@ -401,10 +401,9 @@ def _regenerate_in_background():
     def _worker():
         started = time.time()
         try:
-            # Mid-day odds snapshot — every 2 hours between 8am-10pm ET
-            # Builds the line movement data that powers the Sharp Money panel
-            if _needs_odds_snapshot():
-                _run_odds_snapshot()
+            # Odds snapshots run only via the adaptive refresh (2h before first pitch)
+            # and the 6am pipeline — NOT on every cache cycle. Keeps Odds API usage
+            # to ~2 pulls/day (~60/month) instead of the old every-2-hour loop.
             # Mid-day lineup refresh — after 10am when lineups post
             if _needs_lineup_refresh():
                 _run_lineup_refresh()
