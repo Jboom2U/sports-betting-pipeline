@@ -135,7 +135,7 @@ def build_monte_carlo(all_picks):
 
     ml_picks = [
         p for p in all_picks
-        if p.get("pick_type", p.get("type", "")) == "ML" and p.get("confidence", 0) >= 0.60
+        if p.get("pick_type", p.get("type", "")) == "ML" and p.get("confidence", p.get("conf", 0)) >= 0.60
     ]
     if not ml_picks:
         return (
@@ -163,7 +163,7 @@ def build_monte_carlo(all_picks):
 
     rows = []
     for p in sorted(ml_picks, key=lambda x: -x.get("confidence", 0)):
-        model_p  = p.get("confidence", 0)
+        model_p  = p.get("confidence", p.get("conf", 0))
         team     = p.get("team", p.get("label", ""))
         game_lbl = p.get("game", "")
         away     = p.get("away", "")

@@ -139,6 +139,10 @@ def fetch_mlb_markets() -> list:
                 resp.raise_for_status()
                 page = resp.json()
             except Exception as e:
+                # 422 = Polymarket's hard pagination cap — stop gracefully, not an error
+                import requests as _req
+                if isinstance(e, _req.HTTPError) and e.response is not None and e.response.status_code == 422:
+                    break
                 log.warning(f"Polymarket fetch failed (tag={tag}, offset={offset}): {e}")
                 break
 

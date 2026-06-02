@@ -62,7 +62,11 @@ def _fetch_savant_csv(year: int) -> list[dict]:
             timeout=30,
         )
         resp.raise_for_status()
-        lines = resp.text.splitlines()
+        # Strip UTF-8 BOM — Savant CSVs often start with \ufeff which
+        # corrupts the first column header (e.g. '\ufefflast_name' instead of 'last_name')
+        # causing player names to fall back to numeric IDs, breaking all name lookups.
+        text  = resp.text.lstrip('\ufeff')
+        lines = text.splitlines()
         if not lines:
             log.warning("Savant returned empty CSV")
             return []
@@ -71,7 +75,7 @@ def _fetch_savant_csv(year: int) -> list[dict]:
         rows   = []
         for row in reader:
             # Normalise field names (Savant sometimes uses spaces)
-            clean = {k.strip().lower().replace(" ", "_"): (v.strip() if v is not None else "") for k, v in row.items()}
+            clean = {k.strip().lstrip('\ufeff').lower().replace(" ", "_"): (v.strip() if v is not None else "") for k, v in row.items()}
 
             # Build canonical record — keep only what the model needs
             rec = {"year": str(year)}
