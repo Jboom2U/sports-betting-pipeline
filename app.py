@@ -523,6 +523,37 @@ def force_odds():
     return {"status": "ok", "message": "Odds snapshot started — dashboard will refresh automatically in ~60 seconds."}
 
 
+@app.route("/force-statcast")
+def force_statcast():
+    """Force a fresh Statcast pitcher scrape, upload to R2, rebuild dashboard."""
+    def _worker():
+        try:
+            from scrapers.mlb_statcast_pitcher_scraper import run as run_psc
+            result = run_psc()
+            log.info(f"Force-statcast complete: {result}")
+        except Exception as e:
+            log.warning(f"Force-statcast pitcher failed: {e}")
+        try:
+            from scrapers.mlb_statcast_scraper import run as run_sc
+            result2 = run_sc()
+            log.info(f"Force-statcast batters complete: {result2}")
+        except Exception as e:
+            log.warning(f"Force-statcast batters failed: {e}")
+        try:
+            from db.csv_sync import upload_all, storage_available
+            if storage_available():
+                n = upload_all()
+                log.info(f"Statcast CSVs uploaded to R2: {n} file(s)")
+        except Exception as e:
+            log.warning(f"Statcast R2 upload failed: {e}")
+        with _cache_lock:
+            _cache["generated_at"] = 0
+        _regenerate_in_background()
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return {"status": "ok", "message": "Statcast scrape started — dashboard will refresh in ~90 seconds."}
+
+
 @app.route("/debug-odds")
 def debug_odds():
     """Run odds scraper synchronously and return full diagnostic output."""
@@ -754,19 +785,10 @@ def status():
         cache_label = "Not yet generated"
 
     # ── Next snapshot ────────────────────────────────────────────────────────
-    if snap_times:
-        try:
-            from datetime import timezone as _tz2
-            last_t  = datetime.strptime(snap_times[-1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tz2.utc)
-            next_t  = last_t.astimezone(ET) + timedelta(hours=2)
-            if next_t <= now:
-                next_label = "Overdue — fires on next dashboard visit"
-            else:
-                next_label = next_t.strftime("%-I:%M %p ET")
-        except Exception:
-            next_label = "~2 hours after last snapshot"
-    else:
-        next_label = "Waiting for first snapshot"
+    # Odds snapshots only run via the 6am pipeline and adaptive refresh
+    # (2 hours before first pitch). No automatic every-2-hour loop.
+    next_label = "Adaptive refresh only (2h before first pitch)"
+    next_detail = "Manual: statalizers.com/force-odds"
 
     # ── Render ───────────────────────────────────────────────────────────────
     def status_row(label, value, ok=None, detail=""):
@@ -824,7 +846,7 @@ body{{background:#07090f;color:#e2e8f0;font-family:'Inter',sans-serif;min-height
     <div class="card-hdr">Odds &amp; Line Movement</div>
     {status_row("Snapshots Today", f"{snap_count} snapshot{'s' if snap_count != 1 else ''}",
                 snaps_ok, snaps_str)}
-    {status_row("Next Snapshot", next_label, None, "Every 2 hours, 8am–10pm ET")}
+    {status_row("Next Snapshot", next_label, None, next_detail)}
     {status_row("Line Movement File", mv_label, mv_ok if snap_count >= 2 else None)}
   </div>
 

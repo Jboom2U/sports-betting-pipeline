@@ -1524,6 +1524,8 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <button class="section-nav-btn" data-panel="panel-games">📊 Game Breakdown</button>
     <button class="section-nav-btn" data-panel="panel-yesterday" id="yesterdayTab" style="display:none">📈 Yesterday</button>
     <button class="section-nav-btn" data-panel="panel-sharp">🔥 Sharp Action</button>
+    <button class="section-nav-btn" data-panel="panel-hr-watch">💣 HR Watch</button>
+    <button class="section-nav-btn" data-panel="panel-monte-carlo">🎲 Monte Carlo</button>
   </div>
 
   <!-- PANEL: GAME PICKS -->
@@ -1626,6 +1628,19 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <!-- PANEL: SHARP ACTION -->
   <div class="section-panel" id="panel-sharp">
     <div id="sharpActionContent"></div>
+  </div>
+
+  <!-- PANEL: HR WATCH -->
+  <div class="section-panel" id="panel-hr-watch">
+    <div class="section-title">💣 HR Watch &mdash; Top Candidates Today</div>
+    <p style="color:#8b949e;font-size:.83rem;margin-bottom:16px">Ranked by Poisson HR probability. Red = unfavorable signal, green = favorable. Only confirmed lineups shown.</p>
+    __HR_WATCH__
+  </div>
+
+  <!-- PANEL: MONTE CARLO -->
+  <div class="section-panel" id="panel-monte-carlo">
+    <div class="section-title">🎲 Monte Carlo &mdash; Hit-Rate Simulation (1000 Trials)</div>
+    __MONTE_CARLO__
   </div>
 
 </div>
@@ -3787,6 +3802,16 @@ def main(date=None, no_open=False):
     props_json = json.dumps(prep_props(props))
     log.info(f"Props total: {len(props)} ({sum(1 for p in props if not p.get('projected'))} confirmed, {sum(1 for p in props if p.get('projected'))} projected)")
 
+    # ── HR Watch + Monte Carlo sections ──────────────────────────────────
+    try:
+        from model.mlb_analysis_sections import build_hr_watch, build_monte_carlo
+        hr_watch_html    = build_hr_watch(props, picks)
+        monte_carlo_html = build_monte_carlo(picks)
+    except Exception as _sec_e:
+        log.warning(f"Analysis sections failed (non-fatal): {_sec_e}")
+        hr_watch_html    = "<p>HR Watch unavailable.</p>"
+        monte_carlo_html = "<p>Monte Carlo unavailable.</p>"
+
     # Kalshi market data (optional — works only when API key configured)
     kalshi_data = load_kalshi(actual_date)
     if not kalshi_data:
@@ -3847,7 +3872,9 @@ def main(date=None, no_open=False):
             .replace("__PICKS_NEXT__",    picks_next_json)
             .replace("__P2_NEXT__",       p2_next_json)
             .replace("__P3_NEXT__",       p3_next_json)
-            .replace("__SCHEDULE_NEXT__", schedule_next_json))
+            .replace("__SCHEDULE_NEXT__", schedule_next_json)
+            .replace("__HR_WATCH__",      hr_watch_html)
+            .replace("__MONTE_CARLO__",   monte_carlo_html))
 
     os.makedirs(PICKS_DIR, exist_ok=True)
     out_path = os.path.join(PICKS_DIR, f"mlb_picks_{actual_date}.html")

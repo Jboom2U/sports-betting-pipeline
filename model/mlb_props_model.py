@@ -242,14 +242,19 @@ def score_hr_prop(player: dict, pitcher_opp: dict, home_team: str,
         return None
 
     return {
-        "prop_type":   "HR",
-        "line":        0.5,
-        "player_name": pname,
+        "prop_type":     "HR",
+        "line":          0.5,
+        "player_name":   pname,
         "batting_order": batting_order,
-        "proj":        round(lam, 3),
-        "confidence":  round(prob, 4),
-        "tier":        tier,
-        "reasoning":   reasoning,
+        "proj":          round(lam, 3),
+        "confidence":    round(prob, 4),
+        "tier":          tier,
+        "reasoning":     reasoning,
+        # Explicit fields for HR Watch display
+        "hr_park_factor":  round(park_factor, 3),
+        "hr_pitcher_hr9":  round(pitcher_hr9, 2),
+        "hr_wind_note":    wind_note,
+        "hr_base_rate":    round(base_rate, 4),
     }
 
 
@@ -1273,7 +1278,4 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    props = score_all_props()
-    for p in props[:10]:
-        print(f"[{p['tier']:6s}] {p['prop_type']:4s} {p['player_name']:25s} "
-              f"{p['confidence']*100:.1f}%  proj={p['proj']}  line={p['line']}  {p['game']}")
+    print(score_all_props())

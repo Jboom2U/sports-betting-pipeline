@@ -46,17 +46,17 @@ OUT_PATH  = os.path.join(CLEAN_DIR, "mlb_pitcher_statcast_master.csv")
 HEADERS = {"User-Agent": "mlb-betting-pipeline/1.0"}
 
 # Baseball Savant pitcher expected_statistics leaderboard (free, no auth)
-# min=50 = minimum batters faced (filters out relievers with tiny samples)
+# min=10 = minimum batters faced (low threshold catches early-season starters)
 SAVANT_URL = (
     "https://baseballsavant.mlb.com/leaderboard/expected_statistics"
-    "?type=pitcher&year={year}&position=1&team=&min=50&csv=true"
+    "?type=pitcher&year={year}&position=1&team=&min=10&csv=true"
 )
 
 # Supplemental: pitch arsenal stats (gives whiff%, velocity per pitch type)
 # We aggregate across all pitch types to get a single whiff% for each pitcher
 ARSENAL_URL = (
     "https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats"
-    "?type=pitcher&pitchType=&year={year}&team=&min=50&csv=true"
+    "?type=pitcher&pitchType=&year={year}&team=&min=10&csv=true"
 )
 
 # Fields to keep from expected_statistics endpoint
@@ -250,7 +250,7 @@ def load_pitcher_statcast(min_pa: int = 50) -> dict:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s [%(levelname)s] %(message)s")
+    import sys
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     year_arg = int(sys.argv[1]) if len(sys.argv) > 1 else datetime.now().year
     print(run(year=year_arg))
