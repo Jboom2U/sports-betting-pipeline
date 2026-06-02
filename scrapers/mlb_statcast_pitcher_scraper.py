@@ -79,7 +79,11 @@ def _fetch_csv(url: str, label: str) -> list:
     try:
         resp = requests.get(url, headers=HEADERS, timeout=30)
         resp.raise_for_status()
-        lines = resp.text.splitlines()
+        # Strip UTF-8 BOM if present — Savant CSVs often start with \ufeff
+        # which causes the first column header to be '\ufeffplayer_id' instead
+        # of 'player_id', silently dropping every row from the result dict.
+        text = resp.text.lstrip('\ufeff')
+        lines = text.splitlines()
         if not lines:
             log.warning(f"{label} returned empty response")
             return []
@@ -88,7 +92,7 @@ def _fetch_csv(url: str, label: str) -> list:
         for row in reader:
             # Normalize field names — Savant sometimes uses spaces or mixed case
             clean = {
-                k.strip().lower().replace(" ", "_").replace("%", "pct"): (
+                k.strip().lstrip('\ufeff').lower().replace(" ", "_").replace("%", "pct"): (
                     v.strip() if v is not None else ""
                 )
                 for k, v in row.items()
@@ -202,7 +206,7 @@ def run(year: int = None) -> str:
     return f"PitcherStatcast: {len(rows)} pitchers written to mlb_pitcher_statcast_master.csv"
 
 
-def load_pitcher_statcast(min_pa: int = 50) -> dict:
+def load_pitcher_statcast(min_pa: int = 10) -> dict:
     """
     Load the pitcher Statcast master and return a dict keyed by lowercase pitcher name.
     Values include float-coerced numeric fields.

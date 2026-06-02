@@ -275,11 +275,13 @@ def score_hits_prop(player: dict, pitcher_opp: dict,
 
     base_rate = player.get("h_per_pa", LEAGUE_H_PER_PA)
 
-    # Home/away split blend
+    # Home/away split blend — floor at base_rate/2 to prevent early-season
+    # 0-split data from collapsing HITS probability (e.g. 0 hits in 12 home PAs)
     if is_home:
         ha_rate = player.get("home_h_per_pa", base_rate)
     else:
         ha_rate = player.get("away_h_per_pa", base_rate)
+    ha_rate = ha_rate if ha_rate > 0.100 else base_rate  # ignore near-zero splits
     h_rate = 0.60 * base_rate + 0.40 * ha_rate
 
     # Pitcher factor: pitcher's H/9 vs league avg H/9 (≈8.5)

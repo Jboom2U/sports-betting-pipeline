@@ -135,7 +135,7 @@ def build_monte_carlo(all_picks):
 
     ml_picks = [
         p for p in all_picks
-        if p.get("pick_type") == "ML" and p.get("confidence", 0) >= 0.60
+        if p.get("pick_type", p.get("type", "")) == "ML" and p.get("confidence", 0) >= 0.60
     ]
     if not ml_picks:
         return (
