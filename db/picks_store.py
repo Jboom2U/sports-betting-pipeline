@@ -574,3 +574,53 @@ def get_player_trailing_hit_rate(player_name: str, prop_type: str,
         except Exception as e:
             log.warning(f"get_player_trailing_hit_rate failed: {e}")
             return None
+
+
+def get_sharp_vs_model(days: int = 30) -> list:
+    """
+    Returns rows where sharp STEAM action contradicted the model ML pick.
+    Joins picks (model pick + result) with scored_games (sharp_side, ml_signal).
+    For each row: date, game, model_pick, sharp_pick, result, who_was_right.
+    """
+    with db_conn() as conn:
+        if conn is None:
+            return []
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    p.pick_date,
+                    p.game,
+                    p.label      AS model_label,
+                    sg.sharp_side,
+                    sg.ml_signal,
+                    p.tier,
+                    p.conf,
+                    p.actual_result,
+                    CASE
+                        WHEN p.actual_result = 'WIN'  THEN 'model'
+                        WHEN p.actual_result = 'LOSS' THEN 'sharp'
+                        ELSE 'push'
+                    END AS who_was_right
+                FROM picks p
+                JOIN scored_games sg
+                  ON sg.game_date = p.pick_date
+                 AND sg.game_label = p.game
+                WHERE p.pick_type = 'ML'
+                  AND sg.ml_signal = 'STEAM'
+                  AND sg.sharp_side IS NOT NULL
+                  AND sg.sharp_side <> ''
+                  AND sg.sharp_side NOT IN (p.label)
+                  AND p.pick_date >= CURRENT_DATE - INTERVAL '%s days'
+                  AND p.actual_result IN ('WIN', 'LOSS', 'PUSH')
+                ORDER BY p.pick_date DESC
+                """,
+                (days,)
+            )
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+            return rows
+        except Exception as e:
+            log.warning(f"get_sharp_vs_model failed: {e}")
+            return []

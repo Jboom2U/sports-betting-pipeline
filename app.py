@@ -940,6 +940,12 @@ def performance_html():
         mkt_signal_rows = []
         monthly_rows    = []
 
+    try:
+        from db.picks_store import get_sharp_vs_model
+        sharp_vs_model_rows = get_sharp_vs_model(days=days) or []
+    except Exception:
+        sharp_vs_model_rows = []
+
     # ── Yesterday picks ──────────────────────────────────
     yesterday_picks = []
     try:
@@ -1402,8 +1408,85 @@ def performance_html():
 
   {_monthly_section_html}
 
+  {_sharp_section_html}
+
 </body>
 </html>"""
+
+    # ── Sharp vs Model section HTML ──────────────────────────────────────────
+    _sharp_rows_html = ""
+    _model_right = 0
+    _sharp_right = 0
+    _push_count  = 0
+    for _sr in sharp_vs_model_rows:
+        _date      = str(_sr.get("pick_date", ""))[:10]
+        _game      = _sr.get("game", "")
+        _model_lbl = _sr.get("model_label", "")
+        _sharp_lbl = (_sr.get("sharp_side") or "") + " ML"
+        _result    = _sr.get("actual_result", "")
+        _winner    = _sr.get("who_was_right", "")
+        _conf_pct  = f"{float(_sr.get('conf', 0)) * 100:.0f}%"
+        _tier      = _sr.get("tier", "")
+
+        if _winner == "model":
+            _model_right += 1
+            _badge = '<span style="color:#3fb950;font-weight:600">✓ Model</span>'
+        elif _winner == "sharp":
+            _sharp_right += 1
+            _badge = '<span style="color:#f0883e;font-weight:600">⚡ Sharp</span>'
+        else:
+            _push_count += 1
+            _badge = '<span style="color:#8b949e">— Push</span>'
+
+        _tier_colors = {"LOCK": "#ffc107", "STRONG": "#42a5f5", "LEAN": "#66bb6a", "TOSSUP": "#a09ae0"}
+        _tc = _tier_colors.get(_tier, "#8b949e")
+        _result_color = "#3fb950" if _result == "WIN" else "#f85149" if _result == "LOSS" else "#8b949e"
+        _sharp_rows_html += (
+            f'<tr>'
+            f'<td style="color:#8b949e">{_date}</td>'
+            f'<td style="color:#e6edf3">{_game}</td>'
+            f'<td><span style="color:{_tc};font-weight:600">{_tier}</span> {_model_lbl} <span style="color:#8b949e;font-size:0.85em">({_conf_pct})</span></td>'
+            f'<td style="color:#f0883e;font-weight:600">⚡ {_sharp_lbl}</td>'
+            f'<td style="color:{_result_color}">{_result}</td>'
+            f'<td>{_badge}</td>'
+            f'</tr>'
+        )
+
+    _total_sharp_games = _model_right + _sharp_right + _push_count
+    if _total_sharp_games > 0:
+        _model_pct = f"{_model_right / (_model_right + _sharp_right) * 100:.0f}%" if (_model_right + _sharp_right) > 0 else "—"
+        _sharp_pct = f"{_sharp_right / (_model_right + _sharp_right) * 100:.0f}%" if (_model_right + _sharp_right) > 0 else "—"
+        _summary_bar = (
+            f'<div style="display:flex;gap:24px;margin-bottom:12px;font-size:0.95em">'
+            f'<span>Games: <b style="color:#e6edf3">{_total_sharp_games}</b></span>'
+            f'<span>Model wins: <b style="color:#3fb950">{_model_right} ({_model_pct})</b></span>'
+            f'<span>Sharp wins: <b style="color:#f0883e">{_sharp_right} ({_sharp_pct})</b></span>'
+            f'</div>'
+        )
+    else:
+        _summary_bar = '<p style="color:#8b949e">No conflicting sharp action recorded in this period.</p>'
+
+    _no_sharp = '<tr><td colspan="6" style="color:#8b949e;padding:16px">No conflicting STEAM picks in this period.</td></tr>'
+    _sharp_section_html = (
+        '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-top:24px">'
+        '<details open>'
+        '<summary style="cursor:pointer;font-size:1.05em;font-weight:600;color:#e6edf3;list-style:none">'
+        '<span class="arr">&#9654;</span> Sharp Action vs Model — Head to Head'
+        '</summary>'
+        '<p style="color:#8b949e;font-size:0.9em;margin:8px 0 16px">Games where STEAM sharp action contradicted the model pick. Shows who was right.</p>'
+        + _summary_bar +
+        '<table style="width:100%;border-collapse:collapse;font-size:0.9em">'
+        '<thead><tr style="color:#8b949e;border-bottom:1px solid #30363d">'
+        '<th style="text-align:left;padding:6px 8px">Date</th>'
+        '<th style="text-align:left;padding:6px 8px">Game</th>'
+        '<th style="text-align:left;padding:6px 8px">Model Pick</th>'
+        '<th style="text-align:left;padding:6px 8px">Sharp Side</th>'
+        '<th style="text-align:left;padding:6px 8px">Result</th>'
+        '<th style="text-align:left;padding:6px 8px">Winner</th>'
+        '</tr></thead>'
+        f'<tbody>{_sharp_rows_html or _no_sharp}</tbody>'
+        '</table></div></details></div>'
+    )
 
     return Response(html, content_type="text/html; charset=utf-8")
 
