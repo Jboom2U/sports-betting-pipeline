@@ -253,6 +253,7 @@ def _broad_search(api_key: str) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 
 TEAM_ALIASES = {
+    # Full names / nicknames
     "diamondbacks": "Arizona Diamondbacks",
     "braves":       "Atlanta Braves",
     "orioles":      "Baltimore Orioles",
@@ -283,6 +284,38 @@ TEAM_ALIASES = {
     "rangers":      "Texas Rangers",
     "blue jays":    "Toronto Blue Jays",
     "nationals":    "Washington Nationals",
+    # 2-3 letter ticker abbreviations used by Kalshi
+    "ari": "Arizona Diamondbacks",
+    "atl": "Atlanta Braves",
+    "bal": "Baltimore Orioles",
+    "bos": "Boston Red Sox",
+    "chc": "Chicago Cubs",
+    "cws": "Chicago White Sox",
+    "cin": "Cincinnati Reds",
+    "cle": "Cleveland Guardians",
+    "col": "Colorado Rockies",
+    "det": "Detroit Tigers",
+    "hou": "Houston Astros",
+    "kc":  "Kansas City Royals",
+    "laa": "Los Angeles Angels",
+    "lad": "Los Angeles Dodgers",
+    "mia": "Miami Marlins",
+    "mil": "Milwaukee Brewers",
+    "min": "Minnesota Twins",
+    "nym": "New York Mets",
+    "nyy": "New York Yankees",
+    "oak": "Athletics",
+    "phi": "Philadelphia Phillies",
+    "pit": "Pittsburgh Pirates",
+    "sd":  "San Diego Padres",
+    "sf":  "San Francisco Giants",
+    "sea": "Seattle Mariners",
+    "stl": "St. Louis Cardinals",
+    "tb":  "Tampa Bay Rays",
+    "tex": "Texas Rangers",
+    "tor": "Toronto Blue Jays",
+    "was": "Washington Nationals",
+    "wsh": "Washington Nationals",
 }
 
 
@@ -341,16 +374,40 @@ def parse_market_teams(market: dict):
     Parse (away_team, home_team, yes_prob) from a Kalshi market dict.
     Returns None if the title can't be parsed into two teams.
     """
-    title = market.get("title", "")
+    title   = market.get("title", "")
+    ticker  = market.get("ticker", "")
+    subtitle = market.get("subtitle", "")
+
+    # Log first few titles for debugging
+    if not hasattr(parse_market_teams, "_logged"):
+        parse_market_teams._logged = True
+        log.info(f"Kalshi sample title='{title}' ticker='{ticker}' subtitle='{subtitle}'")
+
+    # Try to extract teams from ticker format: KXMLB-26-BOS-NYY or similar
+    ticker_match = re.search(r'[A-Z]+-\d+-([A-Z]+)-([A-Z]+)', ticker)
+    if ticker_match:
+        abbr_a = ticker_match.group(1).lower()
+        abbr_b = ticker_match.group(2).lower()
+        team_a = _match_team(abbr_a)
+        team_b = _match_team(abbr_b)
+        if team_a != abbr_a and team_b != abbr_b:  # both matched
+            yes_ask  = market.get("yes_ask", 50)
+            yes_bid  = market.get("yes_bid", 50)
+            yes_prob = ((yes_ask + yes_bid) / 2) / 100.0
+            return team_a, team_b, yes_prob
+
+    # Try title + subtitle combined
+    search_text = title + " " + subtitle
 
     vs_patterns = [
         r'(.+?)\s+(?:vs\.?|v\.?|at|@)\s+(.+?)(?:\s*[-—]|$|\?)',
         r'(?:Will\s+)?(.+?)\s+(?:beat|defeat|win\s+(?:vs|against))\s+(.+?)(?:\s*\?|$)',
+        r'(.+?)\s+or\s+(.+?)(?:\s+win|\s*\?|$)',
     ]
 
     team_a, team_b = None, None
     for pat in vs_patterns:
-        m = re.search(pat, title, re.IGNORECASE)
+        m = re.search(pat, search_text, re.IGNORECASE)
         if m:
             team_a = _match_team(m.group(1))
             team_b = _match_team(m.group(2))

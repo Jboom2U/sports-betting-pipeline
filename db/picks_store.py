@@ -121,7 +121,11 @@ def save_scored_games(scored_games: list, score_date: str) -> int:
                         %s, %s,
                         %s, %s, %s, %s
                     )
-                    ON CONFLICT (score_date, game_id) DO NOTHING
+                    ON CONFLICT (score_date, game_id) DO UPDATE SET
+                        ml_signal  = COALESCE(EXCLUDED.ml_signal,  scored_games.ml_signal),
+                        sharp_side = COALESCE(EXCLUDED.sharp_side, scored_games.sharp_side),
+                        ml_adj     = COALESCE(EXCLUDED.ml_adj,     scored_games.ml_adj),
+                        total_adj  = COALESCE(EXCLUDED.total_adj,  scored_games.total_adj)
                     """,
                     (
                         score_date,
