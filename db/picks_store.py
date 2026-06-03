@@ -628,3 +628,51 @@ def get_sharp_vs_model(days: int = 3) -> list:
         except Exception as e:
             log.warning(f"get_sharp_vs_model failed: {e}")
             return []
+
+
+def backfill_scored_games_sharp_signals(clean_dir: str, days: int = 14) -> int:
+    """
+    Backfill sharp_side and ml_signal into scored_games rows where they are NULL,
+    reading from line movement CSVs. Fixes rows inserted before the DO UPDATE fix.
+    """
+    import csv as _csv
+    import glob as _glob
+    from datetime import date, timedelta
+
+    updated = 0
+    with db_conn() as conn:
+        if conn is None:
+            return 0
+        try:
+            cur = conn.cursor()
+            for i in range(days):
+                d = (date.today() - timedelta(days=i)).strftime("%Y-%m-%d")
+                pattern = os.path.join(clean_dir, f"mlb_line_movement_{d}.csv")
+                files = _glob.glob(pattern)
+                if not files:
+                    continue
+                with open(files[0], encoding="utf-8") as f:
+                    for row in _csv.DictReader(f):
+                        ml_signal  = row.get("ml_signal", "")
+                        sharp_side = row.get("sharp_side", "")
+                        away       = row.get("away_team", "")
+                        home       = row.get("home_team", "")
+                        if not ml_signal or not sharp_side:
+                            continue
+                        cur.execute(
+                            """
+                            UPDATE scored_games
+                               SET ml_signal  = COALESCE(ml_signal,  %s),
+                                   sharp_side = COALESCE(sharp_side, %s)
+                             WHERE score_date = %s
+                               AND away_team  = %s
+                               AND home_team  = %s
+                               AND (ml_signal IS NULL OR sharp_side IS NULL)
+                            """,
+                            (ml_signal, sharp_side, d, away, home)
+                        )
+                        updated += cur.rowcount
+            log.info(f"backfill_scored_games_sharp_signals: {updated} row(s) updated.")
+        except Exception as e:
+            log.warning(f"backfill_scored_games_sharp_signals failed: {e}")
+    return updated

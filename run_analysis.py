@@ -961,6 +961,17 @@ def run(date: str):
     except Exception as e:
         log.debug(f"backfill_market_signals skipped: {e}")
 
+    # Backfill sharp_side/ml_signal into scored_games from line movement CSVs (non-fatal)
+    try:
+        from db.picks_store import backfill_scored_games_sharp_signals
+        import os as _os
+        _clean = _os.path.join(_os.path.dirname(__file__), "data", "clean")
+        sg_count = backfill_scored_games_sharp_signals(_clean, days=14)
+        if sg_count:
+            log.info(f"Sharp signal backfill: {sg_count} scored_game(s) updated")
+    except Exception as e:
+        log.debug(f"backfill_scored_games_sharp_signals skipped: {e}")
+
     grade_prop_outcomes(date)
 
     return {

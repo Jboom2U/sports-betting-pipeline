@@ -45,13 +45,16 @@ CLEAN_DIR = os.path.join(BASE_DIR, "data", "clean")
 os.makedirs(RAW_DIR,   exist_ok=True)
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
-KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
+KALSHI_BASE      = "https://api.kalshi.com/trade-api/v2"
+KALSHI_BASE_OLD  = "https://api.elections.kalshi.com/trade-api/v2"  # futures/elections only
 
 # Known Kalshi series tickers for MLB game winner markets.
 # Series tickers — Kalshi renames these occasionally; list is exhaustive
 MLB_SERIES = [
-    "KXMLBW",    # historical game winner
-    "KXMLB",     # historical general MLB
+    "MLBM",      # MLB game moneyline (sports API)
+    "MLBGAME",   # MLB game winner (sports API)
+    "KXMLBW",    # historical game winner (elections API)
+    "KXMLB",     # championship futures — NOT game markets, skip if title has 'Championship'
     "MLBWINNER", # alternate name
     "KXMLBGW",   # game winner variant
     "MLB",       # short form
@@ -382,6 +385,12 @@ def parse_market_teams(market: dict):
     if not hasattr(parse_market_teams, "_logged"):
         parse_market_teams._logged = True
         log.info(f"Kalshi sample title='{title}' ticker='{ticker}' subtitle='{subtitle}'")
+
+    # Skip season/championship futures — not game markets
+    skip_keywords = ["championship", "world series", "pennant", "playoff", "division title",
+                     "make the playoffs", "win the al", "win the nl", "win the 2026"]
+    if any(k in title.lower() for k in skip_keywords):
+        return None
 
     # Try to extract teams from ticker format: KXMLB-26-BOS-NYY or similar
     ticker_match = re.search(r'[A-Z]+-\d+-([A-Z]+)-([A-Z]+)', ticker)
