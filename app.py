@@ -925,7 +925,7 @@ def performance():
 
     # JSON API path (backward compatible)
     try:
-        days = int(request.args.get("days", 30))
+        days = int(request.args.get("days", 1))
     except (TypeError, ValueError):
         days = 30
     try:
@@ -972,7 +972,9 @@ def performance_html():
 
     try:
         from db.picks_store import get_sharp_vs_model
-        sharp_vs_model_rows = get_sharp_vs_model(days=days) or []
+        # Always show last 3 days — independent of the page day-toggle.
+        # Rolling aggregate is already covered by Market Signal Breakdown above.
+        sharp_vs_model_rows = get_sharp_vs_model(days=3) or []
     except Exception:
         sharp_vs_model_rows = []
 
@@ -1001,10 +1003,12 @@ def performance_html():
 
     # ── Day toggle links ──────────────────────────────────────────────────────
     days_links = "".join(
-        '<a href="/performance-html?days={d}" {cls}>{d}d</a>'.format(
-            d=d, cls='class="active"' if d == days else ""
+        '<a href="/performance-html?days={d}" {cls}>{label}</a>'.format(
+            d=d,
+            label=("Yesterday" if d == 1 else f"{d} days"),
+            cls='class="active"' if d == days else ""
         )
-        for d in [7, 14, 30, 60, 90]
+        for d in [1, 2, 3, 4, 5, 7, 14, 30]
     )
 
     # ── Tier bar chart data ───────────────────────────────────────────────────
@@ -1499,9 +1503,9 @@ def performance_html():
         '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-top:24px">'
         '<details open>'
         '<summary style="cursor:pointer;font-size:1.05em;font-weight:600;color:#e6edf3;list-style:none">'
-        '<span class="arr">&#9654;</span> Sharp Action vs Model — Head to Head'
+        '<span class="arr">&#9654;</span> Sharp Action vs Model — Last 3 Days'
         '</summary>'
-        '<p style="color:#8b949e;font-size:0.9em;margin:8px 0 16px">Games where STEAM sharp action contradicted the model pick. Shows who was right.</p>'
+        '<p style="color:#8b949e;font-size:0.9em;margin:8px 0 16px">Yesterday\'s games where STEAM steam contradicted the model. For rolling totals see Market Signal Breakdown above.</p>'
         + _summary_bar +
         '<table style="width:100%;border-collapse:collapse;font-size:0.9em">'
         '<thead><tr style="color:#8b949e;border-bottom:1px solid #30363d">'

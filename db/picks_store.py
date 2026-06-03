@@ -580,11 +580,11 @@ def get_player_trailing_hit_rate(player_name: str, prop_type: str,
             return None
 
 
-def get_sharp_vs_model(days: int = 30) -> list:
+def get_sharp_vs_model(days: int = 3) -> list:
     """
-    Returns rows where sharp STEAM action contradicted the model ML pick.
-    Joins picks (model pick + result) with scored_games (sharp_side, ml_signal).
-    For each row: date, game, model_pick, sharp_pick, result, who_was_right.
+    Returns yesterday's games where STEAM sharp action contradicted the model ML pick.
+    Always shows the last `days` days (default 3) regardless of the page day-toggle,
+    since Market Signal Breakdown already covers the rolling aggregate view.
     """
     with db_conn() as conn:
         if conn is None:
