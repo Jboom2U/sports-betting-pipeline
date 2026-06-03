@@ -592,7 +592,7 @@ def get_sharp_vs_model(days: int = 30) -> list:
                 SELECT
                     p.pick_date,
                     p.game,
-                    p.label      AS model_label,
+                    p.label           AS model_label,
                     sg.sharp_side,
                     sg.ml_signal,
                     p.tier,
@@ -605,13 +605,13 @@ def get_sharp_vs_model(days: int = 30) -> list:
                     END AS who_was_right
                 FROM picks p
                 JOIN scored_games sg
-                  ON sg.game_date = p.pick_date
-                 AND sg.game_label = p.game
+                  ON sg.score_date = p.pick_date
+                 AND sg.game_id    = p.game_id
                 WHERE p.pick_type = 'ML'
                   AND sg.ml_signal = 'STEAM'
                   AND sg.sharp_side IS NOT NULL
                   AND sg.sharp_side <> ''
-                  AND sg.sharp_side NOT IN (p.label)
+                  AND sg.sharp_side <> p.team
                   AND p.pick_date >= CURRENT_DATE - INTERVAL '%s days'
                   AND p.actual_result IN ('WIN', 'LOSS', 'PUSH')
                 ORDER BY p.pick_date DESC

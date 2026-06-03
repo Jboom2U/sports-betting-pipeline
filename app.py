@@ -17,7 +17,7 @@ import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import Flask, Response, redirect, request
+from flask import Flask, Response, redirect, request, jsonify
 from flask_compress import Compress
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -58,6 +58,14 @@ _cache = {
     "html":         None,
     "generated_at": 0,
     "generating":   False,
+}
+
+# Stores scheduled times so the dashboard can surface them
+_schedule_state = {
+    "next_pipeline_et":  None,   # datetime — next 6am ET pipeline
+    "next_refresh_et":   None,   # datetime — next adaptive refresh (2h before first pitch)
+    "first_pitch_et":    None,   # datetime — earliest first pitch today
+    "lineup_check_et":   None,   # datetime — next lineup check (every 30 min until confirmed)
 }
 
 WARMING_HTML = """<!DOCTYPE html><html><head>
@@ -674,6 +682,28 @@ def health():
         "regenerating":      generating,
         "date":              datetime.now(ET).strftime("%Y-%m-%d %H:%M ET"),
     }
+
+
+@app.route("/schedule-status")
+def schedule_status():
+    """JSON endpoint: next scheduled pipeline run, adaptive refresh, first pitch."""
+    now = datetime.now(ET)
+    def _fmt(dt):
+        if dt is None:
+            return None
+        diff = (dt - now).total_seconds()
+        if diff < 0:
+            return {"time": dt.strftime("%-I:%M %p ET"), "in_seconds": int(diff), "label": "passed"}
+        h = int(diff // 3600)
+        m = int((diff % 3600) // 60)
+        label = f"in {h}h {m}m" if h > 0 else f"in {m}m"
+        return {"time": dt.strftime("%-I:%M %p ET"), "in_seconds": int(diff), "label": label}
+
+    return jsonify({
+        "next_pipeline":   _fmt(_schedule_state.get("next_pipeline_et")),
+        "next_refresh":    _fmt(_schedule_state.get("next_refresh_et")),
+        "first_pitch":     _fmt(_schedule_state.get("first_pitch_et")),
+    })
 
 
 @app.route("/status")
@@ -1408,8 +1438,6 @@ def performance_html():
 
   {_monthly_section_html}
 
-  {_sharp_section_html}
-
 </body>
 </html>"""
 
@@ -1488,6 +1516,9 @@ def performance_html():
         '</table></div></details></div>'
     )
 
+    # Append sharp section after html is built (can't reference in f-string before it's defined)
+    html = html.replace("</body>", _sharp_section_html + "\n</body>", 1)
+
     return Response(html, content_type="text/html; charset=utf-8")
 
 
@@ -1506,6 +1537,7 @@ def _start_daily_scheduler():
     def _loop():
         while True:
             wait = _seconds_until_6am_et()
+            _schedule_state["next_pipeline_et"] = datetime.now(ET) + timedelta(seconds=wait)
             log.info(f"Daily pipeline scheduled in {wait/3600:.1f}h (6am ET).")
             time.sleep(wait)
             log.info("=== 6am ET scheduled pipeline starting ===")
@@ -1656,6 +1688,9 @@ def _schedule_adaptive_refresh():
         else:
             log.info("Adaptive refresh: first pitch already started -- skipping.")
             return
+
+    _schedule_state["first_pitch_et"]  = earliest_et
+    _schedule_state["next_refresh_et"] = target_et
 
     log.info(
         f"Adaptive refresh scheduled for {target_et.strftime('%I:%M %p ET')} "

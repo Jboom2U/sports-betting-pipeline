@@ -1483,6 +1483,32 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <div id="refreshStatus"></div>
 </div>
 
+<!-- Schedule Status Bar -->
+<div id="scheduleBar" style="background:#161b22;border-bottom:1px solid #30363d;padding:6px 16px;display:flex;gap:24px;font-size:0.82em;color:#8b949e;flex-wrap:wrap">
+  <span>⏰ <b style="color:#e6edf3">Next pipeline:</b> <span id="sched-pipeline">loading...</span></span>
+  <span>🔄 <b style="color:#e6edf3">Lineup refresh:</b> <span id="sched-refresh">loading...</span></span>
+  <span>⚾ <b style="color:#e6edf3">First pitch:</b> <span id="sched-pitch">loading...</span></span>
+</div>
+<script>
+(function() {
+  function loadSchedule() {
+    fetch('/schedule-status').then(r => r.json()).then(d => {
+      var p = d.next_pipeline;
+      var r = d.next_refresh;
+      var fp = d.first_pitch;
+      document.getElementById('sched-pipeline').textContent = p ? (p.time + ' (' + p.label + ')') : '6am ET daily';
+      document.getElementById('sched-refresh').textContent  = r ? (r.time + ' (' + r.label + ')') : 'after 6am pipeline';
+      document.getElementById('sched-pitch').textContent    = fp ? fp.time : '—';
+    }).catch(function() {
+      document.getElementById('sched-pipeline').textContent = '6am ET daily';
+      document.getElementById('sched-refresh').textContent  = 'after 6am pipeline';
+    });
+  }
+  loadSchedule();
+  setInterval(loadSchedule, 60000);
+})();
+</script>
+
 <div class="ticker-wrap" id="scoreTicker">
   <div class="ticker-label">⚾ Scores</div>
   <div class="ticker-outer">
