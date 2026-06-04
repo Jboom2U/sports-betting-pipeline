@@ -1011,24 +1011,55 @@ def performance_html():
             pass
 
     _graded_picks_y = []
+    _game_scores_y  = {}   # (away_nick, home_nick) -> "Winner Name"
+    # Try DB first — fetch ALL ML picks + scores
     try:
         from db.connection import get_conn
         _conn = get_conn()
         if _conn:
             with _conn.cursor() as _cur:
+                # All ML picks for yesterday (any tier) + final scores
                 _cur.execute(
-                    "SELECT game, team, pick_type, tier, conf, actual_result "
+                    "SELECT game, team, pick_type, tier, conf, actual_result, away_final, home_final "
                     "FROM picks WHERE pick_date = %s AND pick_type = %s",
                     (_yesterday, "ML")
                 )
-                _graded_picks_y = [
-                    {"game": r[0], "team": r[1], "pick_type": r[2],
-                     "tier": r[3], "conf": r[4], "result": r[5]}
-                    for r in _cur.fetchall()
-                ]
+                for _r in _cur.fetchall():
+                    _graded_picks_y.append({
+                        "game": _r[0], "team": _r[1], "pick_type": _r[2],
+                        "tier": _r[3], "conf": _r[4], "result": _r[5],
+                        "away_final": _r[6], "home_final": _r[7],
+                    })
+                    # Build game scores lookup from any row that has final scores
+                    if _r[6] is not None and _r[7] is not None:
+                        _parts = (_r[0] or "").split(" @ ")
+                        if len(_parts) == 2:
+                            _ak = _parts[0].split()[-1].lower()
+                            _hk = _parts[1].split()[-1].lower()
+                            _winner_name = _parts[0] if int(_r[6]) > int(_r[7]) else _parts[1]
+                            _game_scores_y[(_ak, _hk)] = _winner_name
             _conn.close()
-    except Exception:
-        pass
+    except Exception as _e:
+        log.warning(f"Sharp table DB query failed: {_e}")
+    # Fallback: load from analysis JSON (populated by run_analysis.py)
+    if not _graded_picks_y:
+        import json as _json2
+        _analysis_path = os.path.join(BASE_DIR, "picks", f"mlb_analysis_{_yesterday}.json")
+        if os.path.exists(_analysis_path):
+            try:
+                with open(_analysis_path, encoding="utf-8") as _f:
+                    _analysis_data = _json2.load(_f)
+                for _p in _analysis_data.get("graded_picks", []):
+                    if _p.get("type","") == "ML" or _p.get("pick_type","") == "ML":
+                        _graded_picks_y.append({
+                            "game":   _p.get("game",""),
+                            "team":   _p.get("label","").replace(" ML","").replace(" ml",""),
+                            "tier":   _p.get("tier",""),
+                            "conf":   _p.get("conf", 0),
+                            "result": _p.get("result",""),
+                        })
+            except Exception as _e2:
+                log.warning(f"Sharp table analysis JSON fallback failed: {_e2}")
 
     def _nick(name):
         return (name or "").split()[-1].lower() if name else ""
@@ -1068,7 +1099,8 @@ def performance_html():
                 break
 
         if _matched_pick:
-            _conf_pct = f"{float(_matched_pick.get('conf') or 0):.0f}%"
+            _conf_raw = float(_matched_pick.get('conf') or 0)
+            _conf_pct = f"{_conf_raw * 100:.0f}%" if _conf_raw <= 1 else f"{_conf_raw:.0f}%"
             _tier_colors = {"LOCK":"#ffc107","STRONG":"#42a5f5","LEAN":"#66bb6a"}
             _tc = _tier_colors.get(_matched_pick.get("tier",""), "#8b949e")
             _model_pick_str = (f"<span style='color:{_tc}'>{_matched_pick.get('tier','')}</span> "
@@ -1113,6 +1145,21 @@ def performance_html():
                     else: _sharp_model_l+=1
         elif _sharp_sd:
             _model_pick_str = "<span style='color:#8b949e'>Pass</span>"
+
+        # For rows with no result yet, try game scores lookup (covers TOSSUP + ungraded)
+        if _result_str == "—":
+            _score_key = (_nick(_away), _nick(_home))
+            _actual_winner = _game_scores_y.get(_score_key, "")
+            if _actual_winner:
+                _result_str   = _actual_winner.split()[-1]
+                _result_color = "#e6edf3"
+                _sharp_nick   = _nick(_sharp_sd)
+                _winner_nick  = _nick(_actual_winner)
+                if _sharp_sd:
+                    if _sharp_nick == _winner_nick:
+                        _winner_str = "⚡ Sharp"; _winner_color="#ffa726"; _sharp_sharp_w+=1
+                    else:
+                        _winner_str = "✗ Sharp"; _winner_color="#f85149"; _sharp_sharp_l+=1
 
         _sharp_cell = _sharp_sd or "<span style='color:#8b949e'>—</span>"
         _move_note = ""
