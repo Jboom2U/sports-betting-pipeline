@@ -17,7 +17,7 @@ import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import Flask, Response, redirect, request, jsonify
+from flask import Flask, Response, redirect, request
 from flask_compress import Compress
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -27,12 +27,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 log = logging.getLogger(__name__)
-
-# ── Alerting (non-fatal — silently disabled if ALERT_EMAIL_* vars not set) ────
-try:
-    from alerts import send_alert as _send_alert
-except ImportError:
-    def _send_alert(subject, body="", exc=None): pass
 
 # ── Persistence layer (non-fatal — works without DATABASE_URL / STORAGE_*) ────
 try:
@@ -58,14 +52,6 @@ _cache = {
     "html":         None,
     "generated_at": 0,
     "generating":   False,
-}
-
-# Stores scheduled times so the dashboard can surface them
-_schedule_state = {
-    "next_pipeline_et":  None,   # datetime — next 6am ET pipeline
-    "next_refresh_et":   None,   # datetime — next adaptive refresh (2h before first pitch)
-    "first_pitch_et":    None,   # datetime — earliest first pitch today
-    "lineup_check_et":   None,   # datetime — next lineup check (every 30 min until confirmed)
 }
 
 WARMING_HTML = """<!DOCTYPE html><html><head>
@@ -124,17 +110,6 @@ def _run_full_pipeline():
         log.info("Pipeline complete.")
     except Exception as e:
         log.error(f"Pipeline failed: {e}", exc_info=True)
-        _send_alert(
-            "6am pipeline FAILED",
-            f"The morning pipeline crashed — today's picks may not have generated.\n\nError: {e}",
-            exc=e,
-        )
-
-    # Schedule afternoon refresh 2 hours before first pitch (one-shot, non-fatal)
-    try:
-        _schedule_adaptive_refresh()
-    except Exception as _sar_e:
-        log.warning(f"Adaptive refresh scheduling failed (non-fatal): {_sar_e}")
 
     # Grade yesterday's picks and push results to DB (non-fatal)
     yesterday = (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -187,25 +162,12 @@ def _needs_odds_snapshot() -> bool:
 def _run_odds_snapshot():
     """Take a fresh odds + Kalshi snapshot. Non-fatal — powers the Sharp Action panel."""
     log.info("Taking mid-day odds + Kalshi snapshot...")
-    odds_ok = False
     try:
         from scrapers.mlb_odds_scraper import run as run_odds
         result = run_odds()
         log.info(f"Odds snapshot complete: {result}")
-        if not result.get("quota_exceeded") and result.get("snapshots", 0) > 0:
-            odds_ok = True
     except Exception as e:
         log.warning(f"Odds snapshot failed (non-fatal): {e}")
-
-    if not odds_ok:
-        # Odds API unavailable or quota exhausted — try Pinnacle (no auth, no quota)
-        try:
-            from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
-            pin_result = run_pinnacle()
-            log.info(f"Pinnacle mid-day snapshot: {pin_result}")
-        except Exception as pe:
-            log.warning(f"Pinnacle mid-day snapshot failed (non-fatal): {pe}")
-
     try:
         from scrapers.mlb_kalshi_scraper import run as run_kalshi
         k_result = run_kalshi()
@@ -269,13 +231,6 @@ def _run_lineup_refresh():
         lineups  = run_lineups(target_date=today)
         confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
         log.info(f"Lineup refresh: {len(lineups)} games, {confirmed} confirmed")
-        # Alert if it's past 3pm ET and still zero confirmed lineups
-        if confirmed == 0 and len(lineups) > 0 and datetime.now(ET).hour >= 15:
-            _send_alert(
-                "Lineup scraper: 0 confirmed lineups after 3pm ET",
-                f"The lineup scraper returned {len(lineups)} games but 0 confirmed lineups.\n"
-                "Player props and lineup-adjusted picks may be missing or stale.",
-            )
         if confirmed > 0:
             from scrapers.mlb_hitter_scraper import run as run_hitters
             run_hitters(target_date=today)
@@ -409,9 +364,10 @@ def _regenerate_in_background():
     def _worker():
         started = time.time()
         try:
-            # Odds snapshots run only via the adaptive refresh (2h before first pitch)
-            # and the 6am pipeline — NOT on every cache cycle. Keeps Odds API usage
-            # to ~2 pulls/day (~60/month) instead of the old every-2-hour loop.
+            # Mid-day odds snapshot — every 2 hours between 8am-10pm ET
+            # Builds the line movement data that powers the Sharp Money panel
+            if _needs_odds_snapshot():
+                _run_odds_snapshot()
             # Mid-day lineup refresh — after 10am when lineups post
             if _needs_lineup_refresh():
                 _run_lineup_refresh()
@@ -420,13 +376,11 @@ def _regenerate_in_background():
                 if html is not None:
                     # Fresh full dashboard — update the cache.
                     _cache["html"] = html
-                    _cache["r2_seeded"] = False
                     log.info(f"Background cache refresh complete in {int(time.time()-started)}s.")
                 elif _cache["html"] is not None:
                     # main() returned None (games started / no upcoming slate) but we
                     # already have the rich morning dashboard in cache — keep it so the
                     # site stays populated all day without reverting to a stripped-down page.
-                    _cache.pop("r2_seeded", None)
                     log.info(
                         "Dashboard generation returned None — preserving existing cached "
                         f"dashboard ({int(time.time()-started)}s). Site stays populated."
@@ -440,11 +394,6 @@ def _regenerate_in_background():
                 _cache["generating"] = False
         except Exception as e:
             log.error(f"Background generation failed: {e}", exc_info=True)
-            _send_alert(
-                "Dashboard generation failed",
-                f"The dashboard cache refresh crashed — site may be serving stale picks.\n\nError: {e}",
-                exc=e,
-            )
             with _cache_lock:
                 _cache["generating"] = False
         except BaseException as e:
@@ -504,9 +453,7 @@ def get_cached_html() -> str:
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
-    resp = Response(get_cached_html(), content_type="text/html; charset=utf-8")
-    resp.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=60"
-    return resp
+    return Response(get_cached_html(), content_type="text/html; charset=utf-8")
 
 
 @app.route("/refresh")
@@ -529,37 +476,6 @@ def force_odds():
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
     return {"status": "ok", "message": "Odds snapshot started — dashboard will refresh automatically in ~60 seconds."}
-
-
-@app.route("/force-statcast")
-def force_statcast():
-    """Force a fresh Statcast pitcher scrape, upload to R2, rebuild dashboard."""
-    def _worker():
-        try:
-            from scrapers.mlb_statcast_pitcher_scraper import run as run_psc
-            result = run_psc()
-            log.info(f"Force-statcast complete: {result}")
-        except Exception as e:
-            log.warning(f"Force-statcast pitcher failed: {e}")
-        try:
-            from scrapers.mlb_statcast_scraper import run as run_sc
-            result2 = run_sc()
-            log.info(f"Force-statcast batters complete: {result2}")
-        except Exception as e:
-            log.warning(f"Force-statcast batters failed: {e}")
-        try:
-            from db.csv_sync import upload_all, storage_available
-            if storage_available():
-                n = upload_all()
-                log.info(f"Statcast CSVs uploaded to R2: {n} file(s)")
-        except Exception as e:
-            log.warning(f"Statcast R2 upload failed: {e}")
-        with _cache_lock:
-            _cache["generated_at"] = 0
-        _regenerate_in_background()
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-    return {"status": "ok", "message": "Statcast scrape started — dashboard will refresh in ~90 seconds."}
 
 
 @app.route("/debug-odds")
@@ -649,28 +565,6 @@ def force_pipeline():
     }
 
 
-
-@app.route("/force-html")
-def force_html():
-    """
-    Force an immediate HTML rebuild using existing data — no scraping.
-    Use after a code deploy with template changes when you want to see the
-    new layout without waiting for the next pipeline run.
-    Visit /force-html, wait ~60 seconds, then hard-refresh the home page.
-    """
-    with _cache_lock:
-        _cache["generated_at"] = 0
-        _cache["generating"]   = False
-    _regenerate_in_background()
-    return {
-        "status":  "ok",
-        "message": (
-            "Dashboard is rebuilding from existing data. "
-            "Wait ~60 seconds then hard-refresh statalizers.com."
-        ),
-    }
-
-
 @app.route("/health")
 def health():
     with _cache_lock:
@@ -682,28 +576,6 @@ def health():
         "regenerating":      generating,
         "date":              datetime.now(ET).strftime("%Y-%m-%d %H:%M ET"),
     }
-
-
-@app.route("/schedule-status")
-def schedule_status():
-    """JSON endpoint: next scheduled pipeline run, adaptive refresh, first pitch."""
-    now = datetime.now(ET)
-    def _fmt(dt):
-        if dt is None:
-            return None
-        diff = (dt - now).total_seconds()
-        if diff < 0:
-            return {"time": dt.strftime("%-I:%M %p ET"), "in_seconds": int(diff), "label": "passed"}
-        h = int(diff // 3600)
-        m = int((diff % 3600) // 60)
-        label = f"in {h}h {m}m" if h > 0 else f"in {m}m"
-        return {"time": dt.strftime("%-I:%M %p ET"), "in_seconds": int(diff), "label": label}
-
-    return jsonify({
-        "next_pipeline":   _fmt(_schedule_state.get("next_pipeline_et")),
-        "next_refresh":    _fmt(_schedule_state.get("next_refresh_et")),
-        "first_pitch":     _fmt(_schedule_state.get("first_pitch_et")),
-    })
 
 
 @app.route("/status")
@@ -815,10 +687,19 @@ def status():
         cache_label = "Not yet generated"
 
     # ── Next snapshot ────────────────────────────────────────────────────────
-    # Odds snapshots only run via the 6am pipeline and adaptive refresh
-    # (2 hours before first pitch). No automatic every-2-hour loop.
-    next_label = "Adaptive refresh only (2h before first pitch)"
-    next_detail = "Manual: statalizers.com/force-odds"
+    if snap_times:
+        try:
+            from datetime import timezone as _tz2
+            last_t  = datetime.strptime(snap_times[-1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tz2.utc)
+            next_t  = last_t.astimezone(ET) + timedelta(hours=2)
+            if next_t <= now:
+                next_label = "Overdue — fires on next dashboard visit"
+            else:
+                next_label = next_t.strftime("%-I:%M %p ET")
+        except Exception:
+            next_label = "~2 hours after last snapshot"
+    else:
+        next_label = "Waiting for first snapshot"
 
     # ── Render ───────────────────────────────────────────────────────────────
     def status_row(label, value, ok=None, detail=""):
@@ -876,7 +757,7 @@ body{{background:#07090f;color:#e2e8f0;font-family:'Inter',sans-serif;min-height
     <div class="card-hdr">Odds &amp; Line Movement</div>
     {status_row("Snapshots Today", f"{snap_count} snapshot{'s' if snap_count != 1 else ''}",
                 snaps_ok, snaps_str)}
-    {status_row("Next Snapshot", next_label, None, next_detail)}
+    {status_row("Next Snapshot", next_label, None, "Every 2 hours, 8am–10pm ET")}
     {status_row("Line Movement File", mv_label, mv_ok if snap_count >= 2 else None)}
   </div>
 
@@ -925,7 +806,7 @@ def performance():
 
     # JSON API path (backward compatible)
     try:
-        days = int(request.args.get("days", 1))
+        days = int(request.args.get("days", 30))
     except (TypeError, ValueError):
         days = 30
     try:
@@ -962,32 +843,6 @@ def performance_html():
     except Exception as e:
         rows = []
 
-    try:
-        from db.picks_store import get_accuracy_by_market_signal, get_monthly_accuracy
-        mkt_signal_rows = get_accuracy_by_market_signal(days=days) or []
-        monthly_rows    = get_monthly_accuracy() or []
-    except Exception:
-        mkt_signal_rows = []
-        monthly_rows    = []
-
-    try:
-        from db.picks_store import get_sharp_vs_model
-        # Always show last 3 days — independent of the page day-toggle.
-        # Rolling aggregate is already covered by Market Signal Breakdown above.
-        sharp_vs_model_rows = get_sharp_vs_model(days=3) or []
-    except Exception:
-        sharp_vs_model_rows = []
-
-    # ── Yesterday picks ──────────────────────────────────
-    yesterday_picks = []
-    try:
-        from datetime import timedelta
-        from db.picks_store import get_picks
-        _yday = (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
-        yesterday_picks = get_picks(_yday) or []
-    except Exception:
-        yesterday_picks = []
-
     # ── Aggregate stats ───────────────────────────────────────────────────────
     total_w = sum(r.get("wins",   0) or 0 for r in rows)
     total_l = sum(r.get("losses", 0) or 0 for r in rows)
@@ -1003,12 +858,10 @@ def performance_html():
 
     # ── Day toggle links ──────────────────────────────────────────────────────
     days_links = "".join(
-        '<a href="/performance-html?days={d}" {cls}>{label}</a>'.format(
-            d=d,
-            label=("Yesterday" if d == 1 else f"{d} days"),
-            cls='class="active"' if d == days else ""
+        '<a href="/performance-html?days={d}" {cls}>{d}d</a>'.format(
+            d=d, cls='class="active"' if d == days else ""
         )
-        for d in [1, 2, 3, 4, 5, 7, 14, 30]
+        for d in [7, 14, 30, 60, 90]
     )
 
     # ── Tier bar chart data ───────────────────────────────────────────────────
@@ -1141,6 +994,155 @@ def performance_html():
         '<tr><td colspan="5" style="color:#8b949e;padding:14px">Need 5+ picks per player to show.</td></tr>'
     )
 
+    # -- Yesterday's Sharp Action ------------------------------------------------
+    import csv as _csv2
+    _yesterday = (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    _mv_path_y = os.path.join(CLEAN_DIR, f"mlb_line_movement_{_yesterday}.csv")
+    _mv_games = {}
+    if os.path.exists(_mv_path_y):
+        try:
+            with open(_mv_path_y, encoding="utf-8") as _f:
+                for _r in _csv2.DictReader(_f):
+                    _k = (_r.get("away_team",""), _r.get("home_team",""))
+                    if _k not in _mv_games or _r.get("snap2_time","") > _mv_games[_k].get("snap2_time",""):
+                        _mv_games[_k] = _r
+        except Exception:
+            pass
+
+    _graded_picks_y = []
+    try:
+        from db.connection import get_conn
+        _conn = get_conn()
+        if _conn:
+            with _conn.cursor() as _cur:
+                _cur.execute(
+                    "SELECT game, team, pick_type, tier, conf, actual_result "
+                    "FROM picks WHERE pick_date = %s AND pick_type = %s",
+                    (_yesterday, "ML")
+                )
+                _graded_picks_y = [
+                    {"game": r[0], "team": r[1], "pick_type": r[2],
+                     "tier": r[3], "conf": r[4], "result": r[5]}
+                    for r in _cur.fetchall()
+                ]
+            _conn.close()
+    except Exception:
+        pass
+
+    def _nick(name):
+        return (name or "").split()[-1].lower() if name else ""
+
+    _pick_by_game = {}
+    for _p in _graded_picks_y:
+        _pick_by_game[_p.get("game","")] = _p
+
+    _sharp_rows_html = ""
+    _sharp_model_w = _sharp_model_l = _sharp_sharp_w = _sharp_sharp_l = 0
+
+    for (_away, _home), _mv in sorted(_mv_games.items()):
+        _ml_sig   = _mv.get("ml_signal","")
+        _tot_sig  = _mv.get("total_signal","")
+        _ml_move  = abs(float(_mv.get("ml_away_move") or 0))
+        _tot_move = abs(float(_mv.get("total_move") or 0))
+        _sharp_sd = _mv.get("sharp_side","")
+
+        if _ml_move < 1 and _tot_move < 0.2 and _ml_sig == "STABLE" and _tot_sig == "STABLE":
+            continue
+
+        _sig_label = (_ml_sig if _ml_sig in ("STEAM","DRIFT") else
+                      _tot_sig if _tot_sig in ("STEAM","DRIFT") else "MOVE")
+        _sig_color = ("#ef5350" if _sig_label=="STEAM" else
+                      "#ffa726" if _sig_label=="DRIFT" else "#8b949e")
+
+        _model_pick_str = "—"
+        _result_str = "—"
+        _winner_str = "—"
+        _result_color = "#8b949e"
+        _winner_color = "#8b949e"
+
+        _matched_pick = None
+        for _gk, _pp in _pick_by_game.items():
+            if _away in _gk and _home in _gk:
+                _matched_pick = _pp
+                break
+
+        if _matched_pick:
+            _conf_pct = f"{float(_matched_pick.get('conf') or 0):.0f}%"
+            _tier_colors = {"LOCK":"#ffc107","STRONG":"#42a5f5","LEAN":"#66bb6a"}
+            _tc = _tier_colors.get(_matched_pick.get("tier",""), "#8b949e")
+            _model_pick_str = (f"<span style='color:{_tc}'>{_matched_pick.get('tier','')}</span> "
+                               f"{_matched_pick.get('team','')} ({_conf_pct})")
+            _actual = (_matched_pick.get("result") or "").upper()
+            if _actual in ("WIN","LOSS"):
+                _result_str = _actual
+                _result_color = "#3fb950" if _actual=="WIN" else "#f85149"
+                _model_nick = _nick(_matched_pick.get("team",""))
+                _sharp_nick = _nick(_sharp_sd)
+                if _sharp_sd and _model_nick == _sharp_nick:
+                    _winner_str = "Both" if _actual=="WIN" else "Neither"
+                    _winner_color = "#3fb950" if _actual=="WIN" else "#f85149"
+                    if _actual=="WIN": _sharp_model_w+=1; _sharp_sharp_w+=1
+                    else: _sharp_model_l+=1; _sharp_sharp_l+=1
+                elif _sharp_sd:
+                    if _actual=="WIN":
+                        _winner_str = "✓ Model"; _winner_color="#3fb950"
+                        _sharp_model_w+=1; _sharp_sharp_l+=1
+                    else:
+                        _winner_str = "⚡ Sharp"; _winner_color="#ffa726"
+                        _sharp_model_l+=1; _sharp_sharp_w+=1
+                else:
+                    _winner_str = "✓ Model" if _actual=="WIN" else "✗ Model"
+                    _winner_color = "#3fb950" if _actual=="WIN" else "#f85149"
+                    if _actual=="WIN": _sharp_model_w+=1
+                    else: _sharp_model_l+=1
+        elif _sharp_sd:
+            _model_pick_str = "<span style='color:#8b949e'>Pass</span>"
+
+        _sharp_cell = _sharp_sd or "<span style='color:#8b949e'>—</span>"
+        _move_note = ""
+        if _ml_move >= 1:
+            _move_note = f" <span style='font-size:.68rem;color:#8b949e'>({_mv.get('ml_away_open','?')}→{_mv.get('ml_away_now','?')})</span>"
+
+        _sharp_rows_html += (
+            f"<tr>"
+            f"<td>{_away} @ {_home}{_move_note}</td>"
+            f"<td style='color:{_sig_color};font-weight:700'>{_sig_label}</td>"
+            f"<td>{_sharp_cell}</td>"
+            f"<td>{_model_pick_str}</td>"
+            f"<td style='color:{_result_color};font-weight:700'>{_result_str}</td>"
+            f"<td style='color:{_winner_color};font-weight:700'>{_winner_str}</td>"
+            f"</tr>\n"
+        )
+
+    _sm_d = _sharp_model_w + _sharp_model_l
+    _ss_d = _sharp_sharp_w + _sharp_sharp_l
+    _sm_str = f"{_sharp_model_w}/{_sm_d} ({_sharp_model_w/_sm_d*100:.0f}%)" if _sm_d>0 else "—"
+    _ss_str = f"{_sharp_sharp_w}/{_ss_d} ({_sharp_sharp_w/_ss_d*100:.0f}%)" if _ss_d>0 else "—"
+
+    if not _sharp_rows_html:
+        _sharp_rows_html = "<tr><td colspan='6' style='color:#8b949e;padding:14px'>No movement data for yesterday.</td></tr>"
+
+    _sharp_section_html = (
+        f'<div class="secondary-section" style="margin-top:32px">' +
+        f'<div class="secondary-toggle" onclick="var b=this.nextElementSibling;' +
+        f'b.classList.toggle(\'open\');this.querySelector(\'.' +
+        f'arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">' +
+        f'<span class="arr">&#9654;</span> Yesterday\'s Sharp Action &mdash; {_yesterday}' +
+        f'</div><div class="secondary-body" style="margin-top:10px">' +
+        f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">' +
+        f'<div class="stat-card"><div class="stat-val">{_sm_str}</div>' +
+        f'<div class="stat-lbl">Model W/L (games with movement)</div></div>' +
+        f'<div class="stat-card"><div class="stat-val">{_ss_str}</div>' +
+        f'<div class="stat-lbl">Sharp W/L (games with sharp side)</div></div></div>' +
+        f'<div class="table-card"><table><thead><tr>' +
+        f'<th>Game</th><th>Signal</th><th>Sharp Side</th>' +
+        f'<th>Model Pick</th><th>Result</th><th>Winner</th>' +
+        f'</tr></thead><tbody>{_sharp_rows_html}</tbody></table></div>' +
+        f'</div></div>'
+    )
+
+
     _props_section_html = (
         '<div class="secondary-section" style="margin-top:32px">'
         '<div class="secondary-toggle" '
@@ -1174,154 +1176,6 @@ def performance_html():
         f'<tbody>{_player_body}</tbody></table></div></div></div>'
         '</div></div>'
     )
-
-    # ── Market Signal section HTML ─────────────────────────────────────────
-    _MKT_SIGNAL_ORDER = ["CONFIRM", "DIVERGE", "NEUTRAL"]
-    _MKT_SIGNAL_COLOR = {"CONFIRM": "#3fb950", "DIVERGE": "#f85149", "NEUTRAL": "#8b949e"}
-    _MKT_SIGNAL_ICON  = {"CONFIRM": "&#10003;", "DIVERGE": "&#10007;", "NEUTRAL": "&mdash;"}
-    _mkt_index = {r.get("market_signal"): r for r in mkt_signal_rows}
-    _mkt_rows_html = ""
-    for _sig in _MKT_SIGNAL_ORDER:
-        _rd  = _mkt_index.get(_sig, {})
-        _w4  = int(_rd.get("wins",   0) or 0)
-        _l4  = int(_rd.get("losses", 0) or 0)
-        _p4  = int(_rd.get("pushes", 0) or 0)
-        _d4  = _w4 + _l4
-        _wr4 = f"{_w4/_d4*100:.1f}%" if _d4 > 0 else "&mdash;"
-        _ac4 = f"{float(_rd.get('avg_conf') or 0)*100:.1f}%" if _rd else "&mdash;"
-        _clr = _MKT_SIGNAL_COLOR.get(_sig, "#8b949e")
-        _ico = _MKT_SIGNAL_ICON.get(_sig, "")
-        _mkt_rows_html += (
-            f"<tr><td style='color:{_clr};font-weight:600'>{_ico} {_sig}</td>"
-            f"<td style='color:#3fb950'>{_w4}</td>"
-            f"<td style='color:#f85149'>{_l4}</td>"
-            f"<td style='color:#8b949e'>{_p4}</td>"
-            f"<td><strong>{_wr4}</strong></td>"
-            f"<td style='color:#8b949e'>{_ac4}</td></tr>\n"
-        )
-    _no_mkt = "<tr><td colspan='6' style='color:#8b949e;padding:14px'>No graded data yet.</td></tr>"
-    _mkt_section_html = (
-        '<div class="secondary-section" style="margin-top:24px">'
-        '<div class="secondary-toggle" '
-        'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
-        'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">'
-        '<span class="arr">&#9654;</span> Market Signal Breakdown (Kalshi / Polymarket)'
-        '</div><div class="secondary-body">'
-        '<p style="color:#8b949e;font-size:.75rem;margin:10px 0">'
-        'CONFIRM = markets agreed with model &nbsp;&middot;&nbsp; '
-        'DIVERGE = markets disagreed &nbsp;&middot;&nbsp; '
-        'NEUTRAL = no market data</p>'
-        '<div class="table-card">'
-        '<table><thead><tr>'
-        '<th>Signal</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th>'
-        '</tr></thead>'
-        f'<tbody>{_mkt_rows_html or _no_mkt}</tbody>'
-        '</table></div></div></div>'
-    )
-
-    # ── Monthly Summary section HTML ───────────────────────────────────────
-    _monthly_rows_html = ""
-    for _mr in monthly_rows:
-        _mn5 = _mr.get("month", "")
-        _w5  = int(_mr.get("wins",   0) or 0)
-        _l5  = int(_mr.get("losses", 0) or 0)
-        _p5  = int(_mr.get("pushes", 0) or 0)
-        _d5  = _w5 + _l5
-        _wr5 = f"{_w5/_d5*100:.1f}%" if _d5 > 0 else "&mdash;"
-        _ac5 = f"{float(_mr.get('avg_conf') or 0)*100:.1f}%" if _mr else "&mdash;"
-        _e5  = (_w5/_d5*100 - 52.4) if _d5 > 0 else None
-        _es5 = (f"+{_e5:.1f}%" if _e5 >= 0 else f"{_e5:.1f}%") if _e5 is not None else "&mdash;"
-        _ec5 = "#3fb950" if (_e5 is not None and _e5 >= 0) else "#f85149"
-        _monthly_rows_html += (
-            f"<tr><td style='font-weight:600'>{_mn5}</td>"
-            f"<td style='color:#3fb950'>{_w5}</td>"
-            f"<td style='color:#f85149'>{_l5}</td>"
-            f"<td style='color:#8b949e'>{_p5}</td>"
-            f"<td><strong>{_wr5}</strong></td>"
-            f"<td style='color:{_ec5}'>{_es5}</td>"
-            f"<td style='color:#8b949e'>{_ac5}</td></tr>\n"
-        )
-    _no_monthly = "<tr><td colspan='7' style='color:#8b949e;padding:14px'>No graded data yet.</td></tr>"
-    _monthly_section_html = (
-        '<div class="secondary-section" style="margin-top:24px">'
-        '<div class="secondary-toggle" '
-        'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
-        'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">'
-        '<span class="arr">&#9654;</span> Monthly Performance Summary'
-        '</div><div class="secondary-body">'
-        '<div class="table-card" style="margin-top:10px">'
-        '<table><thead><tr>'
-        '<th>Month</th><th>W</th><th>L</th><th>Push</th>'
-        '<th>Win %</th><th>Edge vs -110</th><th>Avg Conf</th>'
-        '</tr></thead>'
-        f'<tbody>{_monthly_rows_html or _no_monthly}</tbody>'
-        '</table></div></div></div>'
-    )
-
-    # ── Yesterday section HTML ───────────────────────────────────
-    _TIER_ORDER_Y = ["LOCK", "STRONG", "LEAN", "TOSSUP"]
-    _TIER_COLOR_Y = {"LOCK": "#ffc107", "STRONG": "#42a5f5", "LEAN": "#66bb6a", "TOSSUP": "#a09ae0"}
-    _graded_yday  = [p for p in yesterday_picks if p.get("actual_result") in ("WIN", "LOSS", "PUSH")]
-    _yday_w       = sum(1 for p in _graded_yday if p.get("actual_result") == "WIN")
-    _yday_l       = sum(1 for p in _graded_yday if p.get("actual_result") == "LOSS")
-    _yday_p       = sum(1 for p in _graded_yday if p.get("actual_result") == "PUSH")
-
-    # Group by tier + pick_type
-    _yday_groups = {}
-    for _py in _graded_yday:
-        _key = (_py.get("tier", ""), _py.get("pick_type", ""))
-        if _key not in _yday_groups:
-            _yday_groups[_key] = {"w": 0, "l": 0, "p": 0}
-        _res = _py.get("actual_result")
-        if _res == "WIN":   _yday_groups[_key]["w"] += 1
-        elif _res == "LOSS": _yday_groups[_key]["l"] += 1
-        elif _res == "PUSH": _yday_groups[_key]["p"] += 1
-
-    _yday_badges = []
-    for _tier in _TIER_ORDER_Y:
-        for _ptype in ["ML", "TOTAL", "RL"]:
-            _gd = _yday_groups.get((_tier, _ptype))
-            if not _gd:
-                continue
-            _clr = _TIER_COLOR_Y.get(_tier, "#8b949e")
-            _rec = f"{_gd['w']}-{_gd['l']}"
-            if _gd["p"]:
-                _rec += f" P{_gd['p']}"
-            _yday_badges.append(
-                f'<span style="background:#161b22;border:1px solid {_clr}33;' +
-                f'border-radius:8px;padding:6px 12px;font-size:.8rem;white-space:nowrap">' +
-                f'<span style="color:{_clr};font-weight:700">{_tier}</span> ' +
-                f'<span style="color:#8b949e">{_ptype}</span> ' +
-                f'<span style="font-weight:600">{_rec}</span></span>'
-            )
-
-    if _graded_yday:
-        _yday_wr  = _yday_w / (_yday_w + _yday_l) * 100 if (_yday_w + _yday_l) > 0 else 0
-        _yday_hdr_color = "#3fb950" if _yday_wr >= 52.4 else "#f85149"
-        _yday_record_str = f"{_yday_w}-{_yday_l}"
-        if _yday_p:
-            _yday_record_str += f" ({_yday_p} push)"
-        _badges_html = " ".join(_yday_badges)
-        _yday_content = (
-            f'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">' +
-            f'<span style="font-size:1.3rem;font-weight:700;color:{_yday_hdr_color}">{_yday_record_str}</span>' +
-            f'<span style="color:#8b949e;font-size:.8rem">{_yday_wr:.1f}% win rate</span>' +
-            f'</div>' +
-            f'<div style="display:flex;gap:8px;flex-wrap:wrap">{_badges_html}</div>'
-        )
-    else:
-        _yday_content = '<p style="color:#8b949e;font-size:.83rem">No graded picks for yesterday yet — grades post after games finish.</p>'
-
-    _yday_label = (datetime.now(ET) - timedelta(days=1)).strftime("%A, %b %-d") if yesterday_picks else "Yesterday"
-    _yesterday_section_html = (
-        '<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;' +
-        'padding:16px 20px;margin-bottom:24px">' +
-        f'<div style="font-size:.72rem;font-weight:600;color:#8b949e;text-transform:uppercase;' +
-        f'letter-spacing:.06em;margin-bottom:10px">📅 Yesterday — {_yday_label}</div>' +
-        _yday_content +
-        '</div>'
-    )
-
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1383,8 +1237,6 @@ def performance_html():
   </div>
   <p class="sub">Last {days} days — graded picks only</p>
 
-  {_yesterday_section_html}
-
   <div class="days-nav">{days_links}</div>
 
   {empty_msg}
@@ -1436,119 +1288,12 @@ def performance_html():
     </div>
   </div>
 
+  {_sharp_section_html}
+
   {_props_section_html}
-
-  {_mkt_section_html}
-
-  {_monthly_section_html}
 
 </body>
 </html>"""
-
-    # ── Sharp vs Model section HTML ──────────────────────────────────────────
-    _sharp_rows_html = ""
-    _model_right = 0
-    _sharp_right = 0
-    _push_count  = 0
-    _steam_count = 0
-    _drift_count = 0
-
-    for _sr in sharp_vs_model_rows:
-        _date      = str(_sr.get("pick_date", ""))[:10]
-        _game      = _sr.get("game", "")
-        _model_lbl = _sr.get("model_label", "")
-        _model_team= _sr.get("model_team", "")
-        _sharp_side= _sr.get("sharp_side") or ""
-        _signal    = _sr.get("ml_signal", "")
-        _stance    = _sr.get("sharp_stance", "")
-        _result    = _sr.get("actual_result", "")
-        _winner    = _sr.get("who_was_right", "")
-        _conf_pct  = f"{float(_sr.get('conf', 0)) * 100:.0f}%"
-        _tier      = _sr.get("tier", "")
-
-        if _signal == "STEAM":
-            _steam_count += 1
-            _signal_badge = '<span style="background:#f0883e22;color:#f0883e;padding:2px 6px;border-radius:4px;font-size:0.8em;font-weight:700">STEAM</span>'
-        else:
-            _drift_count += 1
-            _signal_badge = '<span style="background:#58a6ff22;color:#58a6ff;padding:2px 6px;border-radius:4px;font-size:0.8em;font-weight:700">DRIFT</span>'
-
-        if _stance == "agree":
-            _sharp_display = f'<span style="color:#3fb950">✓ {_sharp_side} (agrees)</span>'
-        else:
-            _sharp_display = f'<span style="color:#f0883e">⚡ {_sharp_side} (fading model)</span>'
-
-        if _winner == "model":
-            _model_right += 1
-            _badge = '<span style="color:#3fb950;font-weight:600">✓ Model</span>'
-        elif _winner == "sharp":
-            _sharp_right += 1
-            _badge = '<span style="color:#f0883e;font-weight:600">⚡ Sharp</span>'
-        elif _winner == "neither":
-            _badge = '<span style="color:#f85149">✗ Neither</span>'
-        else:
-            _push_count += 1
-            _badge = '<span style="color:#8b949e">— Push</span>'
-
-        _tier_colors = {"LOCK": "#ffc107", "STRONG": "#42a5f5", "LEAN": "#66bb6a", "TOSSUP": "#a09ae0"}
-        _tc = _tier_colors.get(_tier, "#8b949e")
-        _result_color = "#3fb950" if _result == "WIN" else "#f85149" if _result == "LOSS" else "#8b949e"
-        _sharp_rows_html += (
-            f'<tr style="border-bottom:1px solid #21262d">'
-            f'<td style="color:#8b949e;padding:8px">{_date}</td>'
-            f'<td style="color:#e6edf3;padding:8px">{_game}</td>'
-            f'<td style="padding:8px"><span style="color:{_tc};font-weight:600">{_tier}</span> {_model_lbl} <span style="color:#8b949e;font-size:0.82em">({_conf_pct})</span></td>'
-            f'<td style="padding:8px">{_signal_badge}</td>'
-            f'<td style="padding:8px">{_sharp_display}</td>'
-            f'<td style="color:{_result_color};padding:8px;font-weight:600">{_result}</td>'
-            f'<td style="padding:8px">{_badge}</td>'
-            f'</tr>'
-        )
-
-    _total_sharp_games = len(sharp_vs_model_rows)
-    _graded = _model_right + _sharp_right
-    if _total_sharp_games > 0:
-        _model_pct = f"{_model_right / _graded * 100:.0f}%" if _graded > 0 else "—"
-        _sharp_pct = f"{_sharp_right / _graded * 100:.0f}%" if _graded > 0 else "—"
-        _summary_bar = (
-            f'<div style="display:flex;gap:20px;margin-bottom:14px;font-size:0.92em;flex-wrap:wrap">'
-            f'<span>Games with movement: <b style="color:#e6edf3">{_total_sharp_games}</b></span>'
-            f'<span style="color:#f0883e">STEAM: <b>{_steam_count}</b></span>'
-            f'<span style="color:#58a6ff">DRIFT: <b>{_drift_count}</b></span>'
-            f'<span style="color:#8b949e">|</span>'
-            f'<span>Model: <b style="color:#3fb950">{_model_right} ({_model_pct})</b></span>'
-            f'<span>Sharp: <b style="color:#f0883e">{_sharp_right} ({_sharp_pct})</b></span>'
-            f'</div>'
-        )
-    else:
-        _summary_bar = '<p style="color:#8b949e;margin:8px 0">No line movement data for this period — check back after games are graded.</p>'
-
-    _no_sharp = '<tr><td colspan="7" style="color:#8b949e;padding:16px">No movement data in this period.</td></tr>'
-    _sharp_section_html = (
-        '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-top:24px">'
-        '<details open>'
-        '<summary style="cursor:pointer;font-size:1.05em;font-weight:600;color:#e6edf3;list-style:none">'
-        '<span class="arr">&#9654;</span> Sharp Action vs Model — Last 3 Days'
-        '</summary>'
-        '<p style="color:#8b949e;font-size:0.9em;margin:8px 0 12px">All games with line movement — model pick, signal type, sharp side, and who was right.</p>'
-        + _summary_bar +
-        '<div style="overflow-x:auto">'
-        '<table style="width:100%;border-collapse:collapse;font-size:0.88em;min-width:700px">'
-        '<thead><tr style="color:#8b949e;border-bottom:2px solid #30363d;background:#0d1117">'
-        '<th style="text-align:left;padding:8px">Date</th>'
-        '<th style="text-align:left;padding:8px">Game</th>'
-        '<th style="text-align:left;padding:8px">Model Pick</th>'
-        '<th style="text-align:left;padding:8px">Signal</th>'
-        '<th style="text-align:left;padding:8px">Sharp Money</th>'
-        '<th style="text-align:left;padding:8px">Result</th>'
-        '<th style="text-align:left;padding:8px">Winner</th>'
-        '</tr></thead>'
-        f'<tbody>{_sharp_rows_html or _no_sharp}</tbody>'
-        '</table></div></details></div>'
-    )
-
-    # Append sharp section after html is built (can't reference in f-string before it's defined)
-    html = html.replace("</body>", _sharp_section_html + "\n</body>", 1)
 
     return Response(html, content_type="text/html; charset=utf-8")
 
@@ -1568,7 +1313,6 @@ def _start_daily_scheduler():
     def _loop():
         while True:
             wait = _seconds_until_6am_et()
-            _schedule_state["next_pipeline_et"] = datetime.now(ET) + timedelta(seconds=wait)
             log.info(f"Daily pipeline scheduled in {wait/3600:.1f}h (6am ET).")
             time.sleep(wait)
             log.info("=== 6am ET scheduled pipeline starting ===")
@@ -1582,10 +1326,20 @@ def _start_daily_scheduler():
     t.start()
 
 
+# ── Scheduled 11:30am ET afternoon refresh ──────────────────────────────────────────────
+def _seconds_until_1130am_et() -> float:
+    """Return seconds until next 11:30am Eastern Time."""
+    now    = datetime.now(ET)
+    target = now.replace(hour=11, minute=30, second=0, microsecond=0)
+    if now >= target:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
 def _run_afternoon_refresh():
     """Re-run lineup + hitter + odds + umpire + bullpen fatigue scrapers and rebuild dashboard."""
     today = datetime.now(ET).strftime("%Y-%m-%d")
-    log.info("=== Adaptive afternoon refresh starting ===")
+    log.info("=== 11:30am ET afternoon refresh starting ===")
 
     # Grade yesterday's picks first so Yesterday panel is ready
     try:
@@ -1595,17 +1349,6 @@ def _run_afternoon_refresh():
         log.info(f"Afternoon grading complete: {yesterday}")
     except Exception as e:
         log.warning(f"Afternoon grading failed (non-fatal): {e}")
-
-    # Refresh probable pitchers (rotation changes, scratches post at any time)
-    # Upserts schedule master CSV so stale 6am assignments get corrected before scoring
-    try:
-        from scrapers.mlb_scraper import fetch_schedule
-        from normalize.mlb_normalize import upsert_schedule_pitchers
-        fresh_sched = fetch_schedule(days_ahead=1)   # today + tomorrow
-        n_sp = upsert_schedule_pitchers(fresh_sched)
-        log.info(f"Afternoon probable pitchers refreshed: {n_sp} game(s) updated/inserted")
-    except Exception as e:
-        log.warning(f"Afternoon pitcher refresh failed (non-fatal): {e}")
 
     # Refresh odds
     try:
@@ -1657,7 +1400,7 @@ def _run_afternoon_refresh():
             run_hitters(target_date=today)
             log.info("Afternoon hitter stats refreshed")
         else:
-            log.info("No confirmed lineups yet — dashboard will retry automatically")
+            log.info("No confirmed lineups yet at 11:30am — dashboard will retry automatically")
     except Exception as e:
         log.warning(f"Afternoon lineup/hitter refresh failed (non-fatal): {e}")
 
@@ -1668,78 +1411,17 @@ def _run_afternoon_refresh():
     log.info("=== Afternoon refresh complete — dashboard rebuilding ===")
 
 
-def _schedule_adaptive_refresh():
-    """
-    Schedule today's afternoon refresh to fire 2 hours before the first pitch.
-    Called once at the end of the 6am pipeline. One-shot fire -- no recurring loop.
-    Replaces the hardcoded 11:30am scheduler and the every-2-hour odds loop.
-    API usage: 1 odds pull/day (~30/month) vs old ~7/day (~210/month).
-    """
-    import csv as _csv
-    from datetime import timezone as _tz
+def _start_afternoon_scheduler():
+    """Background thread that runs the afternoon refresh at 11:30am ET every day."""
+    def _loop():
+        while True:
+            wait = _seconds_until_1130am_et()
+            log.info(f"Afternoon refresh scheduled in {wait/3600:.1f}h (11:30am ET).")
+            time.sleep(wait)
+            _run_afternoon_refresh()
 
-    today      = datetime.now(ET).strftime("%Y-%m-%d")
-    sched_path = os.path.join(CLEAN_DIR, "mlb_schedule_master.csv")
-
-    earliest_et = None
-    try:
-        with open(sched_path, encoding="utf-8") as f:
-            for row in _csv.DictReader(f):
-                if row.get("game_date") != today:
-                    continue
-                utc_str = row.get("game_time_utc", "").strip()
-                if not utc_str:
-                    continue
-                try:
-                    game_utc = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tz.utc)
-                    game_et  = game_utc.astimezone(ET)
-                    if earliest_et is None or game_et < earliest_et:
-                        earliest_et = game_et
-                except ValueError:
-                    continue
-    except Exception as e:
-        log.warning(f"Adaptive refresh: could not read schedule CSV: {e}")
-
-    if earliest_et is None:
-        log.warning("Adaptive refresh: no game times found for today -- refresh not scheduled.")
-        return
-
-    target_et = earliest_et - timedelta(hours=2)
-    now_et    = datetime.now(ET)
-    wait_secs = (target_et - now_et).total_seconds()
-
-    if wait_secs < 0:
-        if now_et < earliest_et:
-            # Window passed but first pitch hasn't started -- run immediately
-            log.info(
-                f"Adaptive refresh target already passed -- running immediately "
-                f"(first pitch {earliest_et.strftime('%I:%M %p ET')})"
-            )
-            wait_secs = 0
-        else:
-            log.info("Adaptive refresh: first pitch already started -- skipping.")
-            _schedule_state["first_pitch_et"]  = earliest_et
-            _schedule_state["next_refresh_et"] = target_et
-            return
-
-    _schedule_state["first_pitch_et"]  = earliest_et
-    _schedule_state["next_refresh_et"] = target_et
-
-    log.info(
-        f"Adaptive refresh scheduled for {target_et.strftime('%I:%M %p ET')} "
-        f"(first pitch {earliest_et.strftime('%I:%M %p ET')}, "
-        f"{wait_secs/3600:.1f}h from now)"
-    )
-
-    def _fire():
-        if wait_secs > 0:
-            time.sleep(wait_secs)
-        log.info("=== Adaptive refresh firing -- 2 hours before first pitch ===")
-        _run_afternoon_refresh()
-
-    t = threading.Thread(target=_fire, daemon=True)
+    t = threading.Thread(target=_loop, daemon=True)
     t.start()
-
 
 
 # ── Startup ─────────────────────────────────────────────────────────────────────────────────────
@@ -1780,58 +1462,10 @@ def warm_cache():
         if _needs_pipeline_run():
             log.info("No pipeline data for today -- running full pipeline on startup...")
             _run_full_pipeline()
-            # _schedule_adaptive_refresh() is called inside _run_full_pipeline()
         else:
             log.info("Today's pipeline data exists -- skipping full pipeline run.")
-            # Container may have restarted mid-day (deploy/crash) and lost the afternoon
-            # refresh thread. Re-schedule it here so deploys after 6am don't silently
-            # kill the lineups + odds refresh. _schedule_adaptive_refresh() is a no-op
-            # if first pitch has already started.
-            try:
-                _schedule_adaptive_refresh()
-            except Exception as _sar_e:
-                log.warning(f"Adaptive refresh re-scheduling failed (non-fatal): {_sar_e}")
 
-        # ── Step 3b: Seed cache from R2 HTML ───────────────────────
-        # If Railway restarted mid-day after a deploy, the in-memory cache is gone but
-        # R2 has the HTML generated this morning. Seed the cache with it NOW so the site
-        # serves the full dashboard immediately. If fresh generation succeeds later, it
-        # replaces this. If generation returns None (games started / schedule gap), the
-        # existing logic in _regenerate_in_background already preserves the cache.
-        try:
-            from db.csv_sync import _get_client, _bucket
-            _r2 = _get_client()
-            if _r2:
-                import tempfile as _tmpmod
-                _today_str = datetime.now(ET).strftime("%Y-%m-%d")
-                for _r2_key in [
-                    f"picks/mlb_picks_{_today_str}.html",
-                    "picks/mlb_picks_latest.html",
-                ]:
-                    try:
-                        with _tmpmod.NamedTemporaryFile(suffix=".html", delete=False) as _tf:
-                            _tf_path = _tf.name
-                        _r2.download_file(_bucket(), _r2_key, _tf_path)
-                        with open(_tf_path, encoding="utf-8") as _f:
-                            _r2_html = _f.read()
-                        os.remove(_tf_path)
-                        if _r2_html:
-                            with _cache_lock:
-                                _cache["html"] = _r2_html
-                                # Set generated_at=0 so background regen always replaces this
-                                # with fresh HTML from the current code, even if _generate()
-                                # returns None (games started). The R2 HTML is just a stopgap
-                                # while regeneration runs (~60s after startup).
-                                _cache["generated_at"] = 0
-                                _cache["r2_seeded"] = True
-                            log.info(f"Startup: cache seeded from R2 ({_r2_key}) -- site ready immediately.")
-                            break
-                    except Exception:
-                        continue
-        except Exception as _r2e:
-            log.debug(f"R2 cache seed skipped: {_r2e}")
-
-        # -- Step 4: Dashboard cache
+        # ── Step 4: Dashboard cache ──────────────────────────────────────────────────────────────────────────────────
         log.info("Warming dashboard cache...")
         _regenerate_in_background()
 
@@ -1841,6 +1475,7 @@ def warm_cache():
 
 # Start schedulers and warm cache whether run via gunicorn or directly
 _start_daily_scheduler()
+_start_afternoon_scheduler()
 warm_cache()
 
 if __name__ == "__main__":
