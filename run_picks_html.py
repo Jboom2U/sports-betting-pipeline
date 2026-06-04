@@ -1552,6 +1552,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <button class="section-nav-btn" data-panel="panel-sharp">🔥 Sharp Action</button>
     <button class="section-nav-btn" data-panel="panel-hr-watch">💣 HR Watch</button>
     <button class="section-nav-btn" data-panel="panel-monte-carlo">🎲 Monte Carlo</button>
+    <button class="section-nav-btn" data-panel="panel-daily-summary">📋 Daily Summary</button>
   </div>
 
   <!-- PANEL: GAME PICKS -->
@@ -1667,6 +1668,10 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <div class="section-panel" id="panel-monte-carlo">
     <div class="section-title">🎲 Monte Carlo &mdash; Hit-Rate Simulation (1000 Trials)</div>
     __MONTE_CARLO__
+  </div>
+
+  <div class="section-panel" id="panel-daily-summary">
+    <div id="dailySummaryContent"></div>
   </div>
 
 </div>
@@ -3626,6 +3631,250 @@ function renderSharpAction(){
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 // Render critical above-fold content immediately, defer heavy tabs
+
+// ── Daily Summary Tab ──────────────────────────────────────────────────────────
+function renderDailySummary(){
+  const el = document.getElementById("dailySummaryContent");
+  if(!el) return;
+
+  // Helper: match a pick's game to a score entry
+  function findScore(pick){
+    return (DATA_SCORES||[]).find(s =>
+      (s.away===pick.away && s.home===pick.home) ||
+      (s.away===pick.home && s.home===pick.away)
+    );
+  }
+
+  // Helper: determine WIN/LOSS for a pick from live scores
+  function pickResult(pick, score){
+    if(!score) return null;
+    const isFinal = score.label==="Final" || (score.label||"").startsWith("F/");
+    if(!isFinal) return "live";
+    const awayScore = parseInt(score.away_score||0);
+    const homeScore = parseInt(score.home_score||0);
+    if(awayScore===homeScore) return "push";
+    const awayWon = awayScore > homeScore;
+    if(pick.type==="ML"||pick.type==="RL"){
+      const pickNick = (pick.team||"").split(" ").slice(-1)[0].toLowerCase();
+      const awayNick = (score.away||"").split(" ").slice(-1)[0].toLowerCase();
+      const homeNick = (score.home||"").split(" ").slice(-1)[0].toLowerCase();
+      const pickedAway = pickNick===awayNick || (score.away||"").toLowerCase().includes(pickNick);
+      return (pickedAway && awayWon) || (!pickedAway && !awayWon) ? "win" : "loss";
+    }
+    if(pick.type==="TOTAL"){
+      const total = awayScore + homeScore;
+      const line  = parseFloat(pick.exp_total||0);
+      if(!line) return null;
+      const pickOver = (pick.label||"").toUpperCase().includes("OVER");
+      return (pickOver && total>line)||(!pickOver && total<line) ? "win" : "loss";
+    }
+    return null;
+  }
+
+  // Helper: score display string
+  function scoreStr(score){
+    if(!score) return "";
+    return `${score.away_city||score.away} ${score.away_score} — ${score.home_city||score.home} ${score.home_score}`;
+  }
+
+  // Separate completed vs pending picks
+  const completed = [], pending = [];
+  (DATA_PICKS||[]).forEach(p => {
+    const sc = findScore(p);
+    const res = pickResult(p, sc);
+    if(res==="win"||res==="loss"||res==="push")
+      completed.push({pick:p, score:sc, result:res});
+    else
+      pending.push({pick:p, score:sc, result:res});
+  });
+
+  // Parlay status
+  function parlaySummary(legs){
+    const results = legs.map(l=>{
+      const sc = findScore(l);
+      return pickResult(l,sc);
+    });
+    if(results.every(r=>r==="win")) return "win";
+    if(results.some(r=>r==="loss"||r==="push")) return "loss";
+    return "pending";
+  }
+
+  // Summary counts
+  const wins   = completed.filter(c=>c.result==="win").length;
+  const losses = completed.filter(c=>c.result==="loss").length;
+  const total  = wins+losses;
+  const wr     = total>0 ? Math.round(wins/total*100) : 0;
+  const lockW  = completed.filter(c=>c.result==="win"&&c.pick.tier==="LOCK").length;
+  const lockL  = completed.filter(c=>c.result==="loss"&&c.pick.tier==="LOCK").length;
+
+  const TIER_COLOR = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a",TOSSUP:"#a09ae0"};
+
+  // Summary bar
+  let html = `<div style="margin-bottom:6px;font-size:.72rem;color:#8b949e;display:flex;align-items:center;gap:8px">
+    <span style="background:#1f2d40;color:#58a6ff;padding:2px 8px;border-radius:4px;font-weight:600">${DATA_DATE||"Today"}</span>
+    <span>Updates live as games finish &mdash; resets when next day's games begin</span>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+    <div class="stat-card"><div style="font-size:1.3rem;font-weight:700;color:${wins>losses?"#3fb950":wins<losses?"#f85149":"#e6edf3"}">${wins}–${losses}</div><div style="font-size:.7rem;color:#8b949e;margin-top:4px">Overall record</div></div>
+    <div class="stat-card"><div style="font-size:1.3rem;font-weight:700">${total>0?wr+"%":"—"}</div><div style="font-size:.7rem;color:#8b949e;margin-top:4px">Win rate</div></div>
+    <div class="stat-card"><div style="font-size:1.3rem;font-weight:700;color:#ffc107">${lockW}–${lockL}</div><div style="font-size:.7rem;color:#8b949e;margin-top:4px">LOCK record</div></div>
+    <div class="stat-card"><div style="font-size:1.3rem;font-weight:700;color:#8b949e">${pending.length}</div><div style="font-size:.7rem;color:#8b949e;margin-top:4px">Games pending</div></div>
+  </div>`;
+
+  if(completed.length===0 && pending.length===0){
+    html += `<div style="color:#8b949e;text-align:center;padding:40px 0;font-size:.88rem">No picks yet today — check back once games begin.</div>`;
+    el.innerHTML = html;
+    return;
+  }
+
+  // Completed pick cards
+  if(completed.length>0){
+    html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Completed picks</div>`;
+    completed.forEach(({pick:p, score:sc, result:res})=>{
+      const borderColor = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
+      const badgeBg     = res==="win"?"rgba(63,185,80,.15)":res==="loss"?"rgba(248,81,73,.15)":"rgba(139,148,158,.15)";
+      const badgeColor  = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
+      const badgeText   = res==="win"?"WIN":res==="loss"?"LOSS":"PUSH";
+      const tc = TIER_COLOR[p.tier]||"#8b949e";
+      html += `<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 14px;margin-bottom:8px;border-left:3px solid ${borderColor}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap;gap:6px">
+          <div style="font-size:.75rem;color:#8b949e">${p.away} @ ${p.home}</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            ${sc?`<span style="background:#21262d;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">${scoreStr(sc)}</span>`:""}
+            <span style="background:${badgeBg};color:${badgeColor};font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:4px">${badgeText}</span>
+          </div>
+        </div>
+        <div style="font-size:.85rem;font-weight:600;margin-bottom:4px"><span style="color:${tc}">${p.tier}</span> ${p.label}</div>
+        <div style="font-size:.7rem;color:#8b949e;display:flex;gap:10px">${p.conf}% confidence &nbsp;|&nbsp; Half-Kelly: ${p.kelly_pct!==undefined?p.kelly_pct+"%" : "—"}</div>
+      </div>`;
+    });
+  }
+
+  // Pending pick cards (muted)
+  if(pending.length>0){
+    html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px">Pending</div>`;
+    pending.forEach(({pick:p, score:sc, result:res})=>{
+      const tc = TIER_COLOR[p.tier]||"#8b949e";
+      const liveLabel = res==="live" && sc ? `<span style="background:rgba(255,167,38,.15);color:#ffa726;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:4px">In progress &mdash; ${sc.label}</span>` : "";
+      html += `<div style="background:#161b22;border:1px solid #21262d;border-radius:10px;padding:12px 14px;margin-bottom:8px;opacity:.65">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap;gap:6px">
+          <div style="font-size:.75rem;color:#8b949e">${p.away} @ ${p.home}</div>
+          ${liveLabel}
+        </div>
+        <div style="font-size:.85rem;font-weight:600"><span style="color:${tc}">${p.tier}</span> ${p.label}</div>
+        <div style="font-size:.7rem;color:#8b949e;margin-top:4px">${p.conf}% confidence</div>
+      </div>`;
+    });
+  }
+
+  // Parlay section
+  const allParlays = [...(DATA_P2||[]), ...(DATA_P3||[])];
+  if(allParlays.length>0){
+    const completedParlays = allParlays.filter(par => {
+      const res = parlaySummary(par.picks||par.legs||par);
+      return res==="win"||res==="loss";
+    });
+    const pendingParlays = allParlays.filter(par => {
+      const res = parlaySummary(par.picks||par.legs||par);
+      return res==="pending";
+    });
+    if(completedParlays.length+pendingParlays.length>0){
+      html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px">Parlays</div>`;
+      [...completedParlays,...pendingParlays].forEach(par=>{
+        const legs = par.picks||par.legs||par;
+        const res = parlaySummary(legs);
+        const borderColor = res==="win"?"#3fb950":res==="loss"?"#f85149":"#ffa726";
+        const badgeText   = res==="win"?"WIN":res==="loss"?"LOSS":"In progress";
+        const badgeBg     = res==="win"?"rgba(63,185,80,.15)":res==="loss"?"rgba(248,81,73,.15)":"rgba(255,167,38,.15)";
+        const badgeColor  = res==="win"?"#3fb950":res==="loss"?"#f85149":"#ffa726";
+        html += `<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 14px;margin-bottom:8px;border-left:3px solid ${borderColor}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-weight:600;font-size:.82rem">${Array.isArray(legs)?legs.length:2}-leg parlay</div>
+            <span style="background:${badgeBg};color:${badgeColor};font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:4px">${badgeText}</span>
+          </div>`;
+        if(Array.isArray(legs)){
+          legs.forEach(leg=>{
+            const sc2 = findScore(leg);
+            const lr  = pickResult(leg,sc2);
+            const lc  = lr==="win"?"#3fb950":lr==="loss"?"#f85149":"#8b949e";
+            const icon= lr==="win"?"✓":lr==="loss"?"✗":"◦";
+            html += `<div style="font-size:.75rem;color:${lc};padding:3px 0;border-bottom:1px solid #21262d">${icon} ${leg.label||leg.team} ${sc2?`— ${scoreStr(sc2)}`:""}</div>`;
+          });
+        }
+        html += `</div>`;
+      });
+    }
+  }
+
+  // Sharp action summary (condensed table for completed games)
+  const completedMovement = (DATA_MOVEMENT||[]).filter(mv=>{
+    const sc = (DATA_SCORES||[]).find(s=>s.away===mv.away&&s.home===mv.home);
+    return sc && (sc.label==="Final"||(sc.label||"").startsWith("F/"));
+  });
+  if(completedMovement.length>0){
+    const smW=completed.filter(c=>c.result==="win").length;
+    const smL=completed.filter(c=>c.result==="loss").length;
+    const smD=smW+smL;
+    let ssW=0,ssL=0,bw=0;
+    const sharpRows = completedMovement.map(mv=>{
+      const sig = mv.ml_signal==="STEAM"||mv.ml_signal==="DRIFT" ? mv.ml_signal : mv.total_signal;
+      const sigColor = sig==="STEAM"?"#ef5350":sig==="DRIFT"?"#ffa726":"#8b949e";
+      const sc = (DATA_SCORES||[]).find(s=>s.away===mv.away&&s.home===mv.home);
+      const awayScore=parseInt(sc?.away_score||0), homeScore=parseInt(sc?.home_score||0);
+      const actualWinner = awayScore>homeScore ? mv.away : mv.home;
+      const winnerNick = (actualWinner||"").split(" ").slice(-1)[0];
+      const sharpNick = (mv.sharp_side||"").split(" ").slice(-1)[0].toLowerCase();
+      const winnerNickL = winnerNick.toLowerCase();
+      const pick = (DATA_PICKS||[]).find(p=>p.away===mv.away&&p.home===mv.home&&(p.type==="ML"||p.type==="RL"));
+      const modelStr = pick ? `<span style="color:${TIER_COLOR[pick.tier]||"#8b949e"}">${pick.tier}</span> ${(pick.team||"").split(" ").slice(-1)[0]}` : `<span style="color:#8b949e">Pass</span>`;
+      let winnerStr="—",winnerColor="#8b949e";
+      if(mv.sharp_side && actualWinner){
+        const pickNick = pick?(pick.team||"").split(" ").slice(-1)[0].toLowerCase():"";
+        if(sharpNick===winnerNickL && pickNick===winnerNickL){
+          winnerStr="Agree ✓";winnerColor="#3fb950";ssW++;smW&&0;
+        } else if(sharpNick===winnerNickL && pickNick!==winnerNickL && pick){
+          winnerStr="⚡ Sharp";winnerColor="#ffa726";ssW++;
+        } else if(sharpNick!==winnerNickL && pickNick===winnerNickL && pick){
+          winnerStr="✓ Model";winnerColor="#3fb950";ssL++;
+        } else if(sharpNick!==winnerNickL && pick && pickNick!==winnerNickL){
+          winnerStr='<span style="background:rgba(239,83,80,.15);color:#ef5350;padding:1px 6px;border-radius:3px;font-size:.68rem">Both Wrong</span>';bw++;ssL++;
+        } else if(sharpNick!==winnerNickL){
+          winnerStr="✗ Sharp";winnerColor="#f85149";ssL++;
+        }
+      }
+      return `<tr>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${mv.away.split(" ").slice(-1)[0]} @ ${mv.home.split(" ").slice(-1)[0]}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;color:${sigColor};font-weight:700;font-size:.72rem">${sig||"—"}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${mv.sharp_side?mv.sharp_side.split(" ").slice(-1)[0]:"—"}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${modelStr}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem;font-weight:600">${winnerNick||"—"}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;color:${winnerColor};font-weight:700;font-size:.75rem">${winnerStr}</td>
+      </tr>`;
+    }).join("");
+    html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px">Sharp action — completed games</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
+      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700">${smW}/${smD}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Model W/L</div></div>
+      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700">${ssW}/${ssW+ssL}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Sharp W/L</div></div>
+      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700;color:#ef5350">${bw}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Both Wrong</div></div>
+    </div>
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid #30363d">
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Game</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Signal</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Sharp side</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Model pick</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Result</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Winner</th>
+        </tr></thead>
+        <tbody>${sharpRows}</tbody>
+      </table>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
 renderTicker();
 renderYesterday();
 renderPicks();
@@ -3640,6 +3889,7 @@ setTimeout(() => {
   renderGames();
   renderProps();
   initTeamsTab();
+  renderDailySummary();
 }, 0);
 
 // Auto-reload every 15 minutes to pick up fresh odds, lineups, and scores
