@@ -1018,19 +1018,20 @@ def performance_html():
         _conn = get_conn()
         if _conn:
             with _conn.cursor() as _cur:
-                # All ML picks for yesterday (any tier) + final scores
+                # All picks for yesterday (any type) — used to extract final scores
                 _cur.execute(
                     "SELECT game, team, pick_type, tier, conf, actual_result, away_final, home_final "
-                    "FROM picks WHERE pick_date = %s AND pick_type = %s",
-                    (_yesterday, "ML")
+                    "FROM picks WHERE pick_date = %s",
+                    (_yesterday,)
                 )
                 for _r in _cur.fetchall():
-                    _graded_picks_y.append({
-                        "game": _r[0], "team": _r[1], "pick_type": _r[2],
-                        "tier": _r[3], "conf": _r[4], "result": _r[5],
-                        "away_final": _r[6], "home_final": _r[7],
-                    })
-                    # Build game scores lookup from any row that has final scores
+                    if _r[2] == "ML":  # only ML picks go into model pick lookup
+                        _graded_picks_y.append({
+                            "game": _r[0], "team": _r[1], "pick_type": _r[2],
+                            "tier": _r[3], "conf": _r[4], "result": _r[5],
+                            "away_final": _r[6], "home_final": _r[7],
+                        })
+                    # Build game scores from ANY graded pick that has final scores
                     if _r[6] is not None and _r[7] is not None:
                         _parts = (_r[0] or "").split(" @ ")
                         if len(_parts) == 2:
