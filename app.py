@@ -1038,7 +1038,7 @@ def performance_html():
         _pick_by_game[_p.get("game","")] = _p
 
     _sharp_rows_html = ""
-    _sharp_model_w = _sharp_model_l = _sharp_sharp_w = _sharp_sharp_l = 0
+    _sharp_model_w = _sharp_model_l = _sharp_sharp_w = _sharp_sharp_l = _both_wrong = 0
 
     for (_away, _home), _mv in sorted(_mv_games.items()):
         _ml_sig   = _mv.get("ml_signal","")
@@ -1075,15 +1075,30 @@ def performance_html():
                                f"{_matched_pick.get('team','')} ({_conf_pct})")
             _actual = (_matched_pick.get("result") or "").upper()
             if _actual in ("WIN","LOSS"):
-                _result_str = _actual
-                _result_color = "#3fb950" if _actual=="WIN" else "#f85149"
-                _model_nick = _nick(_matched_pick.get("team",""))
+                # Result col: show actual winning team name
+                _model_team = _matched_pick.get("team","")
+                _model_nick = _nick(_model_team)
+                _away_nick  = _nick(_away)
+                _home_nick  = _nick(_home)
+                if _actual == "WIN":
+                    _winning_team = _model_team
+                else:
+                    # Model lost — other team won
+                    _winning_team = _home if _model_nick == _away_nick else _away
+                _result_str   = _winning_team.split()[-1] if _winning_team else "—"
+                _result_color = "#e6edf3"
+
                 _sharp_nick = _nick(_sharp_sd)
                 if _sharp_sd and _model_nick == _sharp_nick:
-                    _winner_str = "Both" if _actual=="WIN" else "Neither"
-                    _winner_color = "#3fb950" if _actual=="WIN" else "#f85149"
-                    if _actual=="WIN": _sharp_model_w+=1; _sharp_sharp_w+=1
-                    else: _sharp_model_l+=1; _sharp_sharp_l+=1
+                    # Sharp and model agree on same team
+                    if _actual=="WIN":
+                        _winner_str   = "Agree ✓"
+                        _winner_color = "#3fb950"
+                        _sharp_model_w+=1; _sharp_sharp_w+=1
+                    else:
+                        _winner_str   = '<span style="background:rgba(239,83,80,.15);color:#ef5350;font-weight:700;padding:2px 8px;border-radius:4px;font-size:.75rem">Both Wrong</span>'
+                        _winner_color = ""
+                        _both_wrong+=1; _sharp_model_l+=1; _sharp_sharp_l+=1
                 elif _sharp_sd:
                     if _actual=="WIN":
                         _winner_str = "✓ Model"; _winner_color="#3fb950"
@@ -1092,7 +1107,7 @@ def performance_html():
                         _winner_str = "⚡ Sharp"; _winner_color="#ffa726"
                         _sharp_model_l+=1; _sharp_sharp_w+=1
                 else:
-                    _winner_str = "✓ Model" if _actual=="WIN" else "✗ Model"
+                    _winner_str   = "✓ Model" if _actual=="WIN" else "✗ Model"
                     _winner_color = "#3fb950" if _actual=="WIN" else "#f85149"
                     if _actual=="WIN": _sharp_model_w+=1
                     else: _sharp_model_l+=1
@@ -1130,11 +1145,13 @@ def performance_html():
         f'arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">' +
         f'<span class="arr">&#9654;</span> Yesterday\'s Sharp Action &mdash; {_yesterday}' +
         f'</div><div class="secondary-body" style="margin-top:10px">' +
-        f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">' +
+        f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">' +
         f'<div class="stat-card"><div class="stat-val">{_sm_str}</div>' +
         f'<div class="stat-lbl">Model W/L (games with movement)</div></div>' +
         f'<div class="stat-card"><div class="stat-val">{_ss_str}</div>' +
-        f'<div class="stat-lbl">Sharp W/L (games with sharp side)</div></div></div>' +
+        f'<div class="stat-lbl">Sharp W/L (games with sharp side)</div></div>' +
+        f'<div class="stat-card"><div class="stat-val" style="color:#ef5350">{_both_wrong}</div>' +
+        f'<div class="stat-lbl">Both Wrong (review)</div></div></div>' +
         f'<div class="table-card"><table><thead><tr>' +
         f'<th>Game</th><th>Signal</th><th>Sharp Side</th>' +
         f'<th>Model Pick</th><th>Result</th><th>Winner</th>' +
