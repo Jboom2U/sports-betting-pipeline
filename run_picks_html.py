@@ -720,8 +720,7 @@ def _build_yesterday_from_db(date: str) -> dict:
         for days_back in range(1, 4):
             check = (_dt.strptime(date, "%Y-%m-%d") - _td(days=days_back)).strftime("%Y-%m-%d")
             r = get_picks(check)
-            graded = [p for p in r if p.get("actual_result") in ("WIN","LOSS","PUSH")
-                      and p.get("tier","").upper() != "TOSSUP"]
+            graded = [p for p in r if p.get("actual_result") in ("WIN","LOSS","PUSH")]
             if graded:
                 rows = graded
                 check_date = check

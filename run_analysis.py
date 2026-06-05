@@ -945,8 +945,10 @@ def run(date: str):
         graded.append({**p, "result": result_str, "profit": profit,
                         "result_game": result_obj})
 
-    # Exclude TOSSUP picks from display/DB so Yesterday banner matches performance page
-    graded_display = [p for p in graded if p.get("tier", "").upper() != "TOSSUP"]
+    # Include all graded picks (TOSSUP included) so the Yesterday panel shows all games.
+    # TOSSUP picks contribute to overall W/L count but not to by_tier breakdown
+    # (compute_metrics only tracks LOCK/STRONG/LEAN in by_tier).
+    graded_display = graded
 
     # Compute metrics
     metrics  = compute_metrics(graded_display)
@@ -958,7 +960,7 @@ def run(date: str):
     save_analysis(date, graded_display, metrics, findings, recs)
 
     # Persist grades to PostgreSQL (non-fatal if DB unavailable)
-    push_grades_to_db(graded_display, date)
+    push_grades_to_db(graded, date)  # grade ALL picks (incl TOSSUP) so sharp table has scores
 
     # Backfill market_signal on any picks that don't have it yet (non-fatal)
     try:
