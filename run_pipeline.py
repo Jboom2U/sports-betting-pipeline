@@ -116,41 +116,12 @@ def main(date=None):
         sys.exit(1)
 
     # ── Step 3: Odds snapshot + line movement ─────────────────────────────────
-    # Primary: The Odds API. Fallback: Pinnacle guest API (no auth, no quota).
     try:
         from scrapers.mlb_odds_scraper import run as run_odds
         odds_result = run_odds()
         log.info(f"Odds scrape: {odds_result}")
-        if odds_result.get("quota_exceeded") or odds_result.get("snapshots", 0) == 0:
-            raise RuntimeError("Odds API quota exhausted — switching to Pinnacle fallback")
     except Exception as e:
-        log.warning(f"Odds API unavailable ({e}) — trying Pinnacle fallback")
-        try:
-            from alerts import send_alert
-            send_alert(
-                "Odds API quota exhausted — Pinnacle fallback active",
-                "The Odds API quota ran out. Pinnacle guest API is being used as fallback.\n"
-                "Picks will still generate with line movement signals.\n"
-                "Quota resets on the 1st of next month.",
-            )
-        except Exception:
-            pass
-        try:
-            from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
-            pinnacle_result = run_pinnacle()
-            log.info(f"Pinnacle fallback odds: {pinnacle_result}")
-        except Exception as pe:
-            log.warning(f"Pinnacle fallback also failed (non-fatal): {pe}")
-            try:
-                from alerts import send_alert
-                send_alert(
-                    "BOTH odds sources dead — no line movement signals",
-                    "The Odds API quota is exhausted AND the Pinnacle fallback failed.\n"
-                    f"Pinnacle error: {pe}\n\n"
-                    "Picks will generate without sharp money signals until one source recovers.",
-                )
-            except Exception:
-                pass
+        log.warning(f"Odds scrape failed (non-fatal): {e}")
 
     # ── Step 4: Weather for today's games ─────────────────────────────────────
     try:
@@ -339,6 +310,15 @@ def main(date=None):
             log.debug("Object storage not configured -- skipping CSV upload.")
     except Exception as e:
         log.warning(f"CSV upload failed (non-fatal): {e}")
+
+    # ── Step 9b: Player game log scraper (powers analytics query interface) ────
+    try:
+        from scrapers.mlb_player_gamelog_scraper import run as run_game_logs
+        gl_result = run_game_logs()
+        log.info(f"Player game logs: {gl_result.get('rows', 0)} rows for "
+                 f"{gl_result.get('players', 0)} players")
+    except Exception as e:
+        log.warning(f"Player game log scraper failed (non-fatal): {e}")
 
     # ── Step 10: Mark pipeline complete in DB (after upload succeeds) ─────────
     mark_pipeline_complete()

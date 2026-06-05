@@ -19,6 +19,12 @@ import os
 import logging
 from datetime import datetime
 
+try:
+    from db.model_config import load_config as _load_model_config, DEFAULTS as _MC_DEFAULTS
+    _MC_AVAILABLE = True
+except ImportError:
+    _MC_AVAILABLE = False
+
 log = logging.getLogger(__name__)
 
 BASE_DIR  = os.path.join(os.path.dirname(__file__), "..")
@@ -93,13 +99,13 @@ class MLBModel:
         self.scores          = []   # all historical game rows
         self.schedule        = []   # upcoming schedule rows
         self.bullpen         = {}   # team_name -> stats_dict (current season)
-        self.lineups             = {}   # game_id -> {away_lineup, home_lineup, confirmed}
-        self.projected_lineups   = {}   # team_name -> {players, date} — fallback when confirmed lineup not posted
-        self.umpires              = {}   # game_id -> umpire enriched dict
+        self.lineups         = {}   # game_id -> {away_lineup, home_lineup, confirmed}
+        self.umpires          = {}   # game_id -> umpire enriched dict
         self.pitcher_statcast = {}   # pitcher_name_lower -> statcast stat dict
         self.bullpen_fatigue  = {}   # team_name -> fatigue dict
         self.polymarket       = {}   # sorted (team_a, team_b) -> prob dict
         self._loaded         = False
+        self.cfg             = {}   # model weight config (loaded from DB or defaults)
 
     # ── Data Loading ──────────────────────────────────────────────────────────
     def load(self):
@@ -107,6 +113,18 @@ class MLBModel:
             return
 
         log.info("Loading model data...")
+
+        # Load model config from DB (or fall back to module-level defaults)
+        if _MC_AVAILABLE:
+            try:
+                self.cfg = _load_model_config()
+                log.info(f"Model config loaded: {len(self.cfg)} weights")
+            except Exception as _ce:
+                log.warning(f"model_config load failed (using defaults): {_ce}")
+                self.cfg = {k: v["value"] for k, v in _MC_DEFAULTS.items()}
+        else:
+            self.cfg = {}
+
 
         # Pitcher season stats: name -> season -> row
         for row in read_csv(os.path.join(CLEAN_DIR, "mlb_pitcher_stats_master.csv")):
@@ -194,19 +212,14 @@ class MLBModel:
             log.info(f"Odds loaded: {len(self.odds)} games")
 
         import glob
-        _today_str = datetime.now().strftime("%Y-%m-%d")
         movement_files = sorted(
             glob.glob(os.path.join(CLEAN_DIR, "mlb_line_movement_*.csv")), reverse=True
         )
         if movement_files:
-            latest_file = movement_files[0]
-            if _today_str in os.path.basename(latest_file):
-                for row in read_csv(latest_file):
-                    k = (row.get("away_team",""), row.get("home_team",""))
-                    self.line_movement[k] = row
-                log.info(f"Line movement loaded: {len(self.line_movement)} records from {os.path.basename(latest_file)}")
-            else:
-                log.info(f"Line movement: newest file is {os.path.basename(latest_file)} (not today) — skipping stale data, no sharp action signals")
+            for row in read_csv(movement_files[0]):
+                k = (row.get("away_team",""), row.get("home_team",""))
+                self.line_movement[k] = row
+            log.info(f"Line movement loaded: {len(self.line_movement)} records")
 
         # Bullpen stats: team_name -> row (current season preferred)
         bullpen_master = os.path.join(CLEAN_DIR, "mlb_bullpen_master.csv")
@@ -238,14 +251,6 @@ class MLBModel:
                     self.lineups[gid] = game
             log.info(f"Lineups loaded: {len(self.lineups)} games "
                      f"({sum(1 for g in self.lineups.values() if g.get('lineup_confirmed'))} confirmed)")
-
-        # Projected lineups — most recent confirmed batting order per team (OPS fallback)
-        proj_file = os.path.join(CLEAN_DIR, "mlb_projected_lineups.json")
-        if os.path.exists(proj_file):
-            import json as _json2
-            with open(proj_file, encoding="utf-8") as f:
-                self.projected_lineups = _json2.load(f)
-            log.info(f"Projected lineups loaded: {len(self.projected_lineups)} teams")
 
         # Bullpen fatigue (reliever workload over last 3 days)
         fatigue_file = os.path.join(raw_dir, f"mlb_bullpen_fatigue_{today_str}.json")
@@ -718,32 +723,23 @@ class MLBModel:
     # ── Lineup OPS ────────────────────────────────────────────────────────────
     def get_lineup_ops(self, game_id: str, side: str) -> float | None:
         """
-        Compute weighted OPS for the batting lineup.
-        Prefers today's confirmed lineup; falls back to projected lineup
-        (most recent confirmed batting order) when official lineup not yet posted.
+        If confirmed lineups exist, compute weighted OPS for the top 9 batters.
         side: 'away' or 'home'
+        Returns None if lineup not confirmed.
         """
         gid = str(game_id)
-        game = self.lineups.get(gid, {})
-
-        # Prefer confirmed lineup
-        if game.get("lineup_confirmed"):
-            players = game.get(f"{side}_lineup", [])
-            ops_vals = [p.get("ops") for p in players if p.get("ops") and float(p.get("ops", 0)) > 0]
-            if ops_vals:
-                return round(sum(ops_vals) / len(ops_vals), 3)
-
-        # Fall back to projected lineup (most recent confirmed batting order per team)
-        team_name = game.get(f"{side}_team", "")
-        proj = self.projected_lineups.get(team_name, {})
-        if proj:
-            players = proj.get("players", [])
-            ops_vals = [p.get("ops") for p in players if p.get("ops") and float(p.get("ops", 0)) > 0]
-            if ops_vals:
-                log.debug(f"Using projected lineup OPS for {team_name} (from {proj.get('date','?')})")
-                return round(sum(ops_vals) / len(ops_vals), 3)
-
-        return None
+        if gid not in self.lineups:
+            return None
+        game = self.lineups[gid]
+        if not game.get("lineup_confirmed"):
+            return None
+        players = game.get(f"{side}_lineup", [])
+        if not players:
+            return None
+        ops_vals = [p.get("ops") for p in players if p.get("ops") and float(p.get("ops", 0)) > 0]
+        if not ops_vals:
+            return None
+        return round(sum(ops_vals) / len(ops_vals), 3)
 
     # ── Recent Form ───────────────────────────────────────────────────────────
     def recent_form(self, team: str, n: int = 10) -> dict:
@@ -1202,17 +1198,10 @@ class MLBModel:
             "home_bp_whip":   home_bp["whip"],
             "home_bp_found":  home_bp["found"],
 
-            # Lineup OPS (confirmed or projected fallback)
+            # Lineup OPS (if confirmed)
             "away_lineup_ops": self.get_lineup_ops(game_id_str, "away"),
             "home_lineup_ops": self.get_lineup_ops(game_id_str, "home"),
             "lineup_confirmed": bool(self.lineups.get(game_id_str, {}).get("lineup_confirmed")),
-            "lineup_projected": (
-                not bool(self.lineups.get(game_id_str, {}).get("lineup_confirmed"))
-                and bool(
-                    self.projected_lineups.get(self.lineups.get(game_id_str, {}).get("away_team", ""))
-                    or self.projected_lineups.get(self.lineups.get(game_id_str, {}).get("home_team", ""))
-                )
-            ),
 
             # Picks
             "home_wp":        home_wp,
@@ -1276,12 +1265,11 @@ class MLBModel:
                 and r.get("status", "").lower() == "final"]
 
     # ── Score All Games for a Date ────────────────────────────────────────────
-    def score_today(self, target_date: str = None, pivot: bool = True) -> tuple:
+    def score_today(self, target_date: str = None) -> tuple:
         """
         Score all games for target_date. Returns (scored_games, actual_date).
         Automatically excludes games that have started or finished.
-        Falls back to next available date if no upcoming games found and pivot=True.
-        Pass pivot=False to stay anchored to target_date even when all games have started.
+        Falls back to next available date if no upcoming games found.
         """
         if not self._loaded:
             self.load()
@@ -1296,8 +1284,8 @@ class MLBModel:
         if skipped:
             log.info(f"Filtered out {skipped} completed/in-progress game(s)")
 
-        # If nothing upcoming today, use next available future slate (only when pivot allowed)
-        if not games and pivot:
+        # If nothing upcoming today, use next available future slate
+        if not games:
             future = sorted(set(
                 g["game_date"] for g in self.schedule
                 if g.get("game_date", "") > target_date
