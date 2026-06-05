@@ -937,21 +937,31 @@ def performance_html():
     edge_str  = f"+{wr_float - breakeven:.1f}%" if wr_float >= breakeven else f"{wr_float - breakeven:.1f}%"
     edge_color = "#3fb950" if wr_float >= breakeven else "#f85149"
 
-    # ── Day toggle links ──────────────────────────────────────────────────────
+    # ── Day filter dropdown ───────────────────────────────────────────────────
     _day_opts = [
-        (7,    "7d"),
-        (14,   "14d"),
-        (30,   "30d"),
-        (60,   "60d"),
-        (90,   "Season"),
+        (7,    "Last 7 days"),
+        (14,   "Last 14 days"),
+        (30,   "Last 30 days"),
+        (60,   "Last 60 days"),
+        (90,   "This season (~90d)"),
         (9999, "All time"),
     ]
-    days_links = "".join(
-        '<a href="/performance-html?days={d}" {cls}>{label}</a>'.format(
-            d=d, label=label, cls='class="active"' if d == days else ""
+    _select_opts = "".join(
+        '<option value="{d}" {sel}>{label}</option>'.format(
+            d=d, label=label, sel='selected' if d == days else ""
         )
         for d, label in _day_opts
     )
+    _sel_html = (
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">'
+        '<label style="font-size:.78rem;color:#8b949e;white-space:nowrap">Time period:</label>'
+        '<select class="perf-select" onchange="window.location=\'/performance-html?days=\'+this.value">'
+        + _select_opts +
+        '</select>'
+        '</div>'
+    )
+    days_links = _sel_html
+
 
     # ── Tier bar chart data ───────────────────────────────────────────────────
     TIER_ORDER = ["LOCK", "STRONG", "LEAN", "TOSSUP"]
@@ -1162,7 +1172,7 @@ def performance_html():
             f'<td style="color:#8b949e">{_ac:.1f}%</td></tr>'
         )
     _player_body = ''.join(_player_rows) or (
-        '<tr><td colspan="5" style="color:#8b949e;padding:14px">Need 5+ picks per player to show.</td></tr>'
+        '<tr><td colspan="5" style="color:#8b949e;padding:14px">Need 3+ graded picks per player to appear here.</td></tr>'
     )
 
     # -- Yesterday's Sharp Action ------------------------------------------------
@@ -1405,7 +1415,7 @@ def performance_html():
         '<div class="secondary-toggle" '
         'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
         'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">'
-        '<span class="arr">&#9654;</span> Top Players (5+ picks)</div>'
+        '<span class="arr">&#9654;</span> Top Players (3+ picks)</div>'
         '<div class="secondary-body"><div class="table-card"><table>'
         '<thead><tr><th>Player</th><th>Prop</th><th>Picks</th>'
         '<th>Hit Rate</th><th>Avg Conf</th></tr></thead>'
@@ -1425,11 +1435,9 @@ def performance_html():
          background:#0d1117;color:#e6edf3;padding:28px 24px;max-width:900px;margin:0 auto}}
     h1{{font-size:1.3rem;font-weight:600;margin-bottom:4px}}
     .sub{{color:#8b949e;font-size:.83rem;margin-bottom:20px}}
-    .days-nav{{display:flex;gap:6px;margin-bottom:24px;flex-wrap:wrap}}
-    .days-nav a{{background:#161b22;border:1px solid #30363d;border-radius:20px;
-                padding:5px 14px;font-size:.78rem;color:#8b949e;text-decoration:none;transition:all .15s}}
-    .days-nav a:hover{{border-color:#58a6ff;color:#58a6ff}}
-    .days-nav a.active{{background:#1f6feb;border-color:#388bfd;color:#fff;font-weight:600}}
+    select option{{background:#161b22;color:#e6edf3}}
+    .perf-select{{background:#161b22;border:1px solid #30363d;border-radius:8px;color:#e6edf3;padding:7px 14px;font-size:.83rem;cursor:pointer;outline:none;min-width:180px}}
+    .perf-select:focus{{border-color:#58a6ff}}
     .stat-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:28px}}
     .stat-card{{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px 16px}}
     .stat-val{{font-size:1.5rem;font-weight:700;line-height:1}}
@@ -1473,7 +1481,7 @@ def performance_html():
   </div>
   <p class="sub">{days_label} — graded picks only</p>
 
-  <div class="days-nav">{days_links}</div>
+  {days_links}
 
   {empty_msg}
 
