@@ -693,9 +693,12 @@ def push_grades_to_db(graded_picks: list, date: str) -> int:
 
     # Build lookup: (pick_type_upper, label_stripped) -> db_pick
     db_index = {}
+    db_game_index = {}  # fallback: (game_stripped, pick_type_upper) -> db_pick
     for dp in db_picks:
         key = (dp["pick_type"].upper(), dp["label"].strip())
         db_index[key] = dp
+        game_key = (dp.get("game","").strip(), dp["pick_type"].upper())
+        db_game_index[game_key] = dp
 
     updated = 0
     for gp in graded_picks:
@@ -706,8 +709,13 @@ def push_grades_to_db(graded_picks: list, date: str) -> int:
         key = (gp["type"].upper(), gp["label"].strip())
         dp  = db_index.get(key)
         if dp is None:
-            log.debug(f"No DB match for pick {key} on {date}")
-            continue
+            # Fallback: match by game + pick_type (handles label drift from afternoon refresh)
+            game_key = (gp.get("game","").strip(), gp["type"].upper())
+            dp = db_game_index.get(game_key)
+            if dp is None:
+                log.debug(f"No DB match for pick {key} on {date} (game fallback also failed)")
+                continue
+            log.debug(f"DB grade matched via game fallback: {game_key}")
 
         result_game = gp.get("result_game") or {}
         away_score  = result_game.get("away_score")

@@ -711,10 +711,60 @@ def load_line_movement(date: str) -> list:
     return out
 
 
+def _build_yesterday_from_db(date: str) -> dict:
+    """Build a yesterday_data dict from graded picks in the DB (fallback for missing JSON)."""
+    try:
+        from db.picks_store import get_picks
+        from datetime import datetime as _dt, timedelta as _td
+        rows = []
+        for days_back in range(1, 4):
+            check = (_dt.strptime(date, "%Y-%m-%d") - _td(days=days_back)).strftime("%Y-%m-%d")
+            r = get_picks(check)
+            graded = [p for p in r if p.get("actual_result") in ("WIN","LOSS","PUSH")
+                      and p.get("tier","").upper() != "TOSSUP"]
+            if graded:
+                rows = graded
+                check_date = check
+                break
+        if not rows:
+            return {}
+        # Build minimal metrics structure
+        wins = sum(1 for p in rows if p["actual_result"]=="WIN")
+        losses = sum(1 for p in rows if p["actual_result"]=="LOSS")
+        pushes = sum(1 for p in rows if p["actual_result"]=="PUSH")
+        denom = wins + losses
+        wr = round(wins/denom, 3) if denom > 0 else None
+        # Half-Kelly profit estimate at -110
+        def _profit(p):
+            conf = float(p.get("conf") or 0)
+            if conf <= 1: conf *= 100
+            edge = max(0, conf - 52.4) / 100
+            kelly = edge / 0.909 * 0.5  # half Kelly
+            stake = max(0.01, kelly)
+            if p["actual_result"]=="WIN": return stake * 0.909
+            if p["actual_result"]=="LOSS": return -stake
+            return 0
+        profit = round(sum(_profit(p) for p in rows), 3)
+        staked = round(sum(abs(_profit(p)) for p in rows), 3) or 1
+        overall = {
+            "wins": wins, "losses": losses, "pushes": pushes,
+            "total": wins+losses+pushes, "staked": staked,
+            "profit": profit, "win_rate": wr,
+            "roi": round(profit/staked, 3) if staked else None,
+        }
+        findings = [f"Overall: {wins}-{losses} ({wr*100:.1f}% WR) via DB fallback" if wr else f"Overall: {wins}-{losses} via DB fallback"]
+        log.info(f"Yesterday panel: built from DB for {check_date} ({wins}W-{losses}L)")
+        return {"date": check_date, "metrics": {"overall": overall, "by_tier": {}, "by_type": {}},
+                "findings": findings, "recommendations": [], "graded_picks": []}
+    except Exception as _e:
+        log.debug(f"DB yesterday fallback failed: {_e}")
+        return {}
+
+
 def load_yesterday_analysis(date: str) -> dict:
     """
     Load the most recent analysis JSON (for yesterday's picks) to show in
-    the 'Yesterday' panel.  Returns empty dict if not yet generated.
+    the 'Yesterday' panel.  Falls back to DB if JSON is missing.
     """
     import glob as _glob
     from datetime import datetime as _dt, timedelta as _td
@@ -727,10 +777,18 @@ def load_yesterday_analysis(date: str) -> dict:
             try:
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
-                log.info(f"Yesterday's analysis loaded: {path}")
-                return data
+                # Verify it has real graded picks (not empty)
+                if data.get("metrics") and data["metrics"].get("overall", {}).get("total", 0) > 0:
+                    log.info(f"Yesterday's analysis loaded: {path}")
+                    return data
             except Exception:
                 pass
+
+    # JSON missing or empty — try DB
+    log.info("Yesterday JSON missing or empty — trying DB fallback")
+    db_data = _build_yesterday_from_db(date)
+    if db_data:
+        return db_data
     return {}
 
 
@@ -3637,7 +3695,9 @@ function renderDailySummary(){
   const el = document.getElementById("dailySummaryContent");
   if(!el) return;
 
-  // Helper: match a pick's game to a score entry
+  const TIER_COLOR = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a",TOSSUP:"#a09ae0"};
+
+  // Match a pick to a score entry
   function findScore(pick){
     return (DATA_SCORES||[]).find(s =>
       (s.away===pick.away && s.home===pick.home) ||
@@ -3645,11 +3705,16 @@ function renderDailySummary(){
     );
   }
 
-  // Helper: determine WIN/LOSS for a pick from live scores
+  // Is this score final?
+  function isFinal(score){
+    if(!score) return false;
+    const lbl = (score.label||"").trim();
+    return lbl==="Final" || lbl.startsWith("F/") || lbl==="F";
+  }
+
+  // Determine WIN/LOSS/PUSH from a final score
   function pickResult(pick, score){
-    if(!score) return null;
-    const isFinal = score.label==="Final" || (score.label||"").startsWith("F/");
-    if(!isFinal) return "live";
+    if(!score || !isFinal(score)) return null;
     const awayScore = parseInt(score.away_score||0);
     const homeScore = parseInt(score.home_score||0);
     if(awayScore===homeScore) return "push";
@@ -3657,215 +3722,195 @@ function renderDailySummary(){
     if(pick.type==="ML"||pick.type==="RL"){
       const pickNick = (pick.team||"").split(" ").slice(-1)[0].toLowerCase();
       const awayNick = (score.away||"").split(" ").slice(-1)[0].toLowerCase();
-      const homeNick = (score.home||"").split(" ").slice(-1)[0].toLowerCase();
       const pickedAway = pickNick===awayNick || (score.away||"").toLowerCase().includes(pickNick);
-      return (pickedAway && awayWon) || (!pickedAway && !awayWon) ? "win" : "loss";
+      return (pickedAway && awayWon)||(!pickedAway && !awayWon) ? "win" : "loss";
     }
     if(pick.type==="TOTAL"){
       const total = awayScore + homeScore;
       const line  = parseFloat(pick.exp_total||0);
       if(!line) return null;
       const pickOver = (pick.label||"").toUpperCase().includes("OVER");
-      return (pickOver && total>line)||(!pickOver && total<line) ? "win" : "loss";
+      return (pickOver&&total>line)||(!pickOver&&total<line) ? "win" : "loss";
     }
     return null;
   }
 
-  // Helper: score display string
+  // Score display
   function scoreStr(score){
     if(!score) return "";
-    return `${score.away_city||score.away} ${score.away_score} — ${score.home_city||score.home} ${score.home_score}`;
+    const a = score.away_city||score.away||"";
+    const h = score.home_city||score.home||"";
+    return `${a.split(" ").slice(-1)[0]} ${score.away_score} – ${h.split(" ").slice(-1)[0]} ${score.home_score}`;
   }
 
-  // Separate completed vs pending picks
-  const completed = [], pending = [];
+  // ── Collect completed picks only ──────────────────────────────────────────
+  const completed = [];
   (DATA_PICKS||[]).forEach(p => {
-    const sc = findScore(p);
+    const sc  = findScore(p);
     const res = pickResult(p, sc);
-    if(res==="win"||res==="loss"||res==="push")
-      completed.push({pick:p, score:sc, result:res});
-    else
-      pending.push({pick:p, score:sc, result:res});
+    if(res) completed.push({pick:p, score:sc, result:res});
   });
 
-  // Parlay status
-  function parlaySummary(legs){
-    const results = legs.map(l=>{
-      const sc = findScore(l);
-      return pickResult(l,sc);
-    });
-    if(results.every(r=>r==="win")) return "win";
-    if(results.some(r=>r==="loss"||r==="push")) return "loss";
-    return "pending";
-  }
-
-  // Summary counts
   const wins   = completed.filter(c=>c.result==="win").length;
   const losses = completed.filter(c=>c.result==="loss").length;
+  const pushes = completed.filter(c=>c.result==="push").length;
   const total  = wins+losses;
   const wr     = total>0 ? Math.round(wins/total*100) : 0;
   const lockW  = completed.filter(c=>c.result==="win"&&c.pick.tier==="LOCK").length;
   const lockL  = completed.filter(c=>c.result==="loss"&&c.pick.tier==="LOCK").length;
+  const pending = (DATA_PICKS||[]).length - completed.length;
 
-  const TIER_COLOR = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a",TOSSUP:"#a09ae0"};
-
-  // Summary bar
-  let html = `<div style="margin-bottom:6px;font-size:.72rem;color:#8b949e;display:flex;align-items:center;gap:8px">
-    <span style="background:#1f2d40;color:#58a6ff;padding:2px 8px;border-radius:4px;font-weight:600">${DATA_DATE||"Today"}</span>
-    <span>Updates live as games finish &mdash; resets when next day's games begin</span>
+  // ── Header ────────────────────────────────────────────────────────────────
+  let html = `
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+    <span style="background:#1f2d40;color:#58a6ff;padding:3px 10px;border-radius:6px;font-size:.78rem;font-weight:600">${DATA_DATE||"Today"}</span>
+    <span style="color:#8b949e;font-size:.78rem">Updates live as games finish</span>
   </div>
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
-    <div class="stat-card"><div style="font-size:1.3rem;font-weight:700;color:${wins>losses?"#3fb950":wins<losses?"#f85149":"#e6edf3"}">${wins}–${losses}</div><div style="font-size:.7rem;color:#8b949e;margin-top:4px">Overall record</div></div>
-    <div class="stat-card"><div style="font-size:1.3rem;font-weight:700">${total>0?wr+"%":"—"}</div><div style="font-size:.7rem;color:#8b949e;margin-top:4px">Win rate</div></div>
-    <div class="stat-card"><div style="font-size:1.3rem;font-weight:700;color:#ffc107">${lockW}–${lockL}</div><div style="font-size:.7rem;color:#8b949e;margin-top:4px">LOCK record</div></div>
-    <div class="stat-card"><div style="font-size:1.3rem;font-weight:700;color:#8b949e">${pending.length}</div><div style="font-size:.7rem;color:#8b949e;margin-top:4px">Games pending</div></div>
+
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
+    <div class="stat-card">
+      <div style="font-size:1.4rem;font-weight:700;color:${wins>losses?"#3fb950":wins<losses?"#f85149":"#e6edf3"}">${wins}–${losses}</div>
+      <div style="font-size:.7rem;color:#8b949e;margin-top:4px">Record (final)</div>
+    </div>
+    <div class="stat-card">
+      <div style="font-size:1.4rem;font-weight:700">${total>0?wr+"%":"—"}</div>
+      <div style="font-size:.7rem;color:#8b949e;margin-top:4px">Win rate</div>
+    </div>
+    <div class="stat-card">
+      <div style="font-size:1.4rem;font-weight:700;color:#ffc107">${lockW}–${lockL}</div>
+      <div style="font-size:.7rem;color:#8b949e;margin-top:4px">🔒 Lock record</div>
+    </div>
+    <div class="stat-card">
+      <div style="font-size:1.4rem;font-weight:700;color:#8b949e">${pending}</div>
+      <div style="font-size:.7rem;color:#8b949e;margin-top:4px">Still in progress</div>
+    </div>
   </div>`;
 
-  if(completed.length===0 && pending.length===0){
-    html += `<div style="color:#8b949e;text-align:center;padding:40px 0;font-size:.88rem">No picks yet today — check back once games begin.</div>`;
+  // ── No picks yet ──────────────────────────────────────────────────────────
+  if(completed.length===0){
+    html += `<div style="color:#8b949e;text-align:center;padding:60px 0;font-size:.88rem">
+      ${pending>0 ? `⚾ ${pending} pick${pending>1?"s":""} in progress — check back as games finish.` : "No picks yet today."}
+    </div>`;
     el.innerHTML = html;
     return;
   }
 
-  // Completed pick cards
-  if(completed.length>0){
-    html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Completed picks</div>`;
-    completed.forEach(({pick:p, score:sc, result:res})=>{
-      const borderColor = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
-      const badgeBg     = res==="win"?"rgba(63,185,80,.15)":res==="loss"?"rgba(248,81,73,.15)":"rgba(139,148,158,.15)";
-      const badgeColor  = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
-      const badgeText   = res==="win"?"WIN":res==="loss"?"LOSS":"PUSH";
-      const tc = TIER_COLOR[p.tier]||"#8b949e";
-      html += `<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 14px;margin-bottom:8px;border-left:3px solid ${borderColor}">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap;gap:6px">
-          <div style="font-size:.75rem;color:#8b949e">${p.away} @ ${p.home}</div>
-          <div style="display:flex;gap:6px;align-items:center">
-            ${sc?`<span style="background:#21262d;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">${scoreStr(sc)}</span>`:""}
-            <span style="background:${badgeBg};color:${badgeColor};font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:4px">${badgeText}</span>
-          </div>
-        </div>
-        <div style="font-size:.85rem;font-weight:600;margin-bottom:4px"><span style="color:${tc}">${p.tier}</span> ${p.label}</div>
-        <div style="font-size:.7rem;color:#8b949e;display:flex;gap:10px">${p.conf}% confidence &nbsp;|&nbsp; Half-Kelly: ${p.kelly_pct!==undefined?p.kelly_pct+"%" : "—"}</div>
-      </div>`;
-    });
-  }
+  // ── Completed pick cards ──────────────────────────────────────────────────
+  html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Final picks — ${completed.length} game${completed.length!==1?"s":""}</div>`;
 
-  // Pending pick cards (muted)
-  if(pending.length>0){
-    html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px">Pending</div>`;
-    pending.forEach(({pick:p, score:sc, result:res})=>{
-      const tc = TIER_COLOR[p.tier]||"#8b949e";
-      const liveLabel = res==="live" && sc ? `<span style="background:rgba(255,167,38,.15);color:#ffa726;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:4px">In progress &mdash; ${sc.label}</span>` : "";
-      html += `<div style="background:#161b22;border:1px solid #21262d;border-radius:10px;padding:12px 14px;margin-bottom:8px;opacity:.65">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap;gap:6px">
-          <div style="font-size:.75rem;color:#8b949e">${p.away} @ ${p.home}</div>
-          ${liveLabel}
-        </div>
-        <div style="font-size:.85rem;font-weight:600"><span style="color:${tc}">${p.tier}</span> ${p.label}</div>
-        <div style="font-size:.7rem;color:#8b949e;margin-top:4px">${p.conf}% confidence</div>
-      </div>`;
-    });
-  }
+  completed.forEach(({pick:p, score:sc, result:res})=>{
+    const borderColor = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
+    const badgeBg     = res==="win"?"rgba(63,185,80,.15)":res==="loss"?"rgba(248,81,73,.15)":"rgba(139,148,158,.1)";
+    const badgeColor  = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
+    const badgeText   = res==="win"?"WIN ✓":res==="loss"?"LOSS ✗":"PUSH";
+    const tc = TIER_COLOR[p.tier]||"#8b949e";
+    const sc2 = scoreStr(sc);
 
-  // Parlay section
-  const allParlays = [...(DATA_P2||[]), ...(DATA_P3||[])];
-  if(allParlays.length>0){
-    const completedParlays = allParlays.filter(par => {
-      const res = parlaySummary(par.picks||par.legs||par);
-      return res==="win"||res==="loss";
-    });
-    const pendingParlays = allParlays.filter(par => {
-      const res = parlaySummary(par.picks||par.legs||par);
-      return res==="pending";
-    });
-    if(completedParlays.length+pendingParlays.length>0){
-      html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px">Parlays</div>`;
-      [...completedParlays,...pendingParlays].forEach(par=>{
-        const legs = par.picks||par.legs||par;
-        const res = parlaySummary(legs);
-        const borderColor = res==="win"?"#3fb950":res==="loss"?"#f85149":"#ffa726";
-        const badgeText   = res==="win"?"WIN":res==="loss"?"LOSS":"In progress";
-        const badgeBg     = res==="win"?"rgba(63,185,80,.15)":res==="loss"?"rgba(248,81,73,.15)":"rgba(255,167,38,.15)";
-        const badgeColor  = res==="win"?"#3fb950":res==="loss"?"#f85149":"#ffa726";
-        html += `<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 14px;margin-bottom:8px;border-left:3px solid ${borderColor}">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-weight:600;font-size:.82rem">${Array.isArray(legs)?legs.length:2}-leg parlay</div>
-            <span style="background:${badgeBg};color:${badgeColor};font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:4px">${badgeText}</span>
-          </div>`;
-        if(Array.isArray(legs)){
-          legs.forEach(leg=>{
-            const sc2 = findScore(leg);
-            const lr  = pickResult(leg,sc2);
-            const lc  = lr==="win"?"#3fb950":lr==="loss"?"#f85149":"#8b949e";
-            const icon= lr==="win"?"✓":lr==="loss"?"✗":"◦";
-            html += `<div style="font-size:.75rem;color:${lc};padding:3px 0;border-bottom:1px solid #21262d">${icon} ${leg.label||leg.team} ${sc2?`— ${scoreStr(sc2)}`:""}</div>`;
-          });
-        }
-        html += `</div>`;
-      });
-    }
-  }
-
-  // Sharp action summary (condensed table for completed games)
-  const completedMovement = (DATA_MOVEMENT||[]).filter(mv=>{
-    const sc = (DATA_SCORES||[]).find(s=>s.away===mv.away&&s.home===mv.home);
-    return sc && (sc.label==="Final"||(sc.label||"").startsWith("F/"));
+    html += `
+    <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid ${borderColor};border-radius:10px;padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:.72rem;color:#8b949e;margin-bottom:3px">${p.away||""} @ ${p.home||""}</div>
+        <div style="font-size:.9rem;font-weight:700"><span style="color:${tc}">${p.tier}</span> ${p.label}</div>
+        <div style="font-size:.68rem;color:#8b949e;margin-top:3px">${p.conf}% conf${p.kelly_pct!==undefined?" &nbsp;|&nbsp; Kelly: "+p.kelly_pct+"%":""}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        ${sc2?`<div style="font-size:.75rem;color:#e6edf3;font-weight:600">${sc2}</div>`:""}
+        <span style="background:${badgeBg};color:${badgeColor};font-size:.78rem;font-weight:700;padding:3px 12px;border-radius:6px">${badgeText}</span>
+      </div>
+    </div>`;
   });
-  if(completedMovement.length>0){
-    const smW=completed.filter(c=>c.result==="win").length;
-    const smL=completed.filter(c=>c.result==="loss").length;
-    const smD=smW+smL;
-    let ssW=0,ssL=0,bw=0;
-    const sharpRows = completedMovement.map(mv=>{
-      const sig = mv.ml_signal==="STEAM"||mv.ml_signal==="DRIFT" ? mv.ml_signal : mv.total_signal;
+
+  // ── Parlays (completed only) ───────────────────────────────────────────────
+  const allParlays = [...(DATA_P2||[]), ...(DATA_P3||[])];
+  const doneParlays = allParlays.filter(par => {
+    const legs = par.picks||par.legs||par;
+    if(!Array.isArray(legs)) return false;
+    return legs.every(l => { const s=findScore(l); return isFinal(s); });
+  });
+
+  if(doneParlays.length>0){
+    html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:16px 0 10px">Parlays — final</div>`;
+    doneParlays.forEach(par=>{
+      const legs = par.picks||par.legs||par;
+      const results = legs.map(l=>pickResult(l,findScore(l)));
+      const res = results.every(r=>r==="win")?"win":results.some(r=>r==="loss"||r==="push")?"loss":"pending";
+      const borderColor = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
+      const badgeText   = res==="win"?"WIN ✓":res==="loss"?"LOSS ✗":"—";
+      const badgeColor  = res==="win"?"#3fb950":"#f85149";
+      html += `<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid ${borderColor};border-radius:10px;padding:12px 16px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-weight:700;font-size:.83rem">${Array.isArray(legs)?legs.length:2}-leg parlay</div>
+          <span style="color:${badgeColor};font-weight:700;font-size:.8rem">${badgeText}</span>
+        </div>`;
+      if(Array.isArray(legs)){
+        legs.forEach(leg=>{
+          const sc3=findScore(leg); const lr=pickResult(leg,sc3);
+          const lc=lr==="win"?"#3fb950":lr==="loss"?"#f85149":"#8b949e";
+          const icon=lr==="win"?"✓":lr==="loss"?"✗":"◦";
+          html+=`<div style="font-size:.75rem;color:${lc};padding:3px 0;border-bottom:1px solid #21262d">${icon} ${leg.label||leg.team||""}${sc3?` — ${scoreStr(sc3)}`:""}</div>`;
+        });
+      }
+      html += `</div>`;
+    });
+  }
+
+  // ── Sharp action — final games only ──────────────────────────────────────
+  const finalMovement = (DATA_MOVEMENT||[]).filter(mv=>{
+    const sc = (DATA_SCORES||[]).find(s=>s.away===mv.away&&s.home===mv.home);
+    return sc && isFinal(sc);
+  });
+
+  if(finalMovement.length>0){
+    let ssW=0,ssL=0,bw=0,mW=0,mL=0;
+    const sharpRows = finalMovement.map(mv=>{
+      const sig = mv.ml_signal==="STEAM"||mv.ml_signal==="DRIFT" ? mv.ml_signal : (mv.total_signal||"MOVE");
       const sigColor = sig==="STEAM"?"#ef5350":sig==="DRIFT"?"#ffa726":"#8b949e";
       const sc = (DATA_SCORES||[]).find(s=>s.away===mv.away&&s.home===mv.home);
-      const awayScore=parseInt(sc?.away_score||0), homeScore=parseInt(sc?.home_score||0);
-      const actualWinner = awayScore>homeScore ? mv.away : mv.home;
+      const awayFinal=parseInt(sc?.away_score||0), homeFinal=parseInt(sc?.home_score||0);
+      const actualWinner = awayFinal>homeFinal ? mv.away : mv.home;
       const winnerNick = (actualWinner||"").split(" ").slice(-1)[0];
-      const sharpNick = (mv.sharp_side||"").split(" ").slice(-1)[0].toLowerCase();
+      const sharpNick  = (mv.sharp_side||"").split(" ").slice(-1)[0].toLowerCase();
       const winnerNickL = winnerNick.toLowerCase();
       const pick = (DATA_PICKS||[]).find(p=>p.away===mv.away&&p.home===mv.home&&(p.type==="ML"||p.type==="RL"));
-      const modelStr = pick ? `<span style="color:${TIER_COLOR[pick.tier]||"#8b949e"}">${pick.tier}</span> ${(pick.team||"").split(" ").slice(-1)[0]}` : `<span style="color:#8b949e">Pass</span>`;
-      let winnerStr="—",winnerColor="#8b949e";
+      const modelStr = pick
+        ? `<span style="color:${TIER_COLOR[pick.tier]||"#8b949e"}">${pick.tier}</span> ${(pick.team||"").split(" ").slice(-1)[0]}`
+        : `<span style="color:#8b949e">Pass</span>`;
+      let winnerStr="—",wc="#8b949e";
       if(mv.sharp_side && actualWinner){
         const pickNick = pick?(pick.team||"").split(" ").slice(-1)[0].toLowerCase():"";
-        if(sharpNick===winnerNickL && pickNick===winnerNickL){
-          winnerStr="Agree ✓";winnerColor="#3fb950";ssW++;smW&&0;
-        } else if(sharpNick===winnerNickL && pickNick!==winnerNickL && pick){
-          winnerStr="⚡ Sharp";winnerColor="#ffa726";ssW++;
-        } else if(sharpNick!==winnerNickL && pickNick===winnerNickL && pick){
-          winnerStr="✓ Model";winnerColor="#3fb950";ssL++;
-        } else if(sharpNick!==winnerNickL && pick && pickNick!==winnerNickL){
-          winnerStr='<span style="background:rgba(239,83,80,.15);color:#ef5350;padding:1px 6px;border-radius:3px;font-size:.68rem">Both Wrong</span>';bw++;ssL++;
-        } else if(sharpNick!==winnerNickL){
-          winnerStr="✗ Sharp";winnerColor="#f85149";ssL++;
-        }
+        if(sharpNick===winnerNickL && pickNick===winnerNickL){ winnerStr="Agree ✓";wc="#3fb950";ssW++;mW++; }
+        else if(sharpNick===winnerNickL && pickNick!==winnerNickL && pick){ winnerStr="⚡ Sharp";wc="#ffa726";ssW++;mL++; }
+        else if(sharpNick!==winnerNickL && pickNick===winnerNickL && pick){ winnerStr="✓ Model";wc="#3fb950";ssL++;mW++; }
+        else if(sharpNick!==winnerNickL && pick && pickNick!==winnerNickL){ winnerStr='<span style="background:rgba(239,83,80,.15);color:#ef5350;padding:1px 6px;border-radius:3px;font-size:.68rem">Both Wrong</span>';bw++;ssL++;mL++; }
+        else if(sharpNick!==winnerNickL){ winnerStr="✗ Sharp";wc="#f85149";ssL++; }
       }
       return `<tr>
-        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${mv.away.split(" ").slice(-1)[0]} @ ${mv.home.split(" ").slice(-1)[0]}</td>
-        <td style="padding:7px 10px;border-bottom:1px solid #21262d;color:${sigColor};font-weight:700;font-size:.72rem">${sig||"—"}</td>
-        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${mv.sharp_side?mv.sharp_side.split(" ").slice(-1)[0]:"—"}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${(mv.away||"").split(" ").slice(-1)[0]} @ ${(mv.home||"").split(" ").slice(-1)[0]}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;color:${sigColor};font-weight:700;font-size:.72rem">${sig}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${mv.sharp_side?(mv.sharp_side||"").split(" ").slice(-1)[0]:"—"}</td>
         <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${modelStr}</td>
-        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem;font-weight:600">${winnerNick||"—"}</td>
-        <td style="padding:7px 10px;border-bottom:1px solid #21262d;color:${winnerColor};font-weight:700;font-size:.75rem">${winnerStr}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-weight:600;font-size:.75rem">${winnerNick||"—"}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;color:${wc};font-weight:700;font-size:.75rem">${winnerStr}</td>
       </tr>`;
     }).join("");
-    html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px">Sharp action — completed games</div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
-      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700">${smW}/${smD}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Model W/L</div></div>
-      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700">${ssW}/${ssW+ssL}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Sharp W/L</div></div>
+
+    const mD=mW+mL, sD=ssW+ssL;
+    html += `
+    <div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:20px 0 10px">Sharp action — final games</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">
+      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700">${mD>0?mW+"/"+mD:"—"}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Model W/L</div></div>
+      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700">${sD>0?ssW+"/"+sD:"—"}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Sharp W/L</div></div>
       <div class="stat-card"><div style="font-size:1.1rem;font-weight:700;color:#ef5350">${bw}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Both Wrong</div></div>
     </div>
-    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:hidden">
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:hidden;margin-bottom:16px">
       <table style="width:100%;border-collapse:collapse">
         <thead><tr style="border-bottom:1px solid #30363d">
-          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Game</th>
-          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Signal</th>
-          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Sharp side</th>
-          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Model pick</th>
-          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Result</th>
-          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase;letter-spacing:.04em">Winner</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Game</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Signal</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Sharp side</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Model</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Winner</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Edge</th>
         </tr></thead>
         <tbody>${sharpRows}</tbody>
       </table>

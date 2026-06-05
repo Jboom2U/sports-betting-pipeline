@@ -229,6 +229,14 @@ Expected behavior — Polymarket hard caps at 10,000 markets. The 422 is caught 
 - predeploy_check.py with stash-based route simulation + SQL column validation
 - Schedule status bar on dashboard (/schedule-status endpoint + JS countdown)
 - Sharp Action vs Model retrospective in /performance-html
+- /schedule-status route added to app.py (was missing — caused First Pitch "loading...")
+- All INTERVAL '%s days' SQL queries in picks_store.py replaced with Python date cutoff (was silently returning empty on some drivers)
+- push_grades_to_db() game+type fallback (prevents grade push failure when afternoon refresh updates pick label)
+- Yesterday panel DB fallback (builds metrics from graded picks when JSON file is missing)
+- Daily Summary tab UI redesigned — completed games only, no in-progress cards
+- Performance page filter expanded: 7d/14d/30d/60d/Season/All time
+- Market signal breakdown + monthly summary sections added to /performance-html
+- player_prop_accuracy min_picks lowered from 5 to 3
 
 ## Active Work Queue
 1. **Kalshi market matching** — debug raw KXMLB market titles vs schedule team names

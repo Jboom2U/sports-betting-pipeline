@@ -794,6 +794,87 @@ function forceOdds(btn) {{
     return Response(html, content_type="text/html; charset=utf-8")
 
 
+# ── Schedule status endpoint (JS polls every 60s for status bar) ─────────────
+
+@app.route("/schedule-status")
+def schedule_status():
+    """
+    Returns JSON with next pipeline time, next refresh time, and first pitch time.
+    Consumed by the schedule status bar in the dashboard JS.
+    """
+    import csv as _csv2
+    from datetime import datetime as _dt, timedelta as _td
+
+    now = datetime.now(ET)
+
+    # ── Next pipeline: always 6am ET next day (or today if before 6am) ────────
+    target_6am = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if now >= target_6am:
+        target_6am += _td(days=1)
+    secs_to_pipe = (target_6am - now).total_seconds()
+    if secs_to_pipe < 3600:
+        pipe_label = f"in {int(secs_to_pipe//60)}m"
+    else:
+        pipe_label = f"in {secs_to_pipe/3600:.1f}h"
+    pipe_time = target_6am.strftime("%-I:%M%p ET").lower().replace("am","am").replace("pm","pm")
+
+    # ── Next refresh: adaptive (2h before first pitch) or 11:30am fallback ────
+    target_refresh = now.replace(hour=11, minute=30, second=0, microsecond=0)
+    if now >= target_refresh:
+        target_refresh += _td(days=1)
+
+    # Try to read first pitch from schedule CSV
+    first_pitch_et = None
+    first_pitch_str = None
+    today_str = now.strftime("%Y-%m-%d")
+    sched_path = os.path.join(CLEAN_DIR, "mlb_schedule_master.csv")
+    if os.path.exists(sched_path):
+        try:
+            game_times = []
+            with open(sched_path, encoding="utf-8-sig") as _f:
+                for row in _csv2.DictReader(_f):
+                    if row.get("date","") != today_str:
+                        continue
+                    gt = row.get("game_time","").strip()
+                    if not gt or gt in ("TBD","TBA",""):
+                        continue
+                    # Parse "7:10 PM ET" or "7:10PM" style
+                    for fmt in ("%I:%M %p ET", "%I:%M%p ET", "%I:%M %p", "%I:%M%p", "%H:%M"):
+                        try:
+                            t = _dt.strptime(gt.replace(" ET","").strip(), fmt)
+                            # Combine with today's date in ET
+                            fp = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+                            game_times.append(fp)
+                            break
+                        except ValueError:
+                            continue
+            if game_times:
+                game_times.sort()
+                first_pitch_et = game_times[0]
+                first_pitch_str = first_pitch_et.strftime("%-I:%M%p ET").lower()
+                # Adaptive refresh = 2h before first pitch
+                adaptive = first_pitch_et - _td(hours=2)
+                if adaptive > now:
+                    target_refresh = adaptive
+        except Exception as _e:
+            log.debug(f"schedule-status: could not parse schedule CSV: {_e}")
+
+    secs_to_refresh = (target_refresh - now).total_seconds()
+    if secs_to_refresh < 0:
+        refresh_label = "overdue"
+    elif secs_to_refresh < 3600:
+        refresh_label = f"in {int(secs_to_refresh//60)}m"
+    else:
+        refresh_label = f"in {secs_to_refresh/3600:.1f}h"
+    refresh_time = target_refresh.strftime("%-I:%M%p ET").lower()
+
+    return {
+        "next_pipeline": {"time": pipe_time, "label": pipe_label},
+        "next_refresh":  {"time": refresh_time, "label": refresh_label},
+        "first_pitch":   {"time": first_pitch_str, "label": ""} if first_pitch_str else None,
+    }
+
+
 # ── Performance / backtesting routes ─────────────────────────────────────────
 
 @app.route("/performance")
@@ -857,11 +938,19 @@ def performance_html():
     edge_color = "#3fb950" if wr_float >= breakeven else "#f85149"
 
     # ── Day toggle links ──────────────────────────────────────────────────────
+    _day_opts = [
+        (7,    "7d"),
+        (14,   "14d"),
+        (30,   "30d"),
+        (60,   "60d"),
+        (90,   "Season"),
+        (9999, "All time"),
+    ]
     days_links = "".join(
-        '<a href="/performance-html?days={d}" {cls}>{d}d</a>'.format(
-            d=d, cls='class="active"' if d == days else ""
+        '<a href="/performance-html?days={d}" {cls}>{label}</a>'.format(
+            d=d, label=label, cls='class="active"' if d == days else ""
         )
-        for d in [7, 14, 30, 60, 90]
+        for d, label in _day_opts
     )
 
     # ── Tier bar chart data ───────────────────────────────────────────────────
@@ -926,9 +1015,91 @@ def performance_html():
             else:
                 secondary_rows += row_html
 
+    days_label = "All time" if days >= 9999 else f"Last {days} days"
+
     empty_msg = (
         "<p style='color:#8b949e;padding:20px 0'>No graded picks yet for this window.</p>"
         if not rows else ""
+    )
+
+    # ── Market signal breakdown ──────────────────────────────────────────────────
+    try:
+        from db.picks_store import get_accuracy_by_market_signal, get_monthly_accuracy
+        market_rows  = get_accuracy_by_market_signal(days=days) or []
+        monthly_rows = get_monthly_accuracy() or []
+    except Exception:
+        market_rows  = []
+        monthly_rows = []
+
+    # Build market signal HTML
+    _SIGNAL_COLOR = {"CONFIRM": "#3fb950", "DIVERGE": "#f85149", "NEUTRAL": "#8b949e"}
+    _SIGNAL_DESC  = {"CONFIRM": "Model + Market agreed", "DIVERGE": "Model vs Market split", "NEUTRAL": "No market data"}
+    _mkt_rows_html = ""
+    for _mr in market_rows:
+        _sig  = _mr.get("market_signal","NEUTRAL")
+        _mw   = int(_mr.get("wins", 0) or 0)
+        _ml2  = int(_mr.get("losses", 0) or 0)
+        _mp   = int(_mr.get("pushes", 0) or 0)
+        _md   = _mw + _ml2
+        _mwr  = f"{_mw/_md*100:.1f}%" if _md > 0 else "—"
+        _mc   = _SIGNAL_COLOR.get(_sig, "#8b949e")
+        _mdt  = _SIGNAL_DESC.get(_sig, "")
+        _mkt_rows_html += (
+            f"<tr><td style='color:{_mc};font-weight:600'>{_sig}</td>"
+            f"<td style='color:#8b949e;font-size:.75rem'>{_mdt}</td>"
+            f"<td style='color:#3fb950'>{_mw}</td>"
+            f"<td style='color:#f85149'>{_ml2}</td>"
+            f"<td style='color:#8b949e'>{_mp}</td>"
+            f"<td><strong>{_mwr}</strong></td></tr>\n"
+        )
+    if not _mkt_rows_html:
+        _mkt_rows_html = "<tr><td colspan='6' style='color:#8b949e;padding:14px'>No graded picks yet.</td></tr>"
+
+    _market_section_html = (
+        '<div class="secondary-section" style="margin-top:24px">'
+        '<div class="secondary-toggle" '
+        'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
+        'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\' ▼\':\'▶\'">'
+        '<span class="arr">▶</span> Market Signal Breakdown (CONFIRM / DIVERGE / NEUTRAL)'
+        '</div><div class="secondary-body">'
+        '<div class="table-card" style="margin-top:12px"><table>'
+        '<thead><tr><th>Signal</th><th>Description</th><th>W</th><th>L</th><th>Push</th><th>Win %</th></tr></thead>'
+        f'<tbody>{_mkt_rows_html}</tbody></table></div>'
+        '</div></div>'
+    )
+
+    # Build monthly summary HTML
+    _mon_rows_html = ""
+    for _mr in monthly_rows:
+        _mon   = _mr.get("month","")
+        _mow   = int(_mr.get("wins",   0) or 0)
+        _mol   = int(_mr.get("losses", 0) or 0)
+        _mop   = int(_mr.get("pushes", 0) or 0)
+        _mod   = _mow + _mol
+        _mowr  = f"{_mow/_mod*100:.1f}%" if _mod > 0 else "—"
+        _moac  = float(_mr.get("avg_conf") or 0) * 100
+        _moc   = "#3fb950" if _mod > 0 and _mow/_mod >= 0.524 else "#f85149"
+        _mon_rows_html += (
+            f"<tr><td style='font-weight:600'>{_mon}</td>"
+            f"<td style='color:#3fb950'>{_mow}</td><td style='color:#f85149'>{_mol}</td>"
+            f"<td style='color:#8b949e'>{_mop}</td>"
+            f"<td style='color:{_moc};font-weight:600'>{_mowr}</td>"
+            f"<td style='color:#8b949e'>{_moac:.1f}%</td></tr>\n"
+        )
+    if not _mon_rows_html:
+        _mon_rows_html = "<tr><td colspan='6' style='color:#8b949e;padding:14px'>No monthly data yet.</td></tr>"
+
+    _monthly_section_html = (
+        '<div class="secondary-section" style="margin-top:24px">'
+        '<div class="secondary-toggle" '
+        'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
+        'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\' ▼\':\'▶\'">'
+        '<span class="arr">▶</span> Monthly Summary'
+        '</div><div class="secondary-body">'
+        '<div class="table-card" style="margin-top:12px"><table>'
+        '<thead><tr><th>Month</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th></tr></thead>'
+        f'<tbody>{_mon_rows_html}</tbody></table></div>'
+        '</div></div>'
     )
 
     try:
@@ -1300,7 +1471,7 @@ def performance_html():
     <h1>📊 Model Performance</h1>
     <a href="/" class="back-link">← Back to Picks</a>
   </div>
-  <p class="sub">Last {days} days — graded picks only</p>
+  <p class="sub">{days_label} — graded picks only</p>
 
   <div class="days-nav">{days_links}</div>
 
@@ -1352,6 +1523,10 @@ def performance_html():
       </div>
     </div>
   </div>
+
+  {_market_section_html}
+
+  {_monthly_section_html}
 
   {_sharp_section_html}
 
