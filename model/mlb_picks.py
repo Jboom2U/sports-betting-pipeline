@@ -218,6 +218,12 @@ def build_thematic_parlays(picks: list, max_parlays: int = 3) -> list:
         if _theme(combo[0]) != _theme(combo[1]):
             continue
         combined = combo[0]["conf"] * combo[1]["conf"]
+        theme_label = {
+            "ml": "Moneyline plays",
+            "over": "Over plays",
+            "under": "Under plays",
+            "rl": "Run line plays",
+        }.get(_theme(combo[0]), "Thematic plays")
         results.append({
             "legs":     list(combo),
             "n_legs":   2,
@@ -226,6 +232,7 @@ def build_thematic_parlays(picks: list, max_parlays: int = 3) -> list:
             "summary":  " + ".join(p["label"] for p in combo),
             "min_leg":  min(p["conf"] for p in combo),
             "theme":    _theme(combo[0]),
+            "thesis":   theme_label + ": " + " + ".join(p["label"] for p in combo),
         })
 
     results.sort(key=lambda x: x["combined"], reverse=True)
