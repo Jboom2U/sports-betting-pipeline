@@ -187,6 +187,50 @@ def build_parlays(picks: list, legs: int = 2, max_parlays: int = 3) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THEMATIC PARLAY BUILDER
+# ─────────────────────────────────────────────────────────────────────────────
+def build_thematic_parlays(picks: list, max_parlays: int = 3) -> list:
+    """
+    Build thematic 2-leg parlays grouped by pick type/direction.
+    E.g. all-favorites, all-overs, all-unders, etc.
+    Returns a list of parlay dicts (same shape as build_parlays output).
+    """
+    from itertools import combinations as _comb
+
+    qualified = [p for p in picks if p.get("conf", 0) >= PARLAY_MIN]
+
+    def _theme(p):
+        label = (p.get("label") or "").lower()
+        t = p.get("pick_type", "")
+        if t == "TOTAL":
+            return "over" if "over" in label else "under"
+        if t == "RL":
+            return "rl"
+        return "ml"
+
+    results = []
+    for combo in _comb(qualified, 2):
+        game_ids = [p["game_id"] for p in combo]
+        if len(set(game_ids)) < 2:
+            continue
+        if _theme(combo[0]) != _theme(combo[1]):
+            continue
+        combined = combo[0]["conf"] * combo[1]["conf"]
+        results.append({
+            "legs":     list(combo),
+            "n_legs":   2,
+            "combined": round(combined, 4),
+            "payout":   PARLAY_PAYOUTS.get(2, "+260"),
+            "summary":  " + ".join(p["label"] for p in combo),
+            "min_leg":  min(p["conf"] for p in combo),
+            "theme":    _theme(combo[0]),
+        })
+
+    results.sort(key=lambda x: x["combined"], reverse=True)
+    return results[:max_parlays]
+
 # REASONING STRINGS
 # ─────────────────────────────────────────────────────────────────────────────
 def _fmt_era(val) -> str:
