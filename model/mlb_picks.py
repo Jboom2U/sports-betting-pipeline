@@ -232,7 +232,8 @@ def build_thematic_parlays(picks: list, max_parlays: int = 3) -> list:
             "summary":  " + ".join(p["label"] for p in combo),
             "min_leg":  min(p["conf"] for p in combo),
             "theme":    _theme(combo[0]),
-            "thesis":   theme_label + ": " + " + ".join(p["label"] for p in combo),
+            "thesis":      theme_label,
+            "thesis_desc": theme_label + ": " + " + ".join(p["label"] for p in combo),
         })
 
     results.sort(key=lambda x: x["combined"], reverse=True)
