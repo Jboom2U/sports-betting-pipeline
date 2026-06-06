@@ -1265,7 +1265,7 @@ class MLBModel:
                 and r.get("status", "").lower() == "final"]
 
     # ── Score All Games for a Date ────────────────────────────────────────────
-    def score_today(self, target_date: str = None) -> tuple:
+    def score_today(self, target_date: str = None, pivot: bool = False) -> tuple:
         """
         Score all games for target_date. Returns (scored_games, actual_date).
         Automatically excludes games that have started or finished.
