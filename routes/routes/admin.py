@@ -19,16 +19,6 @@ log = logging.getLogger(__name__)
 
 admin_bp = Blueprint("admin", __name__)
 
-import os as _os
-
-@admin_bp.before_request
-def _require_admin_login():
-    from flask import session as _sess, redirect as _redir, request as _req
-    _pw = _os.environ.get("ADMIN_PASSWORD", "")
-    if _pw and not _sess.get("admin_auth"):
-        return _redir(f"/admin/login?next={_req.path}")
-
-
 
 # ── HTML ──────────────────────────────────────────────────────────────────────
 

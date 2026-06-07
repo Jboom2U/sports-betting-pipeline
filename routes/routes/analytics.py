@@ -23,16 +23,6 @@ ET   = ZoneInfo("America/New_York")
 
 analytics_bp = Blueprint("analytics", __name__)
 
-import os as _os
-
-@analytics_bp.before_request
-def _require_analytics_login():
-    from flask import session as _sess, redirect as _redir, request as _req
-    _pw = _os.environ.get("ADMIN_PASSWORD", "")
-    if _pw and not _sess.get("admin_auth"):
-        return _redir(f"/admin/login?next={_req.path}")
-
-
 
 # ── DB schema context sent to Claude for SQL generation ───────────────────────
 _SCHEMA_CONTEXT = """

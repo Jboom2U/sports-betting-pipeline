@@ -17,7 +17,7 @@ import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import Flask, Response, redirect, request
+from flask import Flask, Response, redirect, request, session
 from flask_compress import Compress
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -39,7 +39,17 @@ except ImportError as _e:
     _DB_AVAILABLE = False
 
 app = Flask(__name__)
-Compress(app)   # gzip all responses — shrinks 570KB HTML to ~80KB
+app.secret_key = os.environ.get("ADMIN_SECRET", "statalizers-dev-key-change-me")
+Compress(app)   # gzip all responses
+# ── Route blueprints ──────────────────────────────────────────────────────────
+try:
+    from routes.analytics import analytics_bp
+    from routes.admin import admin_bp
+    app.register_blueprint(analytics_bp)
+    app.register_blueprint(admin_bp)
+    log.info("Route blueprints registered.")
+except ImportError as _be:
+    log.warning(f"Route blueprints not available: {_be}")
 
 BASE_DIR  = os.path.dirname(__file__)
 CLEAN_DIR = os.path.join(BASE_DIR, "data", "clean")
@@ -451,6 +461,134 @@ def get_cached_html() -> str:
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+# ── Admin login ───────────────────────────────────────────────────────────────
+_ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "")
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    error = ""
+    next_url = request.args.get("next", "/admin/model-config")
+    if request.method == "POST":
+        if request.form.get("password") == _ADMIN_PASS and _ADMIN_PASS:
+            session["admin_auth"] = True
+            return redirect(request.form.get("next", "/admin/model-config"))
+        error = "Invalid password"
+        next_url = request.form.get("next", "/admin/model-config")
+    return Response(f"""<!DOCTYPE html>
+<html><head><title>Statalizers Admin</title>
+<style>
+body{{background:#0d1117;color:#e6edf3;font-family:-apple-system,sans-serif;
+  display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+.box{{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:2rem 2.5rem;width:320px}}
+h2{{margin:0 0 1.5rem;font-size:18px;font-weight:600}}
+input{{width:100%;padding:.5rem .75rem;border-radius:6px;border:1px solid #30363d;
+  background:#21262d;color:#e6edf3;font-size:14px;box-sizing:border-box}}
+.err{{color:#f85149;font-size:13px;margin-top:.75rem;min-height:1.2em}}
+button{{margin-top:1rem;width:100%;padding:.5rem;background:#58a6ff;color:#000;
+  font-weight:600;border:none;border-radius:6px;cursor:pointer;font-size:14px}}
+button:hover{{opacity:.85}}
+</style></head>
+<body><div class="box">
+<h2>⚾ Statalizers admin</h2>
+<form method="post">
+  <input type="hidden" name="next" value="{next_url}">
+  <input type="password" name="password" placeholder="Password" autofocus>
+  <div class="err">{error}</div>
+  <button type="submit">Sign in</button>
+</form>
+</div></body></html>""", mimetype="text/html")
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.pop("admin_auth", None)
+    return redirect("/")
+
+@app.route("/admin")
+def admin_hub():
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin")
+    return Response("""<!DOCTYPE html>
+<html><head><title>Statalizers Admin</title>
+<style>
+body{background:#0d1117;color:#e6edf3;font-family:-apple-system,sans-serif;margin:0}
+nav{background:#161b22;border-bottom:1px solid #30363d;padding:.75rem 1.5rem;
+  display:flex;align-items:center;gap:1.5rem}
+.logo{font-size:15px;font-weight:600}
+nav a{color:#8b949e;font-size:13px;text-decoration:none}
+nav a:hover{color:#e6edf3}
+.container{max-width:800px;margin:2rem auto;padding:0 1.5rem}
+h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
+.sub{color:#8b949e;font-size:13px;margin-bottom:2rem}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+@media(max-width:540px){.grid{grid-template-columns:1fr}}
+.card{background:#161b22;border:1px solid #30363d;border-radius:10px;
+  padding:1.25rem 1.5rem;text-decoration:none;color:inherit;display:block;
+  transition:border-color .15s}
+.card:hover{border-color:#58a6ff}
+.card-title{font-size:15px;font-weight:600;margin-bottom:.3rem}
+.card-desc{font-size:13px;color:#8b949e}
+.badge{display:inline-block;font-size:11px;padding:2px 7px;border-radius:20px;
+  margin-bottom:.5rem;font-weight:600}
+.badge-public{background:#1f3d2e;color:#3fb950}
+.badge-admin{background:#2d2016;color:#d29922}
+.logout{margin-top:2rem;font-size:13px;color:#8b949e}
+.logout a{color:#8b949e}
+</style></head>
+<body>
+<nav><span class="logo">⚾ Statalizers</span>
+  <a href="/">Dashboard</a>
+  <a href="/admin">Admin</a>
+</nav>
+<div class="container">
+  <h1>Admin hub</h1>
+  <p class="sub">All internal routes for Statalizers.com</p>
+  <div class="grid">
+    <a class="card" href="/">
+      <span class="badge badge-public">Public</span>
+      <div class="card-title">Main dashboard</div>
+      <div class="card-desc">Today's picks by confidence tier</div>
+    </a>
+    <a class="card" href="/performance-html">
+      <span class="badge badge-public">Public</span>
+      <div class="card-title">Performance tracker</div>
+      <div class="card-desc">W/L/ROI by tier, sharp action table, 7-90d toggles</div>
+    </a>
+    <a class="card" href="/analytics">
+      <span class="badge badge-admin">Admin</span>
+      <div class="card-title">Analytics dashboard</div>
+      <div class="card-desc">Natural language DB queries, pick trends</div>
+    </a>
+    <a class="card" href="/admin/model-config">
+      <span class="badge badge-admin">Admin</span>
+      <div class="card-title">Model control panel</div>
+      <div class="card-desc">Tune signal weights, preview pick impact, save config</div>
+    </a>
+    <a class="card" href="/status">
+      <span class="badge badge-admin">Admin</span>
+      <div class="card-title">Pipeline status</div>
+      <div class="card-desc">Last run, DB connection, R2 storage health</div>
+    </a>
+    <a class="card" href="/schedule-status">
+      <span class="badge badge-admin">Admin</span>
+      <div class="card-title">Schedule status</div>
+      <div class="card-desc">6am pipeline, 11:30am refresh, odds snapshots</div>
+    </a>
+    <a class="card" href="/force-pipeline">
+      <span class="badge badge-admin">Admin</span>
+      <div class="card-title">Force pipeline</div>
+      <div class="card-desc">Manually trigger the full 6am pipeline</div>
+    </a>
+    <a class="card" href="/unstick">
+      <span class="badge badge-admin">Admin</span>
+      <div class="card-title">Unstick pipeline</div>
+      <div class="card-desc">Clear stuck pipeline state and restart</div>
+    </a>
+  </div>
+  <p class="logout"><a href="/admin/logout">Sign out</a></p>
+</div></body></html>""", mimetype="text/html")
+
+
 @app.route("/")
 def index():
     return Response(get_cached_html(), content_type="text/html; charset=utf-8")
