@@ -348,27 +348,32 @@ def model_config_preview():
         return jsonify({"changes": []})
 
     try:
-        # Get the app's model instance
-        model = getattr(current_app, "model", None)
-        if model is None or not model._loaded:
-            return jsonify({"error": "Model not loaded yet — try again in a moment"}), 503
+        # Load model on demand (not stored on app object)
+        from model.mlb_model import MLBModel
+        from model.mlb_picks import generate_picks
+        from db.model_config import load_config
+
+        model = MLBModel()
+        model.load()
+        if not model._loaded:
+            return jsonify({"error": "Model data not available — run the pipeline first"}), 503
+
+        # Current config = DB config (same as what the live picks use)
+        old_cfg = load_config() or model.cfg.copy()
+        model.cfg = old_cfg
 
         # Score with current config
-        old_cfg   = model.cfg.copy()
         old_games, _ = model.score_today()
-        from model.mlb_picks import generate_picks
         old_picks_by_key = {}
         for p in generate_picks(old_games, old_cfg):
             key = (p.get("game", ""), p.get("label", ""))
             old_picks_by_key[key] = p
 
         # Score with new config
-        model.cfg = {**old_cfg, **new_cfg}
+        merged_cfg = {**old_cfg, **new_cfg}
+        model.cfg = merged_cfg
         new_games, _ = model.score_today()
-        new_picks = generate_picks(new_games, model.cfg)
-
-        # Restore
-        model.cfg = old_cfg
+        new_picks = generate_picks(new_games, merged_cfg)
 
         # Diff
         changes = []
