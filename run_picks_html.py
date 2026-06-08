@@ -1085,6 +1085,32 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .yday-findings{display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--border);padding-top:10px;margin-top:4px}
 .yday-finding{font-size:.74rem;color:var(--sub);line-height:1.5}
 .yday-finding.warn{color:#ffb74d}
+.yday-tier-row{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 10px}
+.yday-tier-chip{background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:8px 14px;min-width:90px;text-align:center}
+.yday-tier-name{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.yday-tier-record{font-size:1.1rem;font-weight:800}
+.yday-tier-pct{font-size:.7rem;color:var(--sub);margin-top:2px}
+.yday-overall-row{display:flex;gap:16px;flex-wrap:wrap;align-items:center;padding:8px 0;border-top:1px solid var(--border);margin-top:4px;font-size:.8rem}
+.yday-overall-rec{font-weight:700;color:var(--text)}
+.yday-overall-roi{font-weight:700}
+.yday-overall-profit{color:var(--sub)}
+.yday-overall-props{color:#a78bfa}
+.yday-props-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.yday-prop-chip{font-size:.72rem;padding:3px 8px;border-radius:4px;font-weight:600}
+.yday-prop-chip.win{background:rgba(63,185,80,.15);color:#3fb950;border:1px solid rgba(63,185,80,.3)}
+.yday-prop-chip.loss{background:rgba(248,81,73,.12);color:#f85149;border:1px solid rgba(248,81,73,.25)}
+.yday-bankroll-wrap{display:flex;gap:14px;align-items:flex-start;margin-bottom:0}
+.yday-bankroll-wrap #yesterdayBanner{flex:1;min-width:0}
+.bankroll-widget{background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:14px 16px;min-width:175px;max-width:210px;flex-shrink:0}
+.bk-title{font-size:.7rem;color:#8b949e;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+.bk-input-row{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.bk-dollar{font-size:1rem;font-weight:700;color:#e6edf3}
+.bk-input{background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:1.05rem;font-weight:700;padding:6px 8px;width:100%;outline:none;-moz-appearance:textfield}
+.bk-input::-webkit-outer-spin-button,.bk-input::-webkit-inner-spin-button{-webkit-appearance:none}
+.bk-input:focus{border-color:#58a6ff}
+.bk-unit-row{font-size:.75rem;color:#8b949e;margin-bottom:4px;display:none}
+.bk-unit-row strong{color:#e6edf3}
+.bk-note{font-size:.64rem;color:#484f58;margin-top:6px;line-height:1.4}
 
 /* ── PICKS GRID ── */
 .picks-grid{
@@ -1614,7 +1640,18 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
 
   <!-- PANEL: GAME PICKS -->
   <div class="section-panel active" id="panel-picks">
-    <div id="yesterdayBanner"></div>
+    <div class="yday-bankroll-wrap">
+      <div id="yesterdayBanner"></div>
+      <div class="bankroll-widget" id="bankrollWidget">
+        <div class="bk-title">💰 My Bankroll</div>
+        <div class="bk-input-row">
+          <span class="bk-dollar">$</span>
+          <input type="number" id="bankrollInput" class="bk-input" placeholder="1000" min="1" step="100">
+        </div>
+        <div class="bk-unit-row" id="bkUnitRow">1 unit = <strong id="bkUnit">$10.00</strong></div>
+        <div class="bk-note">Enter your bankroll — Kelly bets &amp; profits update everywhere.</div>
+      </div>
+    </div>
     <div class="section-title">🎯 Individual Picks</div>
     <div class="results-count" id="pickResults"></div>
     <div id="todayInProgressBanner" style="display:none;background:#1c2128;border:1px solid #30363d;border-left:3px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:12px;color:#8b949e;font-size:.85rem">
@@ -2041,7 +2078,7 @@ function renderPicks(){
 
     // Kelly Criterion sizing
     const kellyHtml = (p.kelly_pct > 0)
-      ? `<div class="kelly-row">💰 Bet sizing: ~<strong>${p.kelly_pct}%</strong> of bankroll <span class="kelly-note">(Half-Kelly at -110)</span></div>`
+      ? `<div class="kelly-row" data-kelly="${p.kelly_pct}">💰 Bet <strong class="kelly-amt">$${window._BR ? (window._BR*p.kelly_pct/100).toFixed(2) : (p.kelly_pct/100).toFixed(2)}</strong> <span class="kelly-note">${window._BR ? "on $"+window._BR.toLocaleString() : "per $1 bankroll"} (${p.kelly_pct}% Half-Kelly)</span></div>`
       : "";
 
     // Kalshi signal
@@ -2413,36 +2450,51 @@ function renderYesterday(){
   const roiColor = (m.roi || 0) >= 0 ? "var(--green)" : "var(--red)";
   const roiSign  = (m.roi || 0) >= 0 ? "+" : "";
 
-  // Top 3 findings
-  const topFindings = (d.findings || []).slice(0, 4).map(f => {
-    const isWarn = f.includes("⚠");
-    return `<div class="yday-finding${isWarn ? " warn" : ""}">${f}</div>`;
+  // Tier breakdown chips — LOCK / STRONG / LEAN each get their own W-L card
+  const TIER_ORDER = ["LOCK","STRONG","LEAN"];
+  const TIER_ICON  = {LOCK:"🔒",STRONG:"⭐⭐",LEAN:"⭐"};
+  const TIER_COL   = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a"};
+  const byTier     = (d.metrics && d.metrics.by_tier) || {};
+
+  const tierChips = TIER_ORDER.map(t => {
+    const b = byTier[t];
+    const hasData = b && b.total > 0;
+    const recColor = hasData
+      ? ((b.wins||0) > (b.losses||0) ? "var(--green)"
+          : (b.losses||0) > (b.wins||0) ? "var(--red)" : "var(--sub)")
+      : "var(--border)";
+    const record = hasData ? `${b.wins||0}-${b.losses||0}` : "—";
+    const pct    = hasData && b.win_rate ? `${(b.win_rate*100).toFixed(0)}%` : "";
+    return `<div class="yday-tier-chip">
+      <div class="yday-tier-name" style="color:${TIER_COL[t]}">${TIER_ICON[t]} ${t}</div>
+      <div class="yday-tier-record" style="color:${recColor}">${record}</div>
+      ${pct ? `<div class="yday-tier-pct">${pct}</div>` : ""}
+    </div>`;
   }).join("");
+
+  // Props summary from yesterday
+  const py = (d.props_yesterday) || {};
+  const propWins   = py.wins   != null ? py.wins   : null;
+  const propLosses = py.losses != null ? py.losses : null;
+  const propRecord = propWins != null
+    ? `🎯 Props ${propWins}-${propLosses}`
+    : "";
+  const topPropsHtml = (py.top || []).slice(0,4).map(p =>
+    `<span class="yday-prop-chip ${p.hit ? "win":"loss"}">${p.player} ${p.prop_type} ${p.hit ? "✓":"✗"}</span>`
+  ).join("");
 
   // Mini banner on picks panel
   document.getElementById("yesterdayBanner").innerHTML = `
     <div class="yesterday-banner">
       <div class="yesterday-title">📈 Yesterday (${d.date})</div>
-      <div class="yesterday-stats">
-        <div class="yday-stat yday-wins">
-          <div class="yday-num">${m.wins}</div><div class="yday-lbl">Wins</div>
-        </div>
-        <div class="yday-stat yday-losses">
-          <div class="yday-num">${m.losses}</div><div class="yday-lbl">Losses</div>
-        </div>
-        <div class="yday-stat">
-          <div class="yday-num">${wr}%</div><div class="yday-lbl">Win Rate</div>
-        </div>
-        <div class="yday-stat yday-roi">
-          <div class="yday-num" style="color:${roiColor}">${roiSign}${roi}%</div>
-          <div class="yday-lbl">ROI</div>
-        </div>
-        <div class="yday-stat">
-          <div class="yday-num">${(m.profit || 0) >= 0 ? "+" : ""}${(m.profit || 0).toFixed(2)}u</div>
-          <div class="yday-lbl">Profit</div>
-        </div>
+      <div class="yday-tier-row">${tierChips}</div>
+      <div class="yday-overall-row">
+        <span class="yday-overall-rec">${m.wins}-${m.losses} Overall</span>
+        <span class="yday-overall-roi" style="color:${roiColor}">${roiSign}${roi}% ROI</span>
+        <span class="yday-overall-profit" id="ydayProfit" data-profit="${(m.profit||0).toFixed(4)}">${(m.profit||0)>=0?"+":""}$${(window._BR ? Math.abs((m.profit||0)*window._BR) : Math.abs(m.profit||0)).toFixed(2)}${window._BR && window._BR!==1 ? "" : " <small style='color:#484f58'>($1 bankroll)</small>"}</span>
+        ${propRecord ? `<span class="yday-overall-props">${propRecord}</span>` : ""}
       </div>
-      <div class="yday-findings">${topFindings}</div>
+      ${topPropsHtml ? `<div class="yday-props-row">${topPropsHtml}</div>` : ""}
     </div>`;
 
   // Show Yesterday tab
@@ -2455,7 +2507,7 @@ function renderYesterday(){
     return `<tr>
       <td>${t}</td><td>${b.wins}-${b.losses}</td><td>${twr}</td>
       <td>${b.roi ? (b.roi*100).toFixed(1)+"%" : "—"}</td>
-      <td>${(b.profit||0) >= 0 ? "+":""  }${(b.profit||0).toFixed(2)}u</td>
+      <td>${(b.profit||0) >= 0 ? "+":"−"}$${Math.abs(b.profit||0).toFixed(2)}</td>
     </tr>`;
   }).join("");
 
@@ -2465,7 +2517,7 @@ function renderYesterday(){
     return `<tr>
       <td>${t}</td><td>${b.wins}-${b.losses}</td><td>${twr}</td>
       <td>${b.roi ? (b.roi*100).toFixed(1)+"%" : "—"}</td>
-      <td>${(b.profit||0) >= 0 ? "+" : ""}${(b.profit||0).toFixed(2)}u</td>
+      <td>${(b.profit||0) >= 0 ? "+":"−"}$${Math.abs(b.profit||0).toFixed(2)}</td>
     </tr>`;
   }).join("");
 
@@ -3923,6 +3975,57 @@ renderTicker();
 renderYesterday();
 renderPicks();
 renderSurfacedProps();
+
+// ── Bankroll Calculator ──────────────────────────────────────────────────────
+window._BR = null;  // global bankroll — pick cards read this at render time
+
+function applyBankroll(br) {
+  window._BR = (br && br > 0) ? br : null;
+  const inp = document.getElementById('bankrollInput');
+  const unitRow = document.getElementById('bkUnitRow');
+  const unitEl  = document.getElementById('bkUnit');
+  if (window._BR) {
+    localStorage.setItem('statalizers_bankroll', window._BR);
+    if (unitRow) unitRow.style.display = '';
+    if (unitEl)  unitEl.textContent = '$' + (window._BR / 100).toFixed(2);
+    if (inp && inp.value != window._BR) inp.value = window._BR;
+  }
+
+  // Update Kelly rows already in DOM
+  document.querySelectorAll('.kelly-row[data-kelly]').forEach(el => {
+    const pct = parseFloat(el.dataset.kelly || 0);
+    if (!pct) return;
+    const betAmt = window._BR ? (window._BR * pct / 100).toFixed(2) : (pct / 100).toFixed(2);
+    const note   = window._BR ? `on $${window._BR.toLocaleString()}` : 'per $1 bankroll';
+    const strong = el.querySelector('.kelly-amt');
+    if (strong) strong.textContent = '$' + betAmt;
+    const kn = el.querySelector('.kelly-note');
+    if (kn) kn.textContent = `${note} (${pct}% Half-Kelly)`;
+  });
+
+  // Update yesterday profit span
+  const profEl = document.getElementById('ydayProfit');
+  if (profEl) {
+    const units = parseFloat(profEl.dataset.profit || 0);
+    const val   = window._BR ? units * window._BR : units;
+    const sign  = val >= 0 ? '+' : '';
+    const note  = (!window._BR || window._BR === 1) ? ' <small style="color:#484f58">($1 bankroll)</small>' : '';
+    profEl.innerHTML = `${sign}$${Math.abs(val).toFixed(2)}${note}`;
+  }
+}
+
+// Wire up input
+const _bkInp = document.getElementById('bankrollInput');
+if (_bkInp) {
+  _bkInp.addEventListener('input', function() {
+    const v = parseFloat(this.value);
+    if (!isNaN(v) && v > 0) applyBankroll(v);
+  });
+  // Restore from localStorage
+  const saved = parseFloat(localStorage.getItem('statalizers_bankroll') || '');
+  if (saved && saved > 0) { _bkInp.value = saved; applyBankroll(saved); }
+}
+// ──────────────────────────────────────────────────────────────────────────────
 // Defer heavy renders so browser doesn't block on initial paint
 setTimeout(() => {
   renderSharpMoney();
@@ -4150,6 +4253,28 @@ def main(date=None, no_open=False):
 
     # Yesterday's analysis panel
     yesterday_data = load_yesterday_analysis(actual_date)
+    # Attach yesterday's prop results so banner can show props W-L
+    try:
+        from datetime import datetime as _dt2, timedelta as _td2
+        _yday_str = (_dt2.strptime(actual_date, "%Y-%m-%d") - _td2(days=1)).strftime("%Y-%m-%d")
+        from db.connection import get_conn as _gc2
+        _conn2 = _gc2()
+        if _conn2:
+            with _conn2.cursor() as _cur2:
+                _cur2.execute(
+                    "SELECT player_name, prop_type, hit FROM player_prop_history "
+                    "WHERE prop_date = %s AND hit IS NOT NULL ORDER BY hit DESC",
+                    (_yday_str,)
+                )
+                _prop_rows = _cur2.fetchall()
+            _conn2.close()
+            _pw = sum(1 for r in _prop_rows if r[2])
+            _pl = sum(1 for r in _prop_rows if not r[2])
+            _top = [{"player": r[0], "prop_type": r[1], "hit": r[2]}
+                    for r in _prop_rows[:6]]
+            yesterday_data["props_yesterday"] = {"wins": _pw, "losses": _pl, "top": _top}
+    except Exception as _pe:
+        log.debug(f"Yesterday props query failed: {_pe}")
     yesterday_json = json.dumps(yesterday_data)
 
     # Serialize projected lineups (loaded earlier for props; reuse here for JS injection)

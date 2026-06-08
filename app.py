@@ -1075,6 +1075,11 @@ def performance_html():
     edge_str  = f"+{wr_float - breakeven:.1f}%" if wr_float >= breakeven else f"{wr_float - breakeven:.1f}%"
     edge_color = "#3fb950" if wr_float >= breakeven else "#f85149"
 
+    # Profit at flat -110 (1 unit risk, 0.909 unit win)
+    overall_profit      = total_w * 0.909 - total_l * 1.0
+    overall_profit_str  = f"{overall_profit:+.2f}u"
+    overall_profit_col  = "#3fb950" if overall_profit >= 0 else "#f85149"
+
     # ── Day filter dropdown ───────────────────────────────────────────────────
     _day_opts = [
         (7,    "Last 7 days"),
@@ -1149,6 +1154,8 @@ def performance_html():
             wr3     = f"{wins/d3*100:.1f}%" if d3 > 0 else "—"
             avg_c   = f"{float(r.get('avg_conf') or 0)*100:.1f}%"
             color   = TIER_COLOR.get(t, "#8b949e")
+            row_profit = wins * 0.909 - losses * 1.0
+            row_profit_col = "#3fb950" if row_profit >= 0 else "#f85149"
             row_html = (
                 f"<tr><td style='color:{color};font-weight:600'>{t}</td>"
                 f"<td>{r.get('pick_type','')}</td>"
@@ -1156,7 +1163,8 @@ def performance_html():
                 f"<td style='color:#f85149'>{losses}</td>"
                 f"<td style='color:#8b949e'>{pushes}</td>"
                 f"<td><strong>{wr3}</strong></td>"
-                f"<td style='color:#8b949e'>{avg_c}</td></tr>\n"
+                f"<td style='color:#8b949e'>{avg_c}</td>"
+                f"<td style='color:{row_profit_col}' data-units='{row_profit:.4f}'>{row_profit:+.2f}u</td></tr>\n"
             )
             if t in ("LOCK", "STRONG"):
                 primary_rows += row_html
@@ -1227,12 +1235,15 @@ def performance_html():
         _mowr  = f"{_mow/_mod*100:.1f}%" if _mod > 0 else "—"
         _moac  = float(_mr.get("avg_conf") or 0) * 100
         _moc   = "#3fb950" if _mod > 0 and _mow/_mod >= 0.524 else "#f85149"
+        _mon_profit = _mow * 0.909 - _mol * 1.0
+        _mon_pcolr  = "#3fb950" if _mon_profit >= 0 else "#f85149"
         _mon_rows_html += (
             f"<tr><td style='font-weight:600'>{_mon}</td>"
             f"<td style='color:#3fb950'>{_mow}</td><td style='color:#f85149'>{_mol}</td>"
             f"<td style='color:#8b949e'>{_mop}</td>"
             f"<td style='color:{_moc};font-weight:600'>{_mowr}</td>"
-            f"<td style='color:#8b949e'>{_moac:.1f}%</td></tr>\n"
+            f"<td style='color:#8b949e'>{_moac:.1f}%</td>"
+            f"<td style='color:{_mon_pcolr}' data-units='{_mon_profit:.4f}'>{_mon_profit:+.2f}u</td></tr>\n"
         )
     if not _mon_rows_html:
         _mon_rows_html = "<tr><td colspan='6' style='color:#8b949e;padding:14px'>No monthly data yet.</td></tr>"
@@ -1245,7 +1256,7 @@ def performance_html():
         '<span class="arr">▶</span> Monthly Summary'
         '</div><div class="secondary-body">'
         '<div class="table-card" style="margin-top:12px"><table>'
-        '<thead><tr><th>Month</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th></tr></thead>'
+        '<thead><tr><th>Month</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th><th>Profit</th></tr></thead>'
         f'<tbody>{_mon_rows_html}</tbody></table></div>'
         '</div></div>'
     )
@@ -1640,6 +1651,10 @@ def performance_html():
       <div class="stat-val">{total_p}</div>
       <div class="stat-lbl">Pushes</div>
     </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:{overall_profit_col}" data-units="{overall_profit:.4f}">{overall_profit_str}</div>
+      <div class="stat-lbl">Est. Profit (flat -110)</div>
+    </div>
   </div>
 
   <div class="chart-card">
@@ -1651,8 +1666,8 @@ def performance_html():
   <div class="table-card">
     <div class="section-title" style="padding:12px 14px 0">Lock &amp; Strong — Primary Picks</div>
     <table>
-      <thead><tr><th>Tier</th><th>Type</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th></tr></thead>
-      <tbody>{primary_rows if primary_rows else "<tr><td colspan='7' style='color:#8b949e;padding:14px'>No data yet</td></tr>"}</tbody>
+      <thead><tr><th>Tier</th><th>Type</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th><th>Profit</th></tr></thead>
+      <tbody>{primary_rows if primary_rows else "<tr><td colspan='8' style='color:#8b949e;padding:14px'>No data yet</td></tr>"}</tbody>
     </table>
   </div>
 
@@ -1663,8 +1678,8 @@ def performance_html():
     <div class="secondary-body">
       <div class="table-card">
         <table>
-          <thead><tr><th>Tier</th><th>Type</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th></tr></thead>
-          <tbody>{secondary_rows if secondary_rows else "<tr><td colspan='7' style='color:#8b949e;padding:14px'>No data yet</td></tr>"}</tbody>
+          <thead><tr><th>Tier</th><th>Type</th><th>W</th><th>L</th><th>Push</th><th>Win %</th><th>Avg Conf</th><th>Profit</th></tr></thead>
+          <tbody>{secondary_rows if secondary_rows else "<tr><td colspan='8' style='color:#8b949e;padding:14px'>No data yet</td></tr>"}</tbody>
         </table>
       </div>
     </div>
@@ -1678,6 +1693,25 @@ def performance_html():
 
   {_props_section_html}
 
+<script>
+// Bankroll calculator — reads bankroll set on main dashboard and updates profit cells
+(function(){{
+  const br = parseFloat(localStorage.getItem('statalizers_bankroll')||'');
+  if(!br || br<=0) return;
+  // Show bankroll context in header
+  const hdr = document.querySelector('h1');
+  if(hdr) hdr.insertAdjacentHTML('afterend',
+    '<p style="color:#8b949e;font-size:.78rem;margin:4px 0 0">Showing profits for <strong style="color:#e6edf3">$'+br.toLocaleString()+'</strong> bankroll &mdash; <a href="/" style="color:#58a6ff;text-decoration:none">change on dashboard</a></p>');
+  // Update every profit cell (data-units attr carries raw unit value)
+  document.querySelectorAll('[data-units]').forEach(el => {{
+    const u = parseFloat(el.dataset.units||0);
+    const v = u * br;
+    const sign = v>=0 ? '+' : '';
+    el.textContent = sign + '$' + Math.abs(v).toFixed(2);
+    el.style.color = v>=0 ? '#3fb950' : '#f85149';
+  }});
+}})();
+</script>
 </body>
 </html>"""
 
@@ -1690,180 +1724,4 @@ def _seconds_until_6am_et() -> float:
     now    = datetime.now(ET)
     target = now.replace(hour=6, minute=0, second=0, microsecond=0)
     if now >= target:
-        target += timedelta(days=1)
-    return (target - now).total_seconds()
-
-
-def _start_daily_scheduler():
-    """Background thread that runs the full pipeline at 6am ET every day."""
-    def _loop():
-        while True:
-            wait = _seconds_until_6am_et()
-            log.info(f"Daily pipeline scheduled in {wait/3600:.1f}h (6am ET).")
-            time.sleep(wait)
-            log.info("=== 6am ET scheduled pipeline starting ===")
-            _run_full_pipeline()
-            # Force dashboard to rebuild with fresh data
-            with _cache_lock:
-                _cache["generated_at"] = 0
-            _regenerate_in_background()
-
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
-
-
-# ── Scheduled 11:30am ET afternoon refresh ──────────────────────────────────────────────
-def _seconds_until_1130am_et() -> float:
-    """Return seconds until next 11:30am Eastern Time."""
-    now    = datetime.now(ET)
-    target = now.replace(hour=11, minute=30, second=0, microsecond=0)
-    if now >= target:
-        target += timedelta(days=1)
-    return (target - now).total_seconds()
-
-
-def _run_afternoon_refresh():
-    """Re-run lineup + hitter + odds + umpire + bullpen fatigue scrapers and rebuild dashboard."""
-    today = datetime.now(ET).strftime("%Y-%m-%d")
-    log.info("=== 11:30am ET afternoon refresh starting ===")
-
-    # Grade yesterday's picks first so Yesterday panel is ready
-    try:
-        yesterday = (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
-        from run_analysis import run as grade_picks
-        grade_picks(yesterday)
-        log.info(f"Afternoon grading complete: {yesterday}")
-    except Exception as e:
-        log.warning(f"Afternoon grading failed (non-fatal): {e}")
-
-    # Refresh odds
-    try:
-        from scrapers.mlb_odds_scraper import run as run_odds
-        run_odds()
-        log.info("Afternoon odds refresh complete")
-    except Exception as e:
-        log.warning(f"Afternoon odds refresh failed (non-fatal): {e}")
-
-    # Refresh umpires
-    try:
-        from scrapers.mlb_umpire_scraper import run as run_umps
-        run_umps(target_date=today)
-        log.info("Afternoon umpire refresh complete")
-    except Exception as e:
-        log.warning(f"Afternoon umpire refresh failed (non-fatal): {e}")
-
-    # Refresh bullpen fatigue
-    try:
-        from scrapers.mlb_bullpen_fatigue_scraper import run as run_fatigue
-        run_fatigue(target_date=today)
-        log.info("Afternoon bullpen fatigue refresh complete")
-    except Exception as e:
-        log.warning(f"Afternoon bullpen fatigue refresh failed (non-fatal): {e}")
-
-    # Refresh Kalshi + Polymarket snapshots
-    try:
-        from scrapers.mlb_kalshi_scraper import run as run_kalshi
-        run_kalshi(target_date=today)
-        log.info("Afternoon Kalshi refresh complete")
-    except Exception as e:
-        log.warning(f"Afternoon Kalshi refresh failed (non-fatal): {e}")
-
-    try:
-        from scrapers.mlb_polymarket_scraper import run as run_polymarket
-        run_polymarket(target_date=today)
-        log.info("Afternoon Polymarket refresh complete")
-    except Exception as e:
-        log.warning(f"Afternoon Polymarket refresh failed (non-fatal): {e}")
-
-    # Refresh lineups + hitter stats
-    try:
-        from scrapers.mlb_lineup_scraper import run as run_lineups
-        lineups = run_lineups(target_date=today)
-        confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
-        log.info(f"Afternoon lineups: {len(lineups)} games, {confirmed} confirmed")
-        if confirmed > 0:
-            from scrapers.mlb_hitter_scraper import run as run_hitters
-            run_hitters(target_date=today)
-            log.info("Afternoon hitter stats refreshed")
-        else:
-            log.info("No confirmed lineups yet at 11:30am — dashboard will retry automatically")
-    except Exception as e:
-        log.warning(f"Afternoon lineup/hitter refresh failed (non-fatal): {e}")
-
-    # Rebuild dashboard
-    with _cache_lock:
-        _cache["generated_at"] = 0
-    _regenerate_in_background()
-    log.info("=== Afternoon refresh complete — dashboard rebuilding ===")
-
-
-def _start_afternoon_scheduler():
-    """Background thread that runs the afternoon refresh at 11:30am ET every day."""
-    def _loop():
-        while True:
-            wait = _seconds_until_1130am_et()
-            log.info(f"Afternoon refresh scheduled in {wait/3600:.1f}h (11:30am ET).")
-            time.sleep(wait)
-            _run_afternoon_refresh()
-
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
-
-
-# ── Startup ─────────────────────────────────────────────────────────────────────────────────────
-def warm_cache():
-    """
-    On startup:
-    1. Create DB schema (idempotent -- safe every boot)
-    2. Download CSVs from object storage (so model has data after a fresh deploy)
-    3. Run pipeline if today's data is missing
-    4. Build dashboard cache
-    """
-    def _warm():
-        time.sleep(2)   # let Flask finish binding first
-
-        # ── Step 1: DB schema ──────────────────────────────────────────────────────────────────────────────────
-        if _DB_AVAILABLE:
-            try:
-                _db_create_all()
-            except Exception as e:
-                log.warning(f"DB schema init failed (non-fatal): {e}")
-
-        # ── Step 2: CSV sync download ─────────────────────────────────────────────────────────────────────────────
-        if _DB_AVAILABLE:
-            try:
-                if _storage_ok():
-                    log.info("Object storage detected -- downloading CSV snapshots...")
-                    n = _csv_download()
-                    if n > 0:
-                        log.info(f"Startup CSV sync: {n} file(s) downloaded from storage.")
-                    else:
-                        log.info("CSV sync: local files are current (nothing to download).")
-                else:
-                    log.debug("Object storage not configured -- skipping CSV sync.")
-            except Exception as e:
-                log.warning(f"Startup CSV sync failed (non-fatal): {e}")
-
-        # ── Step 3: Pipeline ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        if _needs_pipeline_run():
-            log.info("No pipeline data for today -- running full pipeline on startup...")
-            _run_full_pipeline()
-        else:
-            log.info("Today's pipeline data exists -- skipping full pipeline run.")
-
-        # ── Step 4: Dashboard cache ──────────────────────────────────────────────────────────────────────────────────
-        log.info("Warming dashboard cache...")
-        _regenerate_in_background()
-
-    t = threading.Thread(target=_warm, daemon=True)
-    t.start()
-
-
-# Start schedulers and warm cache whether run via gunicorn or directly
-_start_daily_scheduler()
-_start_afternoon_scheduler()
-warm_cache()
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+        target += time

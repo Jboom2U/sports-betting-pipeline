@@ -388,7 +388,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
     roi = overall["roi"]
     findings.append(
         f"Overall: {overall['wins']}-{overall['losses']} ({wr*100:.1f}% WR) | "
-        f"ROI: {roi*100:+.1f}% on {overall['staked']:.0f} units staked"
+        f"ROI: {roi*100:+.1f}% | Profit: ${overall['profit']:+.2f} on $1 bankroll"
     )
 
     # LOCK tier
@@ -445,7 +445,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
         mlwr = ml.get("win_rate", 0) or 0
         findings.append(
             f"Moneyline: {ml['wins']}-{ml['losses']} ({mlwr*100:.1f}%) | "
-            f"Profit: {ml['profit']:+.2f}u — "
+            f"Profit: ${ml['profit']:+.2f} — "
             f"{'strongest segment today' if ml['roi'] and ml['roi'] > 0 else 'unprofitable — check heavy-fav exposure'}"
         )
 

@@ -19,42 +19,43 @@
 
 **Always run `python scripts/predeploy_check.py` before giving the user a commit.**
 
-The script now does 4 things:
+The script does 4 things:
 1. Syntax / null bytes / truncation check on all 18 critical files
 2. Field-name bug checks (BOM strip, Monte Carlo conf fallback)
-3. SQL column validation — cross-checks queries against schema.py column names (only scans SQL string literals, not Python code)
+3. SQL column validation — cross-checks queries against schema.py column names
 4. **Live route simulation against committed code** — does `git stash`, tests /, /performance-html, /schedule-status, /status, then `git stash pop`. This catches NameErrors and route crashes that syntax checks miss.
 
 **Why the stash matters:** Without stashing, the sim tests your local patched files, not what Railway will actually run. Always stash first.
 
-**File truncation risk on Windows-mounted filesystem:** The Edit tool and Write tool can truncate large files. Use `cat > file << 'EOF'` via bash for any file over ~100 lines. Always verify with `python3 scripts/predeploy_check.py` after edits.
+**File truncation risk on Windows-mounted filesystem:** Use Python-via-bash splice pattern for any file over ~200 lines. Always verify with `python3 scripts/predeploy_check.py` after edits.
 
 ---
 
 ## ⚠️ CRITICAL: SQL Queries — Cross-Check Column Names Against schema.py
 Before writing any SQL query, verify the column names exist in `db/schema.py`.
-Key table column names to remember:
+Key table column names:
 - `scored_games`: uses `score_date` (NOT `game_date`), `game_id`, `ml_signal`, `sharp_side`
-- `picks`: uses `pick_date`, `game_id`, `game`, `pick_type`, `label`, `team`, `conf`, `tier`, `actual_result`, `market_signal`
+- `picks`: uses `pick_date`, `game_id`, `game`, `pick_type`, `label`, `team`, `conf`, `tier`, `actual_result`, `market_signal`, `away_final`, `home_final`
 - Join picks ↔ scored_games on: `sg.score_date = p.pick_date AND sg.game_id = p.game_id`
 
 ---
 
 ## What This Is
-MLB betting dashboard at **statalizers.com**, deployed on **Railway.app**. Built by Justin Skelly (jskellly@gmail.com). Flask app that runs a full data pipeline every morning at 6am ET, scores today's MLB games across moneyline, run line, totals, and player props, and serves an HTML dashboard with picks tiered by confidence (LOCK / STRONG / LEAN).
+MLB betting dashboard at **statalizers.com**, deployed on **Railway.app**. Built by Justin Skelly (jskellly@gmail.com). Flask app that runs a full data pipeline every morning at 6am ET, scores today's MLB games across moneyline, run line, totals, and player props, and serves an HTML dashboard with picks tiered by confidence (LOCK / STRONG / LEAN / TOSSUP).
 
 ---
 
 ## Deployment
 - **Platform:** Railway.app (service name: Jboom2u Picks)
 - **Domain:** statalizers.com (DNS through Cloudflare)
+- **Git repo:** `C:\Users\Jskel\GitHub\sports-betting-pipeline` — single source of truth
 - **Deploy command:** `railway up` (from PowerShell in repo dir, NOT from sandbox bash)
-- **Odds API usage:** Resets June 1st. ~1 pull/day via adaptive refresh (~30/month). Track carefully — wasted deploys burn quota.
-- **Environment variables:** `ODDS_API_KEY`, `KALSHI_API_KEY`, `DATABASE_URL`, `STORAGE_ENDPOINT_URL`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`, `STORAGE_BUCKET`
+- **Odds API usage:** Resets 1st of month. ~1 pull/day via adaptive refresh (~30/month). Track carefully.
+- **Environment variables:** `ODDS_API_KEY`, `KALSHI_API_KEY`, `DATABASE_URL`, `STORAGE_ENDPOINT_URL`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`, `STORAGE_BUCKET`, `ADMIN_PASSWORD`, `ADMIN_SECRET`
 
-### PowerShell commit pattern (always include cd):
+### PowerShell commit pattern:
 ```powershell
-cd C:\Users\Jskel\Documents\GitHub\sports-betting-pipeline-clean
+cd C:\Users\Jskel\GitHub\sports-betting-pipeline
 git add <files>
 git commit -m "..."
 git push
@@ -80,6 +81,10 @@ sports-betting-pipeline/
 ├── run_analysis.py               # Grades yesterday's picks
 ├── run_historical.py             # Backfill historical data
 │
+├── routes/
+│   ├── admin.py                  # /admin routes (password protected)
+│   └── analytics.py             # /analytics NL query interface
+│
 ├── scrapers/                     # One scraper per data source
 ├── normalize/                    # Raw → clean CSV normalization
 ├── model/
@@ -93,6 +98,7 @@ sports-betting-pipeline/
 │   ├── schema.py                 # Table creation + migrations
 │   ├── pipeline_log.py           # Mark pipeline started/complete/failed
 │   ├── picks_store.py            # Save/grade picks, accuracy summaries
+│   ├── model_config.py           # Load/save model weights from DB
 │   └── csv_sync.py               # Upload/download CSVs to/from R2
 │
 ├── scripts/
@@ -126,13 +132,20 @@ Runs daily at 6am ET via app.py scheduler. Key steps:
 
 ## Routes
 - `/` — main dashboard (served from cache, 10 min TTL)
+- `/admin` — admin hub (password protected) — links to all internal routes
+- `/admin/login` — login page; password set via `ADMIN_PASSWORD` env var
+- `/admin/logout` — clears session
+- `/admin/model-config` — model control panel (adjust signal weights, preview picks, save config to DB)
+- `/analytics` — analytics dashboard + natural language DB query interface
 - `/status` — pipeline health page
 - `/schedule-status` — JSON: next pipeline, next refresh, first pitch times
 - `/performance` — JSON W/L/ROI by tier
-- `/performance-html` — dark-themed performance dashboard (7/14/30/60/90d toggles)
-  - Includes: tier breakdown, market signal (CONFIRM/DIVERGE/NEUTRAL), monthly summary, **Sharp Action vs Model head-to-head**
+- `/performance-html` — dark-themed performance dashboard (7d/14d/30d/60d/Season/All time dropdown)
+  - Includes: tier breakdown, market signal (CONFIRM/DIVERGE/NEUTRAL), monthly summary, Sharp Action vs Model head-to-head
 - `/force-statcast` — manually re-pull Statcast data + rebuild dashboard
 - `/force-refresh` — manually trigger afternoon refresh
+- `/force-pipeline` — manually trigger full pipeline
+- `/unstick` — clear stuck pipeline state
 
 ---
 
@@ -151,9 +164,9 @@ Runs daily at 6am ET via app.py scheduler. Key steps:
 - STRONG: 68-75%
 - LEAN: 60-68%
 - TOSSUP: 48-60% (shown, no Kelly)
-- PASS: <60% (not shown)
+- PASS: <48% (not shown)
 
-**RL minimum:** 60% edge required (raised from 48% to filter thin-edge noise)
+**RL minimum:** 60% edge required
 **TBD suppression:** TOTAL suppressed when either SP TBD; RL suppressed when either SP TBD; ML downgraded one tier when both TBD
 
 **Parlay rules:** min 57% per leg, no two picks from same game
@@ -163,20 +176,21 @@ Runs daily at 6am ET via app.py scheduler. Key steps:
 ---
 
 ## Performance Dashboard (/performance-html)
-- Rolling W/L/ROI by confidence tier and pick type
+- Rolling W/L/ROI by confidence tier and pick type — dropdown filter: 7d/14d/30d/60d/Season/All time
 - Market signal breakdown (CONFIRM / DIVERGE / NEUTRAL vs Kalshi/Polymarket)
 - Monthly W/L/ROI summary table
-- **Sharp Action vs Model** — every game where STEAM contradicted model ML pick, result, and head-to-head win rate. Query joins `picks` and `scored_games` on `score_date + game_id`.
+- Sharp Action vs Model — every game where STEAM contradicted model ML pick, result, head-to-head win rate
+- Query joins `picks` and `scored_games` on `score_date + game_id`
 
 ---
 
 ## Dashboard Features (run_picks_html.py)
-- Schedule status bar (below header) — shows next 6am pipeline, lineup refresh time, first pitch — auto-refreshes every 60s via `/schedule-status`
+- Schedule status bar — shows next 6am pipeline, lineup refresh time, first pitch — auto-refreshes every 60s via `/schedule-status`
 - HR Watch tab — top HR candidates by barrel rate + park factor + pitcher xwOBA
 - Monte Carlo tab — 1000 sim hit-rate bar per ML pick with EV tag
+- Daily Summary tab — completed (Final) games only, no in-progress cards
 - TOMORROW badge (amber pill) when picks are next-day
 - Auto-switches to tomorrow's slate when all today's games started
-- Date toggle: today/tomorrow tabs
 - gzip compression via flask-compress
 - Startup: seeds cache from R2 HTML immediately (site live before pipeline reruns)
 
@@ -191,13 +205,13 @@ Fetches 30 KXMLB markets but 0 match today's games. Team/game name format mismat
 `force-statcast` correctly writes 532 batters, but on next startup only 1 loads. Likely a BOM issue in the load path (not just the scraper). Not yet fixed.
 
 ### Polymarket 422 at offset 10100
-Expected behavior — Polymarket hard caps at 10,000 markets. The 422 is caught and logged as WARNING (non-fatal). Not a real error.
+Expected behavior — Polymarket hard caps at 10,000 markets. The 422 is caught and logged as WARNING (non-fatal).
 
 ### Odds API quota
-500 req/month free tier. Adaptive refresh = ~1 pull/day (~30/month). Every wasted `railway up` that triggers an odds call burns quota. As of June 2026: 42 used after reset June 1st.
+500 req/month free tier. Adaptive refresh = ~1 pull/day (~30/month). Every wasted `railway up` that triggers an odds call burns quota.
 
 ### predeploy_check.py stash behavior
-`git stash --include-untracked` is used so the simulation tests committed code only. If git stash fails (e.g. nothing to stash), the sim falls through and tests local files — still catches most issues but not the "deployed vs local" gap.
+`git stash --include-untracked` is used so the simulation tests committed code only. If git stash fails (nothing to stash), the sim falls through and tests local files — still catches most issues but not the deployed vs local gap.
 
 ---
 
@@ -219,24 +233,29 @@ Expected behavior — Polymarket hard caps at 10,000 markets. The 422 is caught 
 - Pick card narrative (`_build_narrative()`)
 - Thematic parlays (`build_thematic_parlays()`, `_tag_pick_thesis()`)
 - Kalshi scraper expanded (paginated search, 7 tickers, events fallback)
-- Yesterday count discrepancy fix (TOSSUP picks excluded from graded_display)
 - JS IIFE bug fix in run_picks_html.py
 - HR Watch tab + Monte Carlo tab (model/mlb_analysis_sections.py)
 - /force-statcast route
 - BOM strip on Savant pitcher CSV (was silently dropping 656/657 pitchers)
 - HITS prop split floor (RBI/Hit internal consistency fix)
-- Polymarket 422 silent stop (stops paginating instead of logging error)
+- Polymarket 422 silent stop
 - predeploy_check.py with stash-based route simulation + SQL column validation
 - Schedule status bar on dashboard (/schedule-status endpoint + JS countdown)
 - Sharp Action vs Model retrospective in /performance-html
-- /schedule-status route added to app.py (was missing — caused First Pitch "loading...")
-- All INTERVAL '%s days' SQL queries in picks_store.py replaced with Python date cutoff (was silently returning empty on some drivers)
+- All INTERVAL '%s days' SQL queries in picks_store.py replaced with Python date cutoff (was silently returning empty)
 - push_grades_to_db() game+type fallback (prevents grade push failure when afternoon refresh updates pick label)
 - Yesterday panel DB fallback (builds metrics from graded picks when JSON file is missing)
 - Daily Summary tab UI redesigned — completed games only, no in-progress cards
-- Performance page filter expanded: 7d/14d/30d/60d/Season/All time
-- Market signal breakdown + monthly summary sections added to /performance-html
+- Performance page filter: dropdown replacing pill links, 7d/14d/30d/60d/Season/All time
+- Market signal breakdown + monthly summary sections in /performance-html
 - player_prop_accuracy min_picks lowered from 5 to 3
+- Admin hub at /admin with password login (ADMIN_PASSWORD env var)
+- Model control panel at /admin/model-config — tune signal weights, preview pick impact, save config to DB
+- Analytics dashboard at /analytics — NL query interface over PostgreSQL
+- db/model_config.py — load/save model weights from DB with preset support
+- Probable pitcher refresh in afternoon run — fixes stale K prop starters when rotation changes post-6am
+- TOSSUP picks now graded in DB (push_grades_to_db uses full graded list) — sharp table shows results for all tiers
+- TOSSUP picks included in graded_display — yesterday panel shows all graded games (15+ picks per day)
 
 ## Active Work Queue
 1. **Kalshi market matching** — debug raw KXMLB market titles vs schedule team names
@@ -251,5 +270,7 @@ Expected behavior — Polymarket hard caps at 10,000 markets. The 422 is caught 
 - Non-fatal steps (odds, weather, Kalshi, Polymarket) use try/except + log.warning
 - All times in ET (America/New_York) via zoneinfo
 - Flask never blocks on pipeline — everything runs in background threads
-- Large file edits: use `cat > file << 'EOF'` via bash (Edit tool truncates files >~200 lines on Windows FS)
+- Large file edits: use Python-via-bash splice pattern (Edit tool truncates files >~200 lines on Windows FS)
 - SQL queries: always verify column names against db/schema.py before writing
+- Never call the Odds API during development or testing
+- Never delete existing data — additive changes only
