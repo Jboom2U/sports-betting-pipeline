@@ -132,6 +132,14 @@ CREATE TABLE IF NOT EXISTS model_config (
 );
 """
 
+_SITE_CONFIG = """
+CREATE TABLE IF NOT EXISTS site_config (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
 _PLAYER_GAME_LOGS = """
 CREATE TABLE IF NOT EXISTS player_game_logs (
     id              SERIAL PRIMARY KEY,
@@ -158,33 +166,4 @@ CREATE TABLE IF NOT EXISTS player_game_logs (
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_picks_pick_date    ON picks(pick_date);",
     "CREATE INDEX IF NOT EXISTS idx_picks_actual_result ON picks(actual_result);",
-    "CREATE INDEX IF NOT EXISTS idx_scored_score_date  ON scored_games(score_date);",
-    "CREATE INDEX IF NOT EXISTS idx_pipeline_run_date  ON pipeline_runs(run_date);",
-    "CREATE INDEX IF NOT EXISTS idx_prop_history_player ON player_prop_history (player_name, prop_type);",
-    "CREATE INDEX IF NOT EXISTS idx_prop_history_date   ON player_prop_history (game_date);",
-]
-
-
-def create_all():
-    """
-    Create all tables and indexes. Idempotent — safe to call on every startup.
-    Silently skips if no DB connection is available.
-    """
-    with db_conn() as conn:
-        if conn is None:
-            log.debug("No DB connection — skipping schema creation.")
-            return
-
-        try:
-            cur = conn.cursor()
-            cur.execute(_PIPELINE_RUNS)
-            cur.execute(_PICKS)
-            cur.execute(_SCORED_GAMES)
-            cur.execute(_PLAYER_PROP_HISTORY)
-            cur.execute(_MODEL_CONFIG)
-            cur.execute(_PLAYER_GAME_LOGS)
-            for idx in _INDEXES:
-                cur.execute(idx)
-            log.info("DB schema verified / created.")
-        except Exception as e:
-            log.warning(f"Schema creation failed (non-fatal): {e}")
+    "CREATE INDEX IF NOT EXISTS idx_scored_score_date  ON scored_ga

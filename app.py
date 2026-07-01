@@ -595,6 +595,104 @@ def force_lineups():
 
 _ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "")
 
+# ── Site password (stored in DB, falls back to SITE_PASSWORD env var) ────────
+_SITE_PWD_KEY    = "site_password"
+_site_pwd_cache  = [os.environ.get("SITE_PASSWORD", "")]  # list = mutable ref
+
+def _load_site_password():
+    """Pull site password from DB on startup; fall back to env var."""
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            if conn:
+                cur = conn.cursor()
+                cur.execute("SELECT value FROM site_config WHERE key = %s", (_SITE_PWD_KEY,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    _site_pwd_cache[0] = row[0]
+                    log.info("Site password loaded from DB")
+                    return
+    except Exception as _spe:
+        log.debug(f"Site password DB load skipped: {_spe}")
+    log.info("Site password: using SITE_PASSWORD env var" if _site_pwd_cache[0] else "Site password: not set — site is open")
+
+def _save_site_password(new_pw):
+    """Persist new site password to DB and update cache."""
+    from db.connection import db_conn
+    with db_conn() as conn:
+        if conn is None:
+            raise RuntimeError("No DB connection available")
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO site_config (key, value, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+        """, (_SITE_PWD_KEY, new_pw))
+    _site_pwd_cache[0] = new_pw
+
+
+
+# ── Site-wide login wall ──────────────────────────────────────────────────────
+_SITE_EXEMPT = {"/site-login", "/site-logout", "/health"}
+
+@app.before_request
+def require_site_auth():
+    if not _site_pwd_cache[0]:
+        return  # no password set — site is publicly open
+    if request.path in _SITE_EXEMPT:
+        return
+    if session.get("site_auth"):
+        return
+    return redirect(f"/site-login?next={request.path}")
+
+@app.route("/site-login", methods=["GET", "POST"])
+def site_login():
+    error = ""
+    next_url = request.args.get("next", "/")
+    if request.method == "POST":
+        if request.form.get("password") == _site_pwd_cache[0] and _site_pwd_cache[0]:
+            session["site_auth"] = True
+            return redirect(request.form.get("next", "/"))
+        error = "Incorrect password"
+        next_url = request.form.get("next", "/")
+    return Response(f"""<!DOCTYPE html>
+<html><head><title>Statalizers — Login</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}}
+.card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:2rem 2.5rem;
+  width:100%;max-width:360px}}
+.logo{{font-size:28px;margin-bottom:.25rem;text-align:center}}
+h2{{font-size:18px;font-weight:600;text-align:center;margin-bottom:1.75rem;color:#e6edf3}}
+label{{font-size:13px;color:#8b949e;display:block;margin-bottom:.4rem}}
+input[type=password]{{width:100%;padding:.6rem .85rem;border-radius:7px;border:1px solid #30363d;
+  background:#21262d;color:#e6edf3;font-size:15px;outline:none;transition:border-color .15s}}
+input[type=password]:focus{{border-color:#58a6ff}}
+.err{{color:#f85149;font-size:13px;margin-top:.75rem;min-height:1.1em;text-align:center}}
+button{{margin-top:1.25rem;width:100%;padding:.65rem;background:#238636;color:#fff;
+  font-weight:600;border:none;border-radius:7px;cursor:pointer;font-size:15px;
+  transition:background .15s}}
+button:hover{{background:#2ea043}}
+</style></head>
+<body><div class="card">
+  <div class="logo">⚾</div>
+  <h2>Statalizers</h2>
+  <form method="post">
+    <input type="hidden" name="next" value="{next_url}">
+    <label>Password</label>
+    <input type="password" name="password" placeholder="Enter site password" autofocus>
+    <div class="err">{error}</div>
+    <button type="submit">Sign in</button>
+  </form>
+</div></body></html>""", mimetype="text/html")
+
+@app.route("/site-logout")
+def site_logout():
+    session.pop("site_auth", None)
+    return redirect("/site-login")
+
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     error = ""
@@ -716,6 +814,73 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
     </a>
   </div>
   <p class="logout"><a href="/admin/logout">Sign out</a></p>
+</div></body></html>""", mimetype="text/html")
+
+@app.route("/admin/change-site-password", methods=["GET", "POST"])
+def admin_change_site_password():
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/change-site-password")
+    msg = ""
+    msg_color = "#3fb950"
+    if request.method == "POST":
+        new_pw = request.form.get("new_password", "").strip()
+        confirm = request.form.get("confirm_password", "").strip()
+        if not new_pw:
+            msg, msg_color = "Password cannot be empty.", "#f85149"
+        elif new_pw != confirm:
+            msg, msg_color = "Passwords do not match.", "#f85149"
+        else:
+            try:
+                _save_site_password(new_pw)
+                msg = "Site password updated successfully."
+            except Exception as e:
+                msg, msg_color = f"Error saving password: {e}", "#f85149"
+    current_set = "Set" if _site_pwd_cache[0] else "Not set (site is open)"
+    return Response(f"""<!DOCTYPE html>
+<html><head><title>Site Password — Statalizers Admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{{box-sizing:border-box}}
+body{{background:#0d1117;color:#e6edf3;font-family:-apple-system,sans-serif;margin:0}}
+nav{{background:#161b22;border-bottom:1px solid #30363d;padding:.75rem 1.5rem;display:flex;align-items:center;gap:1.5rem}}
+.logo{{font-size:15px;font-weight:600}}
+nav a{{color:#8b949e;font-size:13px;text-decoration:none}}
+nav a:hover{{color:#e6edf3}}
+.container{{max-width:480px;margin:2rem auto;padding:0 1.5rem}}
+h1{{font-size:20px;font-weight:600;margin-bottom:.25rem}}
+.sub{{color:#8b949e;font-size:13px;margin-bottom:2rem}}
+.card{{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.5rem}}
+label{{font-size:13px;color:#8b949e;display:block;margin-bottom:.4rem;margin-top:1rem}}
+label:first-of-type{{margin-top:0}}
+input[type=password]{{width:100%;padding:.5rem .75rem;border-radius:6px;border:1px solid #30363d;
+  background:#21262d;color:#e6edf3;font-size:14px}}
+.status{{font-size:12px;color:#8b949e;margin-bottom:1.25rem}}
+button{{margin-top:1.25rem;padding:.5rem 1.25rem;background:#238636;color:#fff;
+  font-weight:600;border:none;border-radius:6px;cursor:pointer;font-size:14px}}
+button:hover{{opacity:.85}}
+.msg{{margin-top:1rem;font-size:13px;font-weight:600}}
+.back{{display:inline-block;margin-top:1.25rem;font-size:13px;color:#58a6ff;text-decoration:none}}
+</style></head>
+<body>
+<nav><span class="logo">⚾ Statalizers</span>
+  <a href="/admin">← Admin hub</a>
+  <a href="/admin/logout" style="margin-left:auto">Sign out</a>
+</nav>
+<div class="container">
+  <h1>Site Password</h1>
+  <p class="sub">Controls access to the entire statalizers.com site.</p>
+  <div class="card">
+    <p class="status">Current status: <strong style="color:#e6edf3">{current_set}</strong></p>
+    <form method="post">
+      <label>New password</label>
+      <input type="password" name="new_password" placeholder="Enter new password" autofocus>
+      <label>Confirm password</label>
+      <input type="password" name="confirm_password" placeholder="Confirm new password">
+      <button type="submit">Update password</button>
+    </form>
+    {f'<p class="msg" style="color:{msg_color}">{msg}</p>' if msg else ''}
+    <a class="back" href="/admin">← Back to admin hub</a>
+  </div>
 </div></body></html>""", mimetype="text/html")
 
 @app.route("/debug-odds")
