@@ -1488,6 +1488,10 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <span>⏰ <b style="color:#e6edf3">Next pipeline:</b> <span id="sched-pipeline">loading...</span></span>
   <span>🔄 <b style="color:#e6edf3">Lineup refresh:</b> <span id="sched-refresh">loading...</span></span>
   <span>⚾ <b style="color:#e6edf3">First pitch:</b> <span id="sched-pitch">loading...</span></span>
+  <span style="margin-left:auto;display:flex;align-items:center;gap:10px">
+    <button id="forceLineupsBtn" onclick="forceLineupsRefresh()" style="background:rgba(79,195,247,.15);border:1px solid rgba(79,195,247,.4);color:#4fc3f7;border-radius:12px;padding:3px 12px;font-size:.78rem;font-weight:700;cursor:pointer;font-family:inherit">📋 Refresh Lineups</button>
+    <span id="forceLineupsStatus" style="font-size:.76rem"></span>
+  </span>
 </div>
 <script>
 (function() {
@@ -1498,6 +1502,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
       var fp = d.first_pitch;
       document.getElementById('sched-pipeline').textContent = p ? (p.time + ' (' + p.label + ')') : '6am ET daily';
       document.getElementById('sched-refresh').textContent  = r ? (r.time + ' (' + r.label + ')') : 'after 6am pipeline';
+      window._schedRefreshTime = r ? r.time : 'lineup refresh';
       document.getElementById('sched-pitch').textContent    = fp ? fp.time : '—';
     }).catch(function() {
       document.getElementById('sched-pipeline').textContent = '6am ET daily';
@@ -1620,6 +1625,10 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
       <button class="filter-btn" data-pgroup="ptier" data-pval="LOCK">🔒 Lock</button>
       <button class="filter-btn" data-pgroup="ptier" data-pval="STRONG">⭐⭐ Strong</button>
       <button class="filter-btn" data-pgroup="ptier" data-pval="LEAN">⭐ Lean</button>
+    </div>
+    <div id="propsBanner" style="display:none;background:rgba(255,183,77,.08);border:1px solid rgba(255,183,77,.2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:.82rem;color:#ffb74d">
+      📋 <b>Projected lineups</b> — props are based on last known lineups.
+      Confirmed props update at <span id="propsRefreshTime">lineup refresh</span>.
     </div>
     <div class="results-count" id="propResults"></div>
     <div class="props-grid" id="propsGrid"></div>
@@ -3096,6 +3105,13 @@ function renderProps(){
   const grid = document.getElementById("propsGrid");
   grid.innerHTML = "";
   let visible = 0;
+  const hasProjected = DATA_PROPS.some(p => p.projected);
+  const banner = document.getElementById("propsBanner");
+  if(banner) {
+    banner.style.display = hasProjected ? "block" : "none";
+    const timeEl = document.getElementById("propsRefreshTime");
+    if(timeEl && window._schedRefreshTime) timeEl.textContent = window._schedRefreshTime;
+  }
   DATA_PROPS.forEach(p=>{
     const show = (propFilterType==="all" || p.prop_type===propFilterType)
               && (propFilterTier==="all" || p.tier===propFilterTier);
@@ -3388,6 +3404,47 @@ async function forceOddsSnapshot(){
     if(status){ status.style.color="var(--red)"; status.textContent="Could not reach server."; }
     btn.disabled = false;
     btn.textContent = "🔄 Pull Odds Snapshot Now";
+  }
+}
+
+// ── Force Lineup Refresh (AJAX) ───────────────────────────────────────────────
+async function forceLineupsRefresh(){
+  const btn    = document.getElementById("forceLineupsBtn");
+  const status = document.getElementById("forceLineupsStatus");
+  if(!btn) return;
+
+  btn.disabled = true;
+  btn.textContent = "⏳ Refreshing…";
+  if(status) status.textContent = "";
+
+  try{
+    const res = await fetch("/force-lineups");
+    if(res.ok){
+      let secs = 90;
+      if(status){
+        status.style.color = "#4fc3f7";
+        status.textContent = `Updating in ${secs}s…`;
+        const timer = setInterval(() => {
+          secs--;
+          if(secs <= 0){
+            clearInterval(timer);
+            location.reload(true);
+          } else {
+            status.textContent = `Updating in ${secs}s…`;
+          }
+        }, 1000);
+      } else {
+        setTimeout(() => location.reload(true), 90000);
+      }
+    } else {
+      if(status){ status.style.color="#ef5350"; status.textContent="Request failed."; }
+      btn.disabled = false;
+      btn.textContent = "📋 Refresh Lineups";
+    }
+  } catch(e){
+    if(status){ status.style.color="#ef5350"; status.textContent="Could not reach server."; }
+    btn.disabled = false;
+    btn.textContent = "📋 Refresh Lineups";
   }
 }
 

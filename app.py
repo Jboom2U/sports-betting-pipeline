@@ -562,6 +562,37 @@ def force_statcast():
     return {"status": "ok", "message": "Statcast scrape started — dashboard will refresh in ~90 seconds."}
 
 
+@app.route("/force-lineups")
+def force_lineups():
+    """Force a fresh lineup + hitter scrape, then rebuild dashboard. No Odds API calls."""
+    def _worker():
+        try:
+            from scrapers.mlb_lineup_scraper import run as run_lu
+            result = run_lu()
+            log.info(f"Force-lineups: {len(result)} games scraped")
+        except Exception as e:
+            log.warning(f"Force-lineups lineup fetch failed: {e}")
+        try:
+            from scrapers.mlb_hitter_scraper import run as run_hs
+            run_hs()
+            log.info("Force-lineups: hitter stats refreshed")
+        except Exception as e:
+            log.warning(f"Force-lineups hitter scraper failed: {e}")
+        try:
+            from db.csv_sync import upload_all, storage_available
+            if storage_available():
+                n = upload_all()
+                log.info(f"Force-lineups: {n} CSV(s) uploaded to R2")
+        except Exception as e:
+            log.warning(f"Force-lineups R2 upload failed: {e}")
+        with _cache_lock:
+            _cache["generated_at"] = 0
+        _regenerate_in_background()
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return {"status": "ok", "message": "Lineup refresh started — dashboard will update in ~90 seconds."}
+
+
 @app.route("/debug-odds")
 def debug_odds():
     """Run odds scraper synchronously and return full diagnostic output."""
@@ -1582,6 +1613,70 @@ def _start_daily_scheduler():
     t.start()
 
 
+def _start_lineup_hourly_scheduler():
+    """
+    Every day 10am–3pm ET: re-scrapes lineups + hitter stats every hour.
+    No Odds API calls — lineup + hitter scraper only.
+    Auto-stops for the day once all games have confirmed lineups.
+    """
+    def _loop():
+        while True:
+            now = datetime.now(ET)
+            target = now.replace(hour=10, minute=0, second=0, microsecond=0)
+            # If already past 10am, and past 3pm, jump to tomorrow's 10am
+            if now >= target and now.hour >= 15:
+                target = (now + timedelta(days=1)).replace(
+                    hour=10, minute=0, second=0, microsecond=0)
+            # Sleep until target (unless we're between 10am–3pm right now)
+            if now < target:
+                wait = (target - now).total_seconds()
+                log.info(f"Lineup hourly scheduler: next check at {target.strftime('%I:%M %p ET')} ({wait/3600:.1f}h away)")
+                time.sleep(max(1, wait))
+
+            # Poll hourly from 10am to 3pm ET
+            while True:
+                now = datetime.now(ET)
+                if now.hour >= 15:
+                    log.info("Lineup hourly scheduler: 3pm ET reached — done for today")
+                    break
+                try:
+                    today = now.strftime("%Y-%m-%d")
+                    from scrapers.mlb_lineup_scraper import run as run_lu
+                    lineups = run_lu(target_date=today)
+                    confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
+                    total = len(lineups)
+                    log.info(f"Lineup hourly check: {confirmed}/{total} games confirmed")
+                    if confirmed > 0:
+                        from scrapers.mlb_hitter_scraper import run as run_hs
+                        run_hs(target_date=today)
+                        log.info("Lineup hourly: hitter stats refreshed")
+                        try:
+                            from db.csv_sync import upload_all, storage_available
+                            if storage_available():
+                                upload_all()
+                        except Exception:
+                            pass
+                        with _cache_lock:
+                            _cache["generated_at"] = 0
+                        _regenerate_in_background()
+                    if total > 0 and confirmed == total:
+                        log.info("Lineup hourly scheduler: all lineups confirmed — done for today")
+                        break
+                except Exception as e:
+                    log.warning(f"Lineup hourly check failed (non-fatal): {e}")
+                time.sleep(3600)  # wait 1 hour before next check
+
+            # Wait until next day's 10am
+            now = datetime.now(ET)
+            tomorrow_10am = (now + timedelta(days=1)).replace(
+                hour=10, minute=0, second=0, microsecond=0)
+            wait = (tomorrow_10am - now).total_seconds()
+            time.sleep(max(1, wait))
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+
+
 def _run_afternoon_refresh():
     """Re-run lineup + hitter + odds + umpire + bullpen fatigue scrapers and rebuild dashboard."""
     today = datetime.now(ET).strftime("%Y-%m-%d")
@@ -1841,6 +1936,7 @@ def warm_cache():
 
 # Start schedulers and warm cache whether run via gunicorn or directly
 _start_daily_scheduler()
+_start_lineup_hourly_scheduler()
 warm_cache()
 
 if __name__ == "__main__":
