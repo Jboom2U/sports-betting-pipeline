@@ -40,7 +40,6 @@ CREATE TABLE IF NOT EXISTS picks (
     conf            REAL        NOT NULL,
     tier            TEXT        NOT NULL,   -- LOCK | STRONG | LEAN
     reasoning       TEXT,
-    market_signal  TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Backtesting fields — filled by the grading step after game results are in
@@ -118,6 +117,44 @@ CREATE TABLE IF NOT EXISTS player_prop_history (
 );
 """
 
+_MODEL_CONFIG = """
+CREATE TABLE IF NOT EXISTS model_config (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    value       REAL NOT NULL,
+    min_val     REAL,
+    max_val     REAL,
+    step        REAL,
+    label       TEXT,
+    group_name  TEXT,
+    description TEXT,
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
+_PLAYER_GAME_LOGS = """
+CREATE TABLE IF NOT EXISTS player_game_logs (
+    id              SERIAL PRIMARY KEY,
+    game_date       DATE        NOT NULL,
+    player_name     TEXT        NOT NULL,
+    player_id       INTEGER,
+    team            TEXT,
+    opponent        TEXT,
+    venue           TEXT,
+    pitcher_hand    TEXT,
+    ab              INTEGER     DEFAULT 0,
+    h               INTEGER     DEFAULT 0,
+    hr              INTEGER     DEFAULT 0,
+    rbi             INTEGER     DEFAULT 0,
+    bb              INTEGER     DEFAULT 0,
+    k               INTEGER     DEFAULT 0,
+    tb              INTEGER     DEFAULT 0,
+    sb              INTEGER     DEFAULT 0,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (game_date, player_name, team)
+);
+"""
+
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_picks_pick_date    ON picks(pick_date);",
     "CREATE INDEX IF NOT EXISTS idx_picks_actual_result ON picks(actual_result);",
@@ -144,10 +181,8 @@ def create_all():
             cur.execute(_PICKS)
             cur.execute(_SCORED_GAMES)
             cur.execute(_PLAYER_PROP_HISTORY)
-            # Additive migration — add market_signal column if it doesn't exist yet
-            cur.execute(
-                """ALTER TABLE picks ADD COLUMN IF NOT EXISTS market_signal TEXT"""
-            )
+            cur.execute(_MODEL_CONFIG)
+            cur.execute(_PLAYER_GAME_LOGS)
             for idx in _INDEXES:
                 cur.execute(idx)
             log.info("DB schema verified / created.")

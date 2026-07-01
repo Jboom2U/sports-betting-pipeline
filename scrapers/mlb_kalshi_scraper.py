@@ -32,7 +32,6 @@ import csv
 import json
 import logging
 import re
-import time
 from datetime import datetime
 
 import requests
@@ -45,22 +44,10 @@ CLEAN_DIR = os.path.join(BASE_DIR, "data", "clean")
 os.makedirs(RAW_DIR,   exist_ok=True)
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
-KALSHI_BASE      = "https://api.kalshi.com/trade-api/v2"
-KALSHI_BASE_OLD  = "https://api.elections.kalshi.com/trade-api/v2"  # futures/elections only
+KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 # Known Kalshi series tickers for MLB game winner markets.
-# Series tickers — Kalshi renames these occasionally; list is exhaustive
-MLB_SERIES = [
-    "MLBM",      # MLB game moneyline (sports API)
-    "MLBGAME",   # MLB game winner (sports API)
-    "KXMLBW",    # historical game winner (elections API)
-    "KXMLB",     # championship futures — NOT game markets, skip if title has 'Championship'
-    "MLBWINNER", # alternate name
-    "KXMLBGW",   # game winner variant
-    "MLB",       # short form
-    "MLBW",      # another variant
-    "KXMLBG",    # game-level
-]
+MLB_SERIES = ["KXMLBGAME", "KXMLBTOTAL"]
 
 # Model vs Kalshi signal thresholds
 AGREE_THRESHOLD    = 0.04   # within 4 pp -> NEUTRAL
@@ -177,77 +164,36 @@ def fetch_all_mlb_markets(api_key: str) -> list:
             if t not in seen_tickers:
                 seen_tickers.add(t)
                 all_markets.append(m)
-        time.sleep(1.2)   # avoid 429 rate limiting across series calls
 
     if not all_markets:
         log.info("Known series yielded no markets — trying broad search")
         all_markets = _broad_search(api_key)
 
-    if not all_markets:
-        log.info("Broad search empty — trying events endpoint")
-        all_markets = _search_events(api_key)
-
     return all_markets
 
 
 def _broad_search(api_key: str) -> list:
-    """
-    Paginated broad search across all open markets.
-    Matches any market whose title, subtitle, or ticker references MLB teams
-    or keywords.  More permissive than series-ticker lookup.
-    """
-    url      = f"{KALSHI_BASE}/markets"
-    cursor   = None
-    all_raw  = []
-
-    # Collect up to 1 000 open markets (5 pages x 200)
-    for _ in range(5):
-        params = {"limit": 200, "status": "open"}
-        if cursor:
-            params["cursor"] = cursor
-        try:
-            resp = requests.get(url, params=params, headers=_headers(api_key), timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            log.warning(f"Broad Kalshi search failed: {e}")
-            break
-        page = data.get("markets", [])
-        all_raw.extend(page)
-        cursor = data.get("cursor")
-        if not cursor or not page:
-            break
-
-    if not all_raw:
-        log.warning("Broad search returned 0 markets — Kalshi may be unreachable or auth failed")
-        # Log first raw response for diagnostics
-        try:
-            resp2 = requests.get(url, params={"limit": 5}, headers=_headers(api_key), timeout=10)
-            log.warning(f"Kalshi diagnostic: status={resp2.status_code} body={resp2.text[:300]}")
-        except Exception as _de:
-            log.warning(f"Kalshi diagnostic failed: {_de}")
+    """Search all open markets for anything matching 'mlb' or 'baseball'."""
+    url = f"{KALSHI_BASE}/markets"
+    try:
+        resp = requests.get(
+            url,
+            params={"limit": 200, "status": "open"},
+            headers=_headers(api_key),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.warning(f"Broad Kalshi search failed: {e}")
         return []
 
-    log.info(f"Broad search: fetched {len(all_raw)} total open markets from Kalshi")
-
-    # Build keyword set from all team aliases
-    team_words = set(TEAM_ALIASES.keys()) | {
-        "mlb", "baseball", "major league", "world series",
-        "yankees", "red sox", "mets", "cubs", "dodgers",
-    }
-
-    mlb_markets = []
-    for m in all_raw:
-        text = " ".join([
-            (m.get("title")    or ""),
-            (m.get("subtitle") or ""),
-            (m.get("ticker")   or ""),
-            (m.get("event_ticker") or ""),
-        ]).lower()
-        if any(word in text for word in team_words):
-            mlb_markets.append(m)
-
-    log.info(f"Broad search found {len(mlb_markets)} MLB-related markets (from {len(all_raw)} total)")
+    mlb_markets = [
+        m for m in data.get("markets", [])
+        if "mlb" in m.get("title", "").lower()
+        or "baseball" in m.get("title", "").lower()
+    ]
+    log.info(f"Broad search found {len(mlb_markets)} MLB-related markets")
     return mlb_markets
 
 
@@ -256,7 +202,6 @@ def _broad_search(api_key: str) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 
 TEAM_ALIASES = {
-    # Full names / nicknames
     "diamondbacks": "Arizona Diamondbacks",
     "braves":       "Atlanta Braves",
     "orioles":      "Baltimore Orioles",
@@ -287,81 +232,7 @@ TEAM_ALIASES = {
     "rangers":      "Texas Rangers",
     "blue jays":    "Toronto Blue Jays",
     "nationals":    "Washington Nationals",
-    # 2-3 letter ticker abbreviations used by Kalshi
-    "ari": "Arizona Diamondbacks",
-    "atl": "Atlanta Braves",
-    "bal": "Baltimore Orioles",
-    "bos": "Boston Red Sox",
-    "chc": "Chicago Cubs",
-    "cws": "Chicago White Sox",
-    "cin": "Cincinnati Reds",
-    "cle": "Cleveland Guardians",
-    "col": "Colorado Rockies",
-    "det": "Detroit Tigers",
-    "hou": "Houston Astros",
-    "kc":  "Kansas City Royals",
-    "laa": "Los Angeles Angels",
-    "lad": "Los Angeles Dodgers",
-    "mia": "Miami Marlins",
-    "mil": "Milwaukee Brewers",
-    "min": "Minnesota Twins",
-    "nym": "New York Mets",
-    "nyy": "New York Yankees",
-    "oak": "Athletics",
-    "phi": "Philadelphia Phillies",
-    "pit": "Pittsburgh Pirates",
-    "sd":  "San Diego Padres",
-    "sf":  "San Francisco Giants",
-    "sea": "Seattle Mariners",
-    "stl": "St. Louis Cardinals",
-    "tb":  "Tampa Bay Rays",
-    "tex": "Texas Rangers",
-    "tor": "Toronto Blue Jays",
-    "was": "Washington Nationals",
-    "wsh": "Washington Nationals",
 }
-
-
-def _search_events(api_key: str) -> list:
-    """
-    Try Kalshi /events endpoint — Kalshi groups markets under events.
-    Returns markets extracted from any MLB-related event.
-    """
-    url = f"{KALSHI_BASE}/events"
-    all_markets = []
-    cursor = None
-    team_words = set(TEAM_ALIASES.keys()) | {"mlb", "baseball"}
-
-    for _ in range(3):
-        params = {"limit": 100, "status": "open"}
-        if cursor:
-            params["cursor"] = cursor
-        try:
-            resp = requests.get(url, params=params, headers=_headers(api_key), timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            log.debug(f"Kalshi /events fetch failed: {e}")
-            break
-
-        for event in data.get("events", []):
-            text = " ".join([
-                (event.get("title") or ""),
-                (event.get("ticker") or ""),
-                (event.get("category") or ""),
-            ]).lower()
-            if any(w in text for w in team_words):
-                # Pull the nested markets list if present
-                for m in event.get("markets", []):
-                    m["event_ticker"] = event.get("ticker", "")
-                    all_markets.append(m)
-
-        cursor = data.get("cursor")
-        if not cursor or not data.get("events"):
-            break
-
-    log.info(f"Events search found {len(all_markets)} markets inside MLB events")
-    return all_markets
 
 
 def _match_team(text: str) -> str:
@@ -377,46 +248,16 @@ def parse_market_teams(market: dict):
     Parse (away_team, home_team, yes_prob) from a Kalshi market dict.
     Returns None if the title can't be parsed into two teams.
     """
-    title   = market.get("title", "")
-    ticker  = market.get("ticker", "")
-    subtitle = market.get("subtitle", "")
-
-    # Log first few titles for debugging
-    if not hasattr(parse_market_teams, "_logged"):
-        parse_market_teams._logged = True
-        log.info(f"Kalshi sample title='{title}' ticker='{ticker}' subtitle='{subtitle}'")
-
-    # Skip season/championship futures — not game markets
-    skip_keywords = ["championship", "world series", "pennant", "playoff", "division title",
-                     "make the playoffs", "win the al", "win the nl", "win the 2026"]
-    if any(k in title.lower() for k in skip_keywords):
-        return None
-
-    # Try to extract teams from ticker format: KXMLB-26-BOS-NYY or similar
-    ticker_match = re.search(r'[A-Z]+-\d+-([A-Z]+)-([A-Z]+)', ticker)
-    if ticker_match:
-        abbr_a = ticker_match.group(1).lower()
-        abbr_b = ticker_match.group(2).lower()
-        team_a = _match_team(abbr_a)
-        team_b = _match_team(abbr_b)
-        if team_a != abbr_a and team_b != abbr_b:  # both matched
-            yes_ask  = market.get("yes_ask", 50)
-            yes_bid  = market.get("yes_bid", 50)
-            yes_prob = ((yes_ask + yes_bid) / 2) / 100.0
-            return team_a, team_b, yes_prob
-
-    # Try title + subtitle combined
-    search_text = title + " " + subtitle
+    title = market.get("title", "")
 
     vs_patterns = [
         r'(.+?)\s+(?:vs\.?|v\.?|at|@)\s+(.+?)(?:\s*[-—]|$|\?)',
         r'(?:Will\s+)?(.+?)\s+(?:beat|defeat|win\s+(?:vs|against))\s+(.+?)(?:\s*\?|$)',
-        r'(.+?)\s+or\s+(.+?)(?:\s+win|\s*\?|$)',
     ]
 
     team_a, team_b = None, None
     for pat in vs_patterns:
-        m = re.search(pat, search_text, re.IGNORECASE)
+        m = re.search(pat, title, re.IGNORECASE)
         if m:
             team_a = _match_team(m.group(1))
             team_b = _match_team(m.group(2))
@@ -714,17 +555,7 @@ def run(target_date: str = None) -> str:
     save_raw(date, raw_markets)
     games = extract_game_probabilities(raw_markets)
     if not games:
-        log.warning(f"Kalshi snapshot complete: No parseable MLB game markets for {date}")
-        try:
-            from alerts import send_alert
-            send_alert(
-                "Kalshi: 0 game markets found",
-                f"All 7 series tickers + both fallbacks returned 0 MLB game markets for {date}.\n"
-                "Kalshi signal will be missing from today's picks.",
-            )
-        except Exception:
-            pass
-        return f"Kalshi snapshot complete: No parseable MLB game markets for {date}"
+        return f"No parseable MLB game markets for {date}"
 
     # Load earliest snapshot BEFORE saving this one (so we compare against baseline)
     prev_snaps = load_earliest_snapshot(date)

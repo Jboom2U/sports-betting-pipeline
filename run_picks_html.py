@@ -711,10 +711,59 @@ def load_line_movement(date: str) -> list:
     return out
 
 
+def _build_yesterday_from_db(date: str) -> dict:
+    """Build a yesterday_data dict from graded picks in the DB (fallback for missing JSON)."""
+    try:
+        from db.picks_store import get_picks
+        from datetime import datetime as _dt, timedelta as _td
+        rows = []
+        for days_back in range(1, 4):
+            check = (_dt.strptime(date, "%Y-%m-%d") - _td(days=days_back)).strftime("%Y-%m-%d")
+            r = get_picks(check)
+            graded = [p for p in r if p.get("actual_result") in ("WIN","LOSS","PUSH")]
+            if graded:
+                rows = graded
+                check_date = check
+                break
+        if not rows:
+            return {}
+        # Build minimal metrics structure
+        wins = sum(1 for p in rows if p["actual_result"]=="WIN")
+        losses = sum(1 for p in rows if p["actual_result"]=="LOSS")
+        pushes = sum(1 for p in rows if p["actual_result"]=="PUSH")
+        denom = wins + losses
+        wr = round(wins/denom, 3) if denom > 0 else None
+        # Half-Kelly profit estimate at -110
+        def _profit(p):
+            conf = float(p.get("conf") or 0)
+            if conf <= 1: conf *= 100
+            edge = max(0, conf - 52.4) / 100
+            kelly = edge / 0.909 * 0.5  # half Kelly
+            stake = max(0.01, kelly)
+            if p["actual_result"]=="WIN": return stake * 0.909
+            if p["actual_result"]=="LOSS": return -stake
+            return 0
+        profit = round(sum(_profit(p) for p in rows), 3)
+        staked = round(sum(abs(_profit(p)) for p in rows), 3) or 1
+        overall = {
+            "wins": wins, "losses": losses, "pushes": pushes,
+            "total": wins+losses+pushes, "staked": staked,
+            "profit": profit, "win_rate": wr,
+            "roi": round(profit/staked, 3) if staked else None,
+        }
+        findings = [f"Overall: {wins}-{losses} ({wr*100:.1f}% WR) via DB fallback" if wr else f"Overall: {wins}-{losses} via DB fallback"]
+        log.info(f"Yesterday panel: built from DB for {check_date} ({wins}W-{losses}L)")
+        return {"date": check_date, "metrics": {"overall": overall, "by_tier": {}, "by_type": {}},
+                "findings": findings, "recommendations": [], "graded_picks": []}
+    except Exception as _e:
+        log.debug(f"DB yesterday fallback failed: {_e}")
+        return {}
+
+
 def load_yesterday_analysis(date: str) -> dict:
     """
     Load the most recent analysis JSON (for yesterday's picks) to show in
-    the 'Yesterday' panel.  Returns empty dict if not yet generated.
+    the 'Yesterday' panel.  Falls back to DB if JSON is missing.
     """
     import glob as _glob
     from datetime import datetime as _dt, timedelta as _td
@@ -727,10 +776,18 @@ def load_yesterday_analysis(date: str) -> dict:
             try:
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
-                log.info(f"Yesterday's analysis loaded: {path}")
-                return data
+                # Verify it has real graded picks (not empty)
+                if data.get("metrics") and data["metrics"].get("overall", {}).get("total", 0) > 0:
+                    log.info(f"Yesterday's analysis loaded: {path}")
+                    return data
             except Exception:
                 pass
+
+    # JSON missing or empty — try DB
+    log.info("Yesterday JSON missing or empty — trying DB fallback")
+    db_data = _build_yesterday_from_db(date)
+    if db_data:
+        return db_data
     return {}
 
 
@@ -1028,6 +1085,32 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .yday-findings{display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--border);padding-top:10px;margin-top:4px}
 .yday-finding{font-size:.74rem;color:var(--sub);line-height:1.5}
 .yday-finding.warn{color:#ffb74d}
+.yday-tier-row{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 10px}
+.yday-tier-chip{background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:8px 14px;min-width:90px;text-align:center}
+.yday-tier-name{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.yday-tier-record{font-size:1.1rem;font-weight:800}
+.yday-tier-pct{font-size:.7rem;color:var(--sub);margin-top:2px}
+.yday-overall-row{display:flex;gap:16px;flex-wrap:wrap;align-items:center;padding:8px 0;border-top:1px solid var(--border);margin-top:4px;font-size:.8rem}
+.yday-overall-rec{font-weight:700;color:var(--text)}
+.yday-overall-roi{font-weight:700}
+.yday-overall-profit{color:var(--sub)}
+.yday-overall-props{color:#a78bfa}
+.yday-props-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.yday-prop-chip{font-size:.72rem;padding:3px 8px;border-radius:4px;font-weight:600}
+.yday-prop-chip.win{background:rgba(63,185,80,.15);color:#3fb950;border:1px solid rgba(63,185,80,.3)}
+.yday-prop-chip.loss{background:rgba(248,81,73,.12);color:#f85149;border:1px solid rgba(248,81,73,.25)}
+.yday-bankroll-wrap{display:flex;gap:14px;align-items:flex-start;margin-bottom:0}
+.yday-bankroll-wrap #yesterdayBanner{flex:1;min-width:0}
+.bankroll-widget{background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:14px 16px;min-width:175px;max-width:210px;flex-shrink:0}
+.bk-title{font-size:.7rem;color:#8b949e;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+.bk-input-row{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.bk-dollar{font-size:1rem;font-weight:700;color:#e6edf3}
+.bk-input{background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:1.05rem;font-weight:700;padding:6px 8px;width:100%;outline:none;-moz-appearance:textfield}
+.bk-input::-webkit-outer-spin-button,.bk-input::-webkit-inner-spin-button{-webkit-appearance:none}
+.bk-input:focus{border-color:#58a6ff}
+.bk-unit-row{font-size:.75rem;color:#8b949e;margin-bottom:4px;display:none}
+.bk-unit-row strong{color:#e6edf3}
+.bk-note{font-size:.64rem;color:#484f58;margin-top:6px;line-height:1.4}
 
 /* ── PICKS GRID ── */
 .picks-grid{
@@ -1557,11 +1640,23 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <button class="section-nav-btn" data-panel="panel-sharp">🔥 Sharp Action</button>
     <button class="section-nav-btn" data-panel="panel-hr-watch">💣 HR Watch</button>
     <button class="section-nav-btn" data-panel="panel-monte-carlo">🎲 Monte Carlo</button>
+    <button class="section-nav-btn" data-panel="panel-daily-summary">📋 Daily Summary</button>
   </div>
 
   <!-- PANEL: GAME PICKS -->
   <div class="section-panel active" id="panel-picks">
-    <div id="yesterdayBanner"></div>
+    <div class="yday-bankroll-wrap">
+      <div id="yesterdayBanner"></div>
+      <div class="bankroll-widget" id="bankrollWidget">
+        <div class="bk-title">💰 My Bankroll</div>
+        <div class="bk-input-row">
+          <span class="bk-dollar">$</span>
+          <input type="number" id="bankrollInput" class="bk-input" placeholder="1000" min="1" step="100">
+        </div>
+        <div class="bk-unit-row" id="bkUnitRow">1 unit = <strong id="bkUnit">$10.00</strong></div>
+        <div class="bk-note">Enter your bankroll — Kelly bets &amp; profits update everywhere.</div>
+      </div>
+    </div>
     <div class="section-title">🎯 Individual Picks</div>
     <div class="results-count" id="pickResults"></div>
     <div id="todayInProgressBanner" style="display:none;background:#1c2128;border:1px solid #30363d;border-left:3px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:12px;color:#8b949e;font-size:.85rem">
@@ -1676,6 +1771,10 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <div class="section-panel" id="panel-monte-carlo">
     <div class="section-title">🎲 Monte Carlo &mdash; Hit-Rate Simulation (1000 Trials)</div>
     __MONTE_CARLO__
+  </div>
+
+  <div class="section-panel" id="panel-daily-summary">
+    <div id="dailySummaryContent"></div>
   </div>
 
 </div>
@@ -1988,7 +2087,7 @@ function renderPicks(){
 
     // Kelly Criterion sizing
     const kellyHtml = (p.kelly_pct > 0)
-      ? `<div class="kelly-row">💰 Bet sizing: ~<strong>${p.kelly_pct}%</strong> of bankroll <span class="kelly-note">(Half-Kelly at -110)</span></div>`
+      ? `<div class="kelly-row" data-kelly="${p.kelly_pct}">💰 Bet <strong class="kelly-amt">$${window._BR ? (window._BR*p.kelly_pct/100).toFixed(2) : (p.kelly_pct/100).toFixed(2)}</strong> <span class="kelly-note">${window._BR ? "on $"+window._BR.toLocaleString() : "per $1 bankroll"} (${p.kelly_pct}% Half-Kelly)</span></div>`
       : "";
 
     // Kalshi signal
@@ -2360,36 +2459,51 @@ function renderYesterday(){
   const roiColor = (m.roi || 0) >= 0 ? "var(--green)" : "var(--red)";
   const roiSign  = (m.roi || 0) >= 0 ? "+" : "";
 
-  // Top 3 findings
-  const topFindings = (d.findings || []).slice(0, 4).map(f => {
-    const isWarn = f.includes("⚠");
-    return `<div class="yday-finding${isWarn ? " warn" : ""}">${f}</div>`;
+  // Tier breakdown chips — LOCK / STRONG / LEAN each get their own W-L card
+  const TIER_ORDER = ["LOCK","STRONG","LEAN"];
+  const TIER_ICON  = {LOCK:"🔒",STRONG:"⭐⭐",LEAN:"⭐"};
+  const TIER_COL   = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a"};
+  const byTier     = (d.metrics && d.metrics.by_tier) || {};
+
+  const tierChips = TIER_ORDER.map(t => {
+    const b = byTier[t];
+    const hasData = b && b.total > 0;
+    const recColor = hasData
+      ? ((b.wins||0) > (b.losses||0) ? "var(--green)"
+          : (b.losses||0) > (b.wins||0) ? "var(--red)" : "var(--sub)")
+      : "var(--border)";
+    const record = hasData ? `${b.wins||0}-${b.losses||0}` : "—";
+    const pct    = hasData && b.win_rate ? `${(b.win_rate*100).toFixed(0)}%` : "";
+    return `<div class="yday-tier-chip">
+      <div class="yday-tier-name" style="color:${TIER_COL[t]}">${TIER_ICON[t]} ${t}</div>
+      <div class="yday-tier-record" style="color:${recColor}">${record}</div>
+      ${pct ? `<div class="yday-tier-pct">${pct}</div>` : ""}
+    </div>`;
   }).join("");
+
+  // Props summary from yesterday
+  const py = (d.props_yesterday) || {};
+  const propWins   = py.wins   != null ? py.wins   : null;
+  const propLosses = py.losses != null ? py.losses : null;
+  const propRecord = propWins != null
+    ? `🎯 Props ${propWins}-${propLosses}`
+    : "";
+  const topPropsHtml = (py.top || []).slice(0,4).map(p =>
+    `<span class="yday-prop-chip ${p.hit ? "win":"loss"}">${p.player} ${p.prop_type} ${p.hit ? "✓":"✗"}</span>`
+  ).join("");
 
   // Mini banner on picks panel
   document.getElementById("yesterdayBanner").innerHTML = `
     <div class="yesterday-banner">
       <div class="yesterday-title">📈 Yesterday (${d.date})</div>
-      <div class="yesterday-stats">
-        <div class="yday-stat yday-wins">
-          <div class="yday-num">${m.wins}</div><div class="yday-lbl">Wins</div>
-        </div>
-        <div class="yday-stat yday-losses">
-          <div class="yday-num">${m.losses}</div><div class="yday-lbl">Losses</div>
-        </div>
-        <div class="yday-stat">
-          <div class="yday-num">${wr}%</div><div class="yday-lbl">Win Rate</div>
-        </div>
-        <div class="yday-stat yday-roi">
-          <div class="yday-num" style="color:${roiColor}">${roiSign}${roi}%</div>
-          <div class="yday-lbl">ROI</div>
-        </div>
-        <div class="yday-stat">
-          <div class="yday-num">${(m.profit || 0) >= 0 ? "+" : ""}${(m.profit || 0).toFixed(2)}u</div>
-          <div class="yday-lbl">Profit</div>
-        </div>
+      <div class="yday-tier-row">${tierChips}</div>
+      <div class="yday-overall-row">
+        <span class="yday-overall-rec">${m.wins}-${m.losses} Overall</span>
+        <span class="yday-overall-roi" style="color:${roiColor}">${roiSign}${roi}% ROI</span>
+        <span class="yday-overall-profit" id="ydayProfit" data-profit="${(m.profit||0).toFixed(4)}">${(m.profit||0)>=0?"+":""}$${(window._BR ? Math.abs((m.profit||0)*window._BR) : Math.abs(m.profit||0)).toFixed(2)}${window._BR && window._BR!==1 ? "" : " <small style='color:#484f58'>($1 bankroll)</small>"}</span>
+        ${propRecord ? `<span class="yday-overall-props">${propRecord}</span>` : ""}
       </div>
-      <div class="yday-findings">${topFindings}</div>
+      ${topPropsHtml ? `<div class="yday-props-row">${topPropsHtml}</div>` : ""}
     </div>`;
 
   // Show Yesterday tab
@@ -2402,7 +2516,7 @@ function renderYesterday(){
     return `<tr>
       <td>${t}</td><td>${b.wins}-${b.losses}</td><td>${twr}</td>
       <td>${b.roi ? (b.roi*100).toFixed(1)+"%" : "—"}</td>
-      <td>${(b.profit||0) >= 0 ? "+":""  }${(b.profit||0).toFixed(2)}u</td>
+      <td>${(b.profit||0) >= 0 ? "+":"−"}$${Math.abs(b.profit||0).toFixed(2)}</td>
     </tr>`;
   }).join("");
 
@@ -2412,7 +2526,7 @@ function renderYesterday(){
     return `<tr>
       <td>${t}</td><td>${b.wins}-${b.losses}</td><td>${twr}</td>
       <td>${b.roi ? (b.roi*100).toFixed(1)+"%" : "—"}</td>
-      <td>${(b.profit||0) >= 0 ? "+" : ""}${(b.profit||0).toFixed(2)}u</td>
+      <td>${(b.profit||0) >= 0 ? "+":"−"}$${Math.abs(b.profit||0).toFixed(2)}</td>
     </tr>`;
   }).join("");
 
@@ -3683,10 +3797,292 @@ function renderSharpAction(){
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 // Render critical above-fold content immediately, defer heavy tabs
+
+// ── Daily Summary Tab ──────────────────────────────────────────────────────────
+function renderDailySummary(){
+  const el = document.getElementById("dailySummaryContent");
+  if(!el) return;
+
+  const TIER_COLOR = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a",TOSSUP:"#a09ae0"};
+
+  // Match a pick to a score entry
+  function findScore(pick){
+    return (DATA_SCORES||[]).find(s =>
+      (s.away===pick.away && s.home===pick.home) ||
+      (s.away===pick.home && s.home===pick.away)
+    );
+  }
+
+  // Is this score final?
+  function isFinal(score){
+    if(!score) return false;
+    const lbl = (score.label||"").trim();
+    return lbl==="Final" || lbl.startsWith("F/") || lbl==="F";
+  }
+
+  // Determine WIN/LOSS/PUSH from a final score
+  function pickResult(pick, score){
+    if(!score || !isFinal(score)) return null;
+    const awayScore = parseInt(score.away_score||0);
+    const homeScore = parseInt(score.home_score||0);
+    if(awayScore===homeScore) return "push";
+    const awayWon = awayScore > homeScore;
+    if(pick.type==="ML"||pick.type==="RL"){
+      const pickNick = (pick.team||"").split(" ").slice(-1)[0].toLowerCase();
+      const awayNick = (score.away||"").split(" ").slice(-1)[0].toLowerCase();
+      const pickedAway = pickNick===awayNick || (score.away||"").toLowerCase().includes(pickNick);
+      return (pickedAway && awayWon)||(!pickedAway && !awayWon) ? "win" : "loss";
+    }
+    if(pick.type==="TOTAL"){
+      const total = awayScore + homeScore;
+      const line  = parseFloat(pick.exp_total||0);
+      if(!line) return null;
+      const pickOver = (pick.label||"").toUpperCase().includes("OVER");
+      return (pickOver&&total>line)||(!pickOver&&total<line) ? "win" : "loss";
+    }
+    return null;
+  }
+
+  // Score display
+  function scoreStr(score){
+    if(!score) return "";
+    const a = score.away_city||score.away||"";
+    const h = score.home_city||score.home||"";
+    return `${a.split(" ").slice(-1)[0]} ${score.away_score} – ${h.split(" ").slice(-1)[0]} ${score.home_score}`;
+  }
+
+  // ── Collect completed picks only ──────────────────────────────────────────
+  const completed = [];
+  (DATA_PICKS||[]).forEach(p => {
+    const sc  = findScore(p);
+    const res = pickResult(p, sc);
+    if(res) completed.push({pick:p, score:sc, result:res});
+  });
+
+  const wins   = completed.filter(c=>c.result==="win").length;
+  const losses = completed.filter(c=>c.result==="loss").length;
+  const pushes = completed.filter(c=>c.result==="push").length;
+  const total  = wins+losses;
+  const wr     = total>0 ? Math.round(wins/total*100) : 0;
+  const lockW  = completed.filter(c=>c.result==="win"&&c.pick.tier==="LOCK").length;
+  const lockL  = completed.filter(c=>c.result==="loss"&&c.pick.tier==="LOCK").length;
+  const pending = (DATA_PICKS||[]).length - completed.length;
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  let html = `
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+    <span style="background:#1f2d40;color:#58a6ff;padding:3px 10px;border-radius:6px;font-size:.78rem;font-weight:600">${DATA_DATE||"Today"}</span>
+    <span style="color:#8b949e;font-size:.78rem">Updates live as games finish</span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
+    <div class="stat-card">
+      <div style="font-size:1.4rem;font-weight:700;color:${wins>losses?"#3fb950":wins<losses?"#f85149":"#e6edf3"}">${wins}–${losses}</div>
+      <div style="font-size:.7rem;color:#8b949e;margin-top:4px">Record (final)</div>
+    </div>
+    <div class="stat-card">
+      <div style="font-size:1.4rem;font-weight:700">${total>0?wr+"%":"—"}</div>
+      <div style="font-size:.7rem;color:#8b949e;margin-top:4px">Win rate</div>
+    </div>
+    <div class="stat-card">
+      <div style="font-size:1.4rem;font-weight:700;color:#ffc107">${lockW}–${lockL}</div>
+      <div style="font-size:.7rem;color:#8b949e;margin-top:4px">🔒 Lock record</div>
+    </div>
+    <div class="stat-card">
+      <div style="font-size:1.4rem;font-weight:700;color:#8b949e">${pending}</div>
+      <div style="font-size:.7rem;color:#8b949e;margin-top:4px">Still in progress</div>
+    </div>
+  </div>`;
+
+  // ── No picks yet ──────────────────────────────────────────────────────────
+  if(completed.length===0){
+    html += `<div style="color:#8b949e;text-align:center;padding:60px 0;font-size:.88rem">
+      ${pending>0 ? `⚾ ${pending} pick${pending>1?"s":""} in progress — check back as games finish.` : "No picks yet today."}
+    </div>`;
+    el.innerHTML = html;
+    return;
+  }
+
+  // ── Completed pick cards ──────────────────────────────────────────────────
+  html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Final picks — ${completed.length} game${completed.length!==1?"s":""}</div>`;
+
+  completed.forEach(({pick:p, score:sc, result:res})=>{
+    const borderColor = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
+    const badgeBg     = res==="win"?"rgba(63,185,80,.15)":res==="loss"?"rgba(248,81,73,.15)":"rgba(139,148,158,.1)";
+    const badgeColor  = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
+    const badgeText   = res==="win"?"WIN ✓":res==="loss"?"LOSS ✗":"PUSH";
+    const tc = TIER_COLOR[p.tier]||"#8b949e";
+    const sc2 = scoreStr(sc);
+
+    html += `
+    <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid ${borderColor};border-radius:10px;padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:.72rem;color:#8b949e;margin-bottom:3px">${p.away||""} @ ${p.home||""}</div>
+        <div style="font-size:.9rem;font-weight:700"><span style="color:${tc}">${p.tier}</span> ${p.label}</div>
+        <div style="font-size:.68rem;color:#8b949e;margin-top:3px">${p.conf}% conf${p.kelly_pct!==undefined?" &nbsp;|&nbsp; Kelly: "+p.kelly_pct+"%":""}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        ${sc2?`<div style="font-size:.75rem;color:#e6edf3;font-weight:600">${sc2}</div>`:""}
+        <span style="background:${badgeBg};color:${badgeColor};font-size:.78rem;font-weight:700;padding:3px 12px;border-radius:6px">${badgeText}</span>
+      </div>
+    </div>`;
+  });
+
+  // ── Parlays (completed only) ───────────────────────────────────────────────
+  const allParlays = [...(DATA_P2||[]), ...(DATA_P3||[])];
+  const doneParlays = allParlays.filter(par => {
+    const legs = par.picks||par.legs||par;
+    if(!Array.isArray(legs)) return false;
+    return legs.every(l => { const s=findScore(l); return isFinal(s); });
+  });
+
+  if(doneParlays.length>0){
+    html += `<div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:16px 0 10px">Parlays — final</div>`;
+    doneParlays.forEach(par=>{
+      const legs = par.picks||par.legs||par;
+      const results = legs.map(l=>pickResult(l,findScore(l)));
+      const res = results.every(r=>r==="win")?"win":results.some(r=>r==="loss"||r==="push")?"loss":"pending";
+      const borderColor = res==="win"?"#3fb950":res==="loss"?"#f85149":"#8b949e";
+      const badgeText   = res==="win"?"WIN ✓":res==="loss"?"LOSS ✗":"—";
+      const badgeColor  = res==="win"?"#3fb950":"#f85149";
+      html += `<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid ${borderColor};border-radius:10px;padding:12px 16px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-weight:700;font-size:.83rem">${Array.isArray(legs)?legs.length:2}-leg parlay</div>
+          <span style="color:${badgeColor};font-weight:700;font-size:.8rem">${badgeText}</span>
+        </div>`;
+      if(Array.isArray(legs)){
+        legs.forEach(leg=>{
+          const sc3=findScore(leg); const lr=pickResult(leg,sc3);
+          const lc=lr==="win"?"#3fb950":lr==="loss"?"#f85149":"#8b949e";
+          const icon=lr==="win"?"✓":lr==="loss"?"✗":"◦";
+          html+=`<div style="font-size:.75rem;color:${lc};padding:3px 0;border-bottom:1px solid #21262d">${icon} ${leg.label||leg.team||""}${sc3?` — ${scoreStr(sc3)}`:""}</div>`;
+        });
+      }
+      html += `</div>`;
+    });
+  }
+
+  // ── Sharp action — final games only ──────────────────────────────────────
+  const finalMovement = (DATA_MOVEMENT||[]).filter(mv=>{
+    const sc = (DATA_SCORES||[]).find(s=>s.away===mv.away&&s.home===mv.home);
+    return sc && isFinal(sc);
+  });
+
+  if(finalMovement.length>0){
+    let ssW=0,ssL=0,bw=0,mW=0,mL=0;
+    const sharpRows = finalMovement.map(mv=>{
+      const sig = mv.ml_signal==="STEAM"||mv.ml_signal==="DRIFT" ? mv.ml_signal : (mv.total_signal||"MOVE");
+      const sigColor = sig==="STEAM"?"#ef5350":sig==="DRIFT"?"#ffa726":"#8b949e";
+      const sc = (DATA_SCORES||[]).find(s=>s.away===mv.away&&s.home===mv.home);
+      const awayFinal=parseInt(sc?.away_score||0), homeFinal=parseInt(sc?.home_score||0);
+      const actualWinner = awayFinal>homeFinal ? mv.away : mv.home;
+      const winnerNick = (actualWinner||"").split(" ").slice(-1)[0];
+      const sharpNick  = (mv.sharp_side||"").split(" ").slice(-1)[0].toLowerCase();
+      const winnerNickL = winnerNick.toLowerCase();
+      const pick = (DATA_PICKS||[]).find(p=>p.away===mv.away&&p.home===mv.home&&(p.type==="ML"||p.type==="RL"));
+      const modelStr = pick
+        ? `<span style="color:${TIER_COLOR[pick.tier]||"#8b949e"}">${pick.tier}</span> ${(pick.team||"").split(" ").slice(-1)[0]}`
+        : `<span style="color:#8b949e">Pass</span>`;
+      let winnerStr="—",wc="#8b949e";
+      if(mv.sharp_side && actualWinner){
+        const pickNick = pick?(pick.team||"").split(" ").slice(-1)[0].toLowerCase():"";
+        if(sharpNick===winnerNickL && pickNick===winnerNickL){ winnerStr="Agree ✓";wc="#3fb950";ssW++;mW++; }
+        else if(sharpNick===winnerNickL && pickNick!==winnerNickL && pick){ winnerStr="⚡ Sharp";wc="#ffa726";ssW++;mL++; }
+        else if(sharpNick!==winnerNickL && pickNick===winnerNickL && pick){ winnerStr="✓ Model";wc="#3fb950";ssL++;mW++; }
+        else if(sharpNick!==winnerNickL && pick && pickNick!==winnerNickL){ winnerStr='<span style="background:rgba(239,83,80,.15);color:#ef5350;padding:1px 6px;border-radius:3px;font-size:.68rem">Both Wrong</span>';bw++;ssL++;mL++; }
+        else if(sharpNick!==winnerNickL){ winnerStr="✗ Sharp";wc="#f85149";ssL++; }
+      }
+      return `<tr>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${(mv.away||"").split(" ").slice(-1)[0]} @ ${(mv.home||"").split(" ").slice(-1)[0]}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;color:${sigColor};font-weight:700;font-size:.72rem">${sig}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${mv.sharp_side?(mv.sharp_side||"").split(" ").slice(-1)[0]:"—"}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-size:.75rem">${modelStr}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;font-weight:600;font-size:.75rem">${winnerNick||"—"}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #21262d;color:${wc};font-weight:700;font-size:.75rem">${winnerStr}</td>
+      </tr>`;
+    }).join("");
+
+    const mD=mW+mL, sD=ssW+ssL;
+    html += `
+    <div style="font-size:.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin:20px 0 10px">Sharp action — final games</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">
+      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700">${mD>0?mW+"/"+mD:"—"}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Model W/L</div></div>
+      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700">${sD>0?ssW+"/"+sD:"—"}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Sharp W/L</div></div>
+      <div class="stat-card"><div style="font-size:1.1rem;font-weight:700;color:#ef5350">${bw}</div><div style="font-size:.68rem;color:#8b949e;margin-top:3px">Both Wrong</div></div>
+    </div>
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:hidden;margin-bottom:16px">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid #30363d">
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Game</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Signal</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Sharp side</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Model</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Winner</th>
+          <th style="padding:8px 10px;text-align:left;color:#8b949e;font-size:.65rem;text-transform:uppercase">Edge</th>
+        </tr></thead>
+        <tbody>${sharpRows}</tbody>
+      </table>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
 renderTicker();
 renderYesterday();
 renderPicks();
 renderSurfacedProps();
+
+// ── Bankroll Calculator ──────────────────────────────────────────────────────
+window._BR = null;  // global bankroll — pick cards read this at render time
+
+function applyBankroll(br) {
+  window._BR = (br && br > 0) ? br : null;
+  const inp = document.getElementById('bankrollInput');
+  const unitRow = document.getElementById('bkUnitRow');
+  const unitEl  = document.getElementById('bkUnit');
+  if (window._BR) {
+    localStorage.setItem('statalizers_bankroll', window._BR);
+    if (unitRow) unitRow.style.display = '';
+    if (unitEl)  unitEl.textContent = '$' + (window._BR / 100).toFixed(2);
+    if (inp && inp.value != window._BR) inp.value = window._BR;
+  }
+
+  // Update Kelly rows already in DOM
+  document.querySelectorAll('.kelly-row[data-kelly]').forEach(el => {
+    const pct = parseFloat(el.dataset.kelly || 0);
+    if (!pct) return;
+    const betAmt = window._BR ? (window._BR * pct / 100).toFixed(2) : (pct / 100).toFixed(2);
+    const note   = window._BR ? `on $${window._BR.toLocaleString()}` : 'per $1 bankroll';
+    const strong = el.querySelector('.kelly-amt');
+    if (strong) strong.textContent = '$' + betAmt;
+    const kn = el.querySelector('.kelly-note');
+    if (kn) kn.textContent = `${note} (${pct}% Half-Kelly)`;
+  });
+
+  // Update yesterday profit span
+  const profEl = document.getElementById('ydayProfit');
+  if (profEl) {
+    const units = parseFloat(profEl.dataset.profit || 0);
+    const val   = window._BR ? units * window._BR : units;
+    const sign  = val >= 0 ? '+' : '';
+    const note  = (!window._BR || window._BR === 1) ? ' <small style="color:#484f58">($1 bankroll)</small>' : '';
+    profEl.innerHTML = `${sign}$${Math.abs(val).toFixed(2)}${note}`;
+  }
+}
+
+// Wire up input
+const _bkInp = document.getElementById('bankrollInput');
+if (_bkInp) {
+  _bkInp.addEventListener('input', function() {
+    const v = parseFloat(this.value);
+    if (!isNaN(v) && v > 0) applyBankroll(v);
+  });
+  // Restore from localStorage
+  const saved = parseFloat(localStorage.getItem('statalizers_bankroll') || '');
+  if (saved && saved > 0) { _bkInp.value = saved; applyBankroll(saved); }
+}
+// ──────────────────────────────────────────────────────────────────────────────
 // Defer heavy renders so browser doesn't block on initial paint
 setTimeout(() => {
   renderSharpMoney();
@@ -3697,6 +4093,7 @@ setTimeout(() => {
   renderGames();
   renderProps();
   initTeamsTab();
+  renderDailySummary();
 }, 0);
 
 // Auto-reload every 15 minutes to pick up fresh odds, lineups, and scores
@@ -3913,6 +4310,28 @@ def main(date=None, no_open=False):
 
     # Yesterday's analysis panel
     yesterday_data = load_yesterday_analysis(actual_date)
+    # Attach yesterday's prop results so banner can show props W-L
+    try:
+        from datetime import datetime as _dt2, timedelta as _td2
+        _yday_str = (_dt2.strptime(actual_date, "%Y-%m-%d") - _td2(days=1)).strftime("%Y-%m-%d")
+        from db.connection import get_conn as _gc2
+        _conn2 = _gc2()
+        if _conn2:
+            with _conn2.cursor() as _cur2:
+                _cur2.execute(
+                    "SELECT player_name, prop_type, hit FROM player_prop_history "
+                    "WHERE prop_date = %s AND hit IS NOT NULL ORDER BY hit DESC",
+                    (_yday_str,)
+                )
+                _prop_rows = _cur2.fetchall()
+            _conn2.close()
+            _pw = sum(1 for r in _prop_rows if r[2])
+            _pl = sum(1 for r in _prop_rows if not r[2])
+            _top = [{"player": r[0], "prop_type": r[1], "hit": r[2]}
+                    for r in _prop_rows[:6]]
+            yesterday_data["props_yesterday"] = {"wins": _pw, "losses": _pl, "top": _top}
+    except Exception as _pe:
+        log.debug(f"Yesterday props query failed: {_pe}")
     yesterday_json = json.dumps(yesterday_data)
 
     # Serialize projected lineups (loaded earlier for props; reuse here for JS injection)

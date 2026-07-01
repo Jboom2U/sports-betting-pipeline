@@ -388,7 +388,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
     roi = overall["roi"]
     findings.append(
         f"Overall: {overall['wins']}-{overall['losses']} ({wr*100:.1f}% WR) | "
-        f"ROI: {roi*100:+.1f}% on {overall['staked']:.0f} units staked"
+        f"ROI: {roi*100:+.1f}% | Profit: ${overall['profit']:+.2f} on $1 bankroll"
     )
 
     # LOCK tier
@@ -445,7 +445,7 @@ def generate_findings(metrics: dict, graded_picks: list) -> list:
         mlwr = ml.get("win_rate", 0) or 0
         findings.append(
             f"Moneyline: {ml['wins']}-{ml['losses']} ({mlwr*100:.1f}%) | "
-            f"Profit: {ml['profit']:+.2f}u — "
+            f"Profit: ${ml['profit']:+.2f} — "
             f"{'strongest segment today' if ml['roi'] and ml['roi'] > 0 else 'unprofitable — check heavy-fav exposure'}"
         )
 
@@ -693,9 +693,12 @@ def push_grades_to_db(graded_picks: list, date: str) -> int:
 
     # Build lookup: (pick_type_upper, label_stripped) -> db_pick
     db_index = {}
+    db_game_index = {}  # fallback: (game_stripped, pick_type_upper) -> db_pick
     for dp in db_picks:
         key = (dp["pick_type"].upper(), dp["label"].strip())
         db_index[key] = dp
+        game_key = (dp.get("game","").strip(), dp["pick_type"].upper())
+        db_game_index[game_key] = dp
 
     updated = 0
     for gp in graded_picks:
@@ -706,8 +709,13 @@ def push_grades_to_db(graded_picks: list, date: str) -> int:
         key = (gp["type"].upper(), gp["label"].strip())
         dp  = db_index.get(key)
         if dp is None:
-            log.debug(f"No DB match for pick {key} on {date}")
-            continue
+            # Fallback: match by game + pick_type (handles label drift from afternoon refresh)
+            game_key = (gp.get("game","").strip(), gp["type"].upper())
+            dp = db_game_index.get(game_key)
+            if dp is None:
+                log.debug(f"No DB match for pick {key} on {date} (game fallback also failed)")
+                continue
+            log.debug(f"DB grade matched via game fallback: {game_key}")
 
         result_game = gp.get("result_game") or {}
         away_score  = result_game.get("away_score")
@@ -937,8 +945,10 @@ def run(date: str):
         graded.append({**p, "result": result_str, "profit": profit,
                         "result_game": result_obj})
 
-    # Exclude TOSSUP picks from display/DB so Yesterday banner matches performance page
-    graded_display = [p for p in graded if p.get("tier", "").upper() != "TOSSUP"]
+    # Include all graded picks (TOSSUP included) so the Yesterday panel shows all games.
+    # TOSSUP picks contribute to overall W/L count but not to by_tier breakdown
+    # (compute_metrics only tracks LOCK/STRONG/LEAN in by_tier).
+    graded_display = graded
 
     # Compute metrics
     metrics  = compute_metrics(graded_display)
@@ -950,7 +960,7 @@ def run(date: str):
     save_analysis(date, graded_display, metrics, findings, recs)
 
     # Persist grades to PostgreSQL (non-fatal if DB unavailable)
-    push_grades_to_db(graded_display, date)
+    push_grades_to_db(graded, date)  # grade ALL picks (incl TOSSUP) so sharp table has scores
 
     # Backfill market_signal on any picks that don't have it yet (non-fatal)
     try:

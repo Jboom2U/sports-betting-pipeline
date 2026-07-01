@@ -203,6 +203,8 @@ def get_pending_picks(max_age_days: int = 7) -> list:
     Return picks with actual_result = 'PENDING' from the last max_age_days days.
     Used by the grading step to know what needs to be scored against results.
     """
+    from datetime import date as _date, timedelta as _td
+    cutoff = (_date.today() - _td(days=max_age_days)).isoformat()
     rows = []
     with db_conn() as conn:
         if conn is None:
@@ -215,10 +217,10 @@ def get_pending_picks(max_age_days: int = 7) -> list:
                        team, conf, tier
                 FROM picks
                 WHERE actual_result = 'PENDING'
-                  AND pick_date >= CURRENT_DATE - INTERVAL '%s days'
+                  AND pick_date >= %s
                 ORDER BY pick_date DESC
                 """,
-                (max_age_days,)
+                (cutoff,)
             )
             cols = [d[0] for d in cur.description]
             for row in cur.fetchall():
@@ -257,14 +259,16 @@ def grade_pick(pick_id: int, result: str,
             return False
 
 
-def get_accuracy_summary(days: int = 30) -> dict:
+def get_accuracy_summary(days: int = 30) -> list:
     """
-    Returns a summary dict of model accuracy over the last N days.
-    Used by the backtesting dashboard (Priority 2).
+    Returns a list of dicts of model accuracy over the last N days.
+    Used by the backtesting dashboard.
     """
+    from datetime import date as _date, timedelta as _td
+    cutoff = (_date.today() - _td(days=days)).isoformat()
     with db_conn() as conn:
         if conn is None:
-            return {}
+            return []
         try:
             cur = conn.cursor()
             cur.execute(
@@ -278,18 +282,18 @@ def get_accuracy_summary(days: int = 30) -> dict:
                     COUNT(*) FILTER (WHERE actual_result = 'PENDING') AS pending,
                     ROUND(AVG(conf)::numeric, 3) AS avg_conf
                 FROM picks
-                WHERE pick_date >= CURRENT_DATE - INTERVAL '%s days'
+                WHERE pick_date >= %s
                   AND actual_result != 'PENDING'
                 GROUP BY pick_type, tier
                 ORDER BY pick_type, tier
                 """,
-                (days,)
+                (cutoff,)
             )
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, row)) for row in cur.fetchall()]
         except Exception as e:
             log.warning(f"get_accuracy_summary failed: {e}")
-            return {}
+            return []
 
 
 
@@ -347,6 +351,8 @@ def get_accuracy_by_market_signal(days: int = 30) -> list:
     Returns W/L/ROI grouped by market_signal (CONFIRM / DIVERGE / NEUTRAL)
     over the last N days.
     """
+    from datetime import date as _date, timedelta as _td
+    cutoff = (_date.today() - _td(days=days)).isoformat()
     with db_conn() as conn:
         if conn is None:
             return []
@@ -361,12 +367,12 @@ def get_accuracy_by_market_signal(days: int = 30) -> list:
                     COUNT(*) FILTER (WHERE actual_result = 'PUSH') AS pushes,
                     ROUND(AVG(conf)::numeric, 3) AS avg_conf
                 FROM picks
-                WHERE pick_date >= CURRENT_DATE - INTERVAL '%s days'
+                WHERE pick_date >= %s
                   AND actual_result IN ('WIN', 'LOSS', 'PUSH')
                 GROUP BY COALESCE(market_signal, 'NEUTRAL')
                 ORDER BY market_signal
                 """,
-                (days,)
+                (cutoff,)
             )
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -471,6 +477,8 @@ def get_prop_accuracy(days: int = 30) -> list:
     Return prop hit rates by prop_type and overall.
     Returns list of dicts: {prop_type, total, hits, hit_rate, avg_conf}
     """
+    from datetime import date as _date, timedelta as _td
+    cutoff = (_date.today() - _td(days=days)).isoformat()
     rows = []
     with db_conn() as conn:
         if conn is None:
@@ -490,12 +498,12 @@ def get_prop_accuracy(days: int = 30) -> list:
                     ) AS hit_rate,
                     ROUND(AVG(model_conf)::numeric, 3) AS avg_conf
                 FROM player_prop_history
-                WHERE game_date >= CURRENT_DATE - INTERVAL '%s days'
+                WHERE game_date >= %s
                   AND result IS NOT NULL
                 GROUP BY prop_type
                 ORDER BY hit_rate DESC NULLS LAST
                 """,
-                (days,)
+                (cutoff,)
             )
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -504,12 +512,14 @@ def get_prop_accuracy(days: int = 30) -> list:
     return rows
 
 
-def get_player_prop_accuracy(days: int = 30, min_picks: int = 5) -> list:
+def get_player_prop_accuracy(days: int = 30, min_picks: int = 3) -> list:
     """
     Return per-player hit rates for each prop type.
     Returns list of dicts: {player_name, prop_type, total, hits, hit_rate, avg_conf}
     Filtered to players with >= min_picks graded results.
     """
+    from datetime import date as _date, timedelta as _td
+    cutoff = (_date.today() - _td(days=days)).isoformat()
     rows = []
     with db_conn() as conn:
         if conn is None:
@@ -530,13 +540,13 @@ def get_player_prop_accuracy(days: int = 30, min_picks: int = 5) -> list:
                     ) AS hit_rate,
                     ROUND(AVG(model_conf)::numeric, 3) AS avg_conf
                 FROM player_prop_history
-                WHERE game_date >= CURRENT_DATE - INTERVAL '%s days'
+                WHERE game_date >= %s
                   AND result IS NOT NULL
                 GROUP BY player_name, prop_type
                 HAVING COUNT(*) >= %s
                 ORDER BY hit_rate DESC NULLS LAST
                 """,
-                (days, min_picks)
+                (cutoff, min_picks)
             )
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -551,6 +561,8 @@ def get_player_trailing_hit_rate(player_name: str, prop_type: str,
     Return trailing hit rate (0.0-1.0) for a specific player/prop/line combo.
     Returns None if fewer than 5 graded results exist.
     """
+    from datetime import date as _date, timedelta as _td
+    cutoff = (_date.today() - _td(days=days)).isoformat()
     with db_conn() as conn:
         if conn is None:
             return None
@@ -565,10 +577,10 @@ def get_player_trailing_hit_rate(player_name: str, prop_type: str,
                 WHERE player_name = %s
                   AND prop_type   = %s
                   AND line        = %s
-                  AND game_date  >= CURRENT_DATE - INTERVAL '%s days'
+                  AND game_date  >= %s
                   AND result IS NOT NULL
                 """,
-                (player_name, prop_type, float(line), days)
+                (player_name, prop_type, float(line), cutoff)
             )
             row = cur.fetchone()
             if not row or row[0] < 5:
@@ -586,6 +598,8 @@ def get_sharp_vs_model(days: int = 3) -> list:
     Always shows the last `days` days (default 3) regardless of the page day-toggle,
     since Market Signal Breakdown already covers the rolling aggregate view.
     """
+    from datetime import date as _date, timedelta as _td
+    cutoff = (_date.today() - _td(days=days)).isoformat()
     with db_conn() as conn:
         if conn is None:
             return []
@@ -616,11 +630,11 @@ def get_sharp_vs_model(days: int = 3) -> list:
                   AND sg.sharp_side IS NOT NULL
                   AND sg.sharp_side <> ''
                   AND sg.sharp_side <> p.team
-                  AND p.pick_date >= CURRENT_DATE - INTERVAL '%s days'
+                  AND p.pick_date >= %s
                   AND p.actual_result IN ('WIN', 'LOSS', 'PUSH')
                 ORDER BY p.pick_date DESC
                 """,
-                (days,)
+                (cutoff,)
             )
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, row)) for row in cur.fetchall()]

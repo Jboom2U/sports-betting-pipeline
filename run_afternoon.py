@@ -61,35 +61,13 @@ def main():
     except Exception as e:
         log.warning(f"Analysis grade failed (non-fatal): {e}")
 
-    # ── Step 0b: Refresh probable pitchers (rotation changes, injuries) ──────────
-    # The morning pipeline locks in whatever the MLB API said at 6am. By afternoon,
-    # starters can be scratched or swapped. Re-fetch and upsert so the model uses
-    # current assignments for today + tomorrow.
-    try:
-        from scrapers.mlb_scraper import fetch_schedule
-        from normalize.mlb_normalize import upsert_schedule_pitchers
-        fresh_schedule = fetch_schedule(days_ahead=1)   # today + tomorrow
-        n_updated = upsert_schedule_pitchers(fresh_schedule)
-        log.info(f"Probable pitchers refreshed: {n_updated} game(s) updated/inserted")
-    except Exception as e:
-        log.warning(f"Pitcher refresh failed (non-fatal): {e}")
-
     # ── Step 1: Refresh odds (lines move all morning) ─────────────────────────
-    # Primary: The Odds API. Fallback: Pinnacle guest API (no auth, no quota).
     try:
         from scrapers.mlb_odds_scraper import run as run_odds
-        odds_result = run_odds()
-        log.info(f"Odds refreshed: {odds_result}")
-        if odds_result.get("quota_exceeded") or odds_result.get("snapshots", 0) == 0:
-            raise RuntimeError("Odds API quota exhausted — switching to Pinnacle fallback")
+        result = run_odds()
+        log.info(f"Odds refreshed: {result}")
     except Exception as e:
-        log.warning(f"Odds API unavailable ({e}) — trying Pinnacle fallback")
-        try:
-            from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
-            pinnacle_result = run_pinnacle()
-            log.info(f"Pinnacle fallback odds: {pinnacle_result}")
-        except Exception as pe:
-            log.warning(f"Pinnacle fallback also failed (non-fatal): {pe}")
+        log.warning(f"Odds refresh failed (non-fatal): {e}")
 
     # ── Step 1b: Refresh umpire assignments (can post/change up to game time) ──
     try:
@@ -107,6 +85,18 @@ def main():
     except Exception as e:
         log.warning(f"Bullpen fatigue refresh failed (non-fatal): {e}")
 
+    # ── Step 1d: Refresh probable pitchers (rotation can change after 6am) ──────
+    try:
+        from scrapers.mlb_scraper import fetch_schedule, write_raw
+        from normalize.mlb_normalize import normalize_schedule, append_to_master
+        sched_rows = fetch_schedule(days_ahead=1)
+        write_raw(sched_rows, "schedule")
+        clean_rows = normalize_schedule(sched_rows)
+        append_to_master(clean_rows, "schedule", dedup_key="game_id")
+        log.info(f"Probable pitchers refreshed: {len(sched_rows)} schedule rows")
+    except Exception as e:
+        log.warning(f"Schedule/probable pitcher refresh failed (non-fatal): {e}")
+
     # ── Step 2: Refresh lineups + hitter stats ────────────────────────────────
     try:
         from scrapers.mlb_lineup_scraper import run as run_lineups
@@ -118,37 +108,6 @@ def main():
             from scrapers.mlb_hitter_scraper import run as run_hitters
             run_hitters(target_date=today)
             log.info("Hitter stats refreshed — props will now populate")
-
-            # Upload hitter stats JSON to R2 so batter props survive Railway restarts
-            try:
-                from db.csv_sync import upload_hitter_stats
-                upload_hitter_stats(today)
-            except Exception as _ue:
-                log.warning(f"Hitter stats R2 upload failed (non-fatal): {_ue}")
-
-            # Save confirmed prop picks to DB (ON CONFLICT DO NOTHING so safe to re-run)
-            try:
-                from model.mlb_props_model import score_all_props
-                from db.picks_store import save_prop_pick
-                props = score_all_props(target_date=today)
-                saved = 0
-                for _p in props:
-                    if _p.get("projected"):
-                        continue  # skip non-confirmed lineup props
-                    save_prop_pick(
-                        game_date=today,
-                        player_name=_p.get("player_name", ""),
-                        team=_p.get("team", ""),
-                        away_team=_p.get("away_team", ""),
-                        home_team=_p.get("home_team", ""),
-                        prop_type=_p.get("prop_type", ""),
-                        line=_p.get("line", 0),
-                        model_conf=_p.get("confidence", 0),
-                    )
-                    saved += 1
-                log.info(f"Props saved to DB: {saved} confirmed picks")
-            except Exception as _pe:
-                log.warning(f"Prop DB save failed (non-fatal): {_pe}")
         else:
             log.info("No confirmed lineups yet. Try again closer to first pitch.")
     except Exception as e:
@@ -185,22 +144,6 @@ def main():
         log.info("HTML dashboard regenerated with updated props + odds")
     except Exception as e:
         log.error(f"HTML rebuild failed: {e}", exc_info=True)
-
-    # ── Step 5: Upload odds master + line movement to R2 ─────────────────────
-    # -- Step 5: Upload odds master + line movement to R2
-    # CRITICAL: Railway containers are ephemeral. Without this upload, any
-    # redeploy after the afternoon refresh loses the second Pinnacle snapshot.
-    # The next startup restores R2's 6am-only version, leaving no baseline
-    # for movement detection -- killing sharp action signals.
-    try:
-        from db.csv_sync import upload_all as csv_upload_all, storage_available
-        if storage_available():
-            n_uploaded = csv_upload_all()
-            log.info(f"Afternoon R2 upload complete: {n_uploaded} file(s).")
-        else:
-            log.debug("Object storage not configured -- skipping afternoon R2 upload.")
-    except Exception as e:
-        log.warning(f"Afternoon R2 upload failed (non-fatal): {e}")
 
     log.info("=" * 60)
     log.info("AFTERNOON REFRESH COMPLETE")

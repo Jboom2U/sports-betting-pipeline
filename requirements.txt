@@ -7,3 +7,5 @@ gunicorn>=21.2
 # Persistence layer
 psycopg2-binary>=2.9.9   # PostgreSQL driver (Railway DB)
 boto3>=1.34.0             # S3-compatible object storage (Cloudflare R2 or Railway)
+# Analytics NL query
+anthropic>=0.25.0
