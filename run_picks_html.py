@@ -1338,6 +1338,16 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .ticker-score.win{color:var(--green)}
 .ticker-score.loss{color:var(--sub)}
 .ticker-final{font-size:.65rem;color:var(--sub);text-transform:uppercase;letter-spacing:.5px}
+/* ── Completed pick card overlay ── */
+.pick-card.pick-done{opacity:.72;border-style:dashed}
+.pick-card.pick-done:hover{opacity:.9}
+.pick-done-banner{
+  display:flex;align-items:center;gap:6px;
+  padding:6px 10px;border-radius:6px;margin-top:10px;
+  font-size:.75rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+}
+.pick-done-banner.win-banner {background:rgba(46,160,67,.15);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+.pick-done-banner.loss-banner{background:rgba(248,81,73,.12);color:#f85149;border:1px solid rgba(248,81,73,.25)}
 .ticker-live{font-size:.65rem;color:#ff6b35;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
 .ticker-empty{color:var(--sub);font-size:.78rem;padding:0 20px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
@@ -2042,7 +2052,14 @@ function renderPicks(){
   const leanArrowEl = document.getElementById("leanArrow");
   if(leanArrowEl) leanArrowEl.textContent = "▶";
   let visible = 0;
-  ACTIVE_PICKS.forEach(p=>{
+  // Sort: completed games sink to bottom within each tier
+  const _sorted = [...ACTIVE_PICKS].sort((a, b) => {
+    const aFinal = _isFinal(_findScore(a));
+    const bFinal = _isFinal(_findScore(b));
+    if(aFinal === bFinal) return 0;
+    return aFinal ? 1 : -1;
+  });
+  _sorted.forEach(p=>{
     // TBD starter: \u26a0 badge already warns users -- picks remain visible in their model tier
     const show = (filterType==="all" || p.type===filterType)
               && (filterTier==="all" || p.tier===filterTier)
@@ -2188,7 +2205,7 @@ function renderPicks(){
     pickData.push(p);
     const _legIdx = pickData.length - 1;
     _tg.innerHTML += `
-      <div class="pick-card tier-${p.tier}" data-type="${p.type}" data-tier="${p.tier}">
+      <div class="pick-card tier-${p.tier}${_isFinal(_findScore(p))?' pick-done':''}" data-type="${p.type}" data-tier="${p.tier}">
         <div class="pick-top">
           <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}${p.tier==="LEAN"?" — thin edge":""}</span>
@@ -2210,6 +2227,15 @@ function renderPicks(){
         ${oddsHtml(p)}
         <div class="pick-reasoning">${p.reasoning}</div>
         ${p.narrative ? `<div class="pick-narrative">${p.narrative}</div>` : ""}
+        ${(()=>{
+          const _sc = _findScore(p);
+          if(!_isFinal(_sc)) return "";
+          const _res = _pickResult(p, _sc);
+          if(_res==="win")  return '<div class="pick-done-banner win-banner">✓ WIN</div>';
+          if(_res==="loss") return '<div class="pick-done-banner loss-banner">✗ LOSS</div>';
+          if(_res==="push") return '<div class="pick-done-banner" style="background:rgba(139,148,158,.12);color:#8b949e;border:1px solid rgba(139,148,158,.25)">— PUSH</div>';
+          return "";
+        })()}
         <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
           <span class="toggle-arrow">▶</span> View Player Props for this game
         </div>
@@ -3799,6 +3825,43 @@ function renderSharpAction(){
 // Render critical above-fold content immediately, defer heavy tabs
 
 // ── Daily Summary Tab ──────────────────────────────────────────────────────────
+// ── Global score helpers (used by renderPicks + renderDailySummary) ──────────
+function _liveScores(){ return window._liveGames || DATA_SCORES || []; }
+function _scoreAway(s){ return s.away_name || s.away || ""; }
+function _scoreHome(s){ return s.home_name || s.home || ""; }
+function _findScore(pick){
+  return _liveScores().find(s =>
+    (_scoreAway(s)===pick.away && _scoreHome(s)===pick.home) ||
+    (_scoreAway(s)===pick.home && _scoreHome(s)===pick.away)
+  );
+}
+function _isFinal(score){
+  if(!score) return false;
+  const lbl = (score.label||"").trim();
+  return lbl==="Final" || lbl.startsWith("F/") || lbl==="F";
+}
+function _pickResult(pick, score){
+  if(!score || !_isFinal(score)) return null;
+  const awayScore = parseInt(score.away_score||0);
+  const homeScore = parseInt(score.home_score||0);
+  // MLB games don't end in ties
+  const awayWon = awayScore > homeScore;
+  if(pick.type==="ML"||pick.type==="RL"){
+    const pickNick = (pick.team||"").split(" ").slice(-1)[0].toLowerCase();
+    const awayFull = _scoreAway(score).toLowerCase();
+    const pickedAway = awayFull.endsWith(pickNick) || awayFull.includes(pickNick);
+    return (pickedAway && awayWon)||(!pickedAway && !awayWon) ? "win" : "loss";
+  }
+  if(pick.type==="TOTAL"){
+    const total = awayScore + homeScore;
+    const line  = parseFloat(pick.label||"0") || 8.5;
+    if(total===line) return "push";
+    const overPick = (pick.label||"").toLowerCase().includes("over");
+    return (overPick && total>line)||(!overPick && total<line) ? "win" : "loss";
+  }
+  return null;
+}
+
 function renderDailySummary(){
   const el = document.getElementById("dailySummaryContent");
   if(!el) return;
@@ -4094,6 +4157,7 @@ setTimeout(() => {
   renderProps();
   initTeamsTab();
   renderDailySummary();
+  renderPicks();
 }, 0);
 
 // Auto-reload every 15 minutes to pick up fresh odds, lineups, and scores

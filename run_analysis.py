@@ -43,6 +43,40 @@ MLB_API    = "https://statsapi.mlb.com/api/v1"
 # FETCH RESULTS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _fetch_results_espn(date: str) -> dict:
+    """ESPN scoreboard fallback for games MLB Stats API misses."""
+    espn_date = date.replace("-", "")
+    url = f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={espn_date}"
+    try:
+        resp = requests.get(url, headers={"User-Agent": "mlb-betting-pipeline/1.0"}, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.warning(f"ESPN fallback failed for {date}: {e}")
+        return {}
+    results = {}
+    for event in data.get("events", []):
+        if not event.get("status", {}).get("type", {}).get("completed", False):
+            continue
+        comps = event.get("competitions", [{}])[0].get("competitors", [])
+        away = next((c for c in comps if c.get("homeAway") == "away"), None)
+        home = next((c for c in comps if c.get("homeAway") == "home"), None)
+        if not away or not home:
+            continue
+        away_name  = away.get("team", {}).get("displayName", "")
+        home_name  = home.get("team", {}).get("displayName", "")
+        away_score = int(away.get("score", 0) or 0)
+        home_score = int(home.get("score", 0) or 0)
+        if away_name and home_name:
+            results[(away_name, home_name)] = {
+                "away_team": away_name, "home_team": home_name,
+                "away_score": away_score, "home_score": home_score,
+                "total": away_score + home_score,
+            }
+    log.info(f"ESPN fallback: {len(results)} final games on {date}")
+    return results
+
+
 def fetch_results(date: str) -> dict:
     """
     Pull final scores from MLB Stats API for the given date.
@@ -82,7 +116,14 @@ def fetch_results(date: str) -> dict:
                 "home_score": home_score,
                 "total":      away_score + home_score,
             }
-    log.info(f"Results fetched: {len(results)} final games on {date}")
+    log.info(f"Results fetched from MLB API: {len(results)} final games on {date}")
+    # ESPN fallback — fills in any games the MLB API missed
+    espn = _fetch_results_espn(date)
+    for k, v in espn.items():
+        if k not in results:
+            results[k] = v
+            log.info(f"ESPN filled in missing game: {k}")
+    log.info(f"Results total after ESPN merge: {len(results)} games on {date}")
     return results
 
 
@@ -688,34 +729,37 @@ def push_grades_to_db(graded_picks: list, date: str) -> int:
 
     db_picks = get_picks(date)
     if not db_picks:
-        log.debug(f"No DB picks found for {date} — cannot push grades")
+        log.info(f"push_grades_to_db: no DB picks for {date} — picks may not have been saved at 6am")
         return 0
+
+    log.info(f"push_grades_to_db: {len(db_picks)} DB picks for {date}, matching {len(graded_picks)} graded picks")
 
     # Build lookup: (pick_type_upper, label_stripped) -> db_pick
     db_index = {}
-    db_game_index = {}  # fallback: (game_stripped, pick_type_upper) -> db_pick
+    db_game_index = {}
     for dp in db_picks:
         key = (dp["pick_type"].upper(), dp["label"].strip())
         db_index[key] = dp
         game_key = (dp.get("game","").strip(), dp["pick_type"].upper())
         db_game_index[game_key] = dp
 
+    log.info(f"push_grades_to_db: DB index sample: {list(db_index.keys())[:5]}")
+
     updated = 0
     for gp in graded_picks:
         result_str = gp.get("result", "")
         if result_str not in ("WIN", "LOSS", "PUSH"):
-            continue  # skip NO_RESULT / unmatched
+            continue
 
         key = (gp["type"].upper(), gp["label"].strip())
         dp  = db_index.get(key)
         if dp is None:
-            # Fallback: match by game + pick_type (handles label drift from afternoon refresh)
             game_key = (gp.get("game","").strip(), gp["type"].upper())
             dp = db_game_index.get(game_key)
             if dp is None:
-                log.debug(f"No DB match for pick {key} on {date} (game fallback also failed)")
+                log.info(f"push_grades_to_db: NO MATCH for {key} on {date}")
                 continue
-            log.debug(f"DB grade matched via game fallback: {game_key}")
+            log.info(f"push_grades_to_db: game-fallback match: {game_key}")
 
         result_game = gp.get("result_game") or {}
         away_score  = result_game.get("away_score")
@@ -724,9 +768,9 @@ def push_grades_to_db(graded_picks: list, date: str) -> int:
         ok = db_grade_pick(dp["id"], result_str, away_score, home_score)
         if ok:
             updated += 1
-            log.debug(f"Graded DB pick {dp['id']} ({key[1]}) -> {result_str}")
+            log.info(f"push_grades_to_db: graded id={dp['id']} ({key[1]}) -> {result_str}")
 
-    log.info(f"DB grades pushed: {updated}/{len(graded_picks)} picks updated for {date}")
+    log.info(f"push_grades_to_db: {updated}/{len(graded_picks)} picks graded for {date}")
     return updated
 
 

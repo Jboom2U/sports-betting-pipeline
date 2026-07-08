@@ -1027,6 +1027,39 @@ def schedule_status():
     })
 
 
+@app.route("/db-diag")
+def db_diag():
+    """Quick DB diagnostic — picks table counts and dates."""
+    try:
+        from db.connection import db_conn as _db_conn
+        with _db_conn() as conn:
+            if conn is None:
+                return {"error": "No DB connection"}, 503
+            cur = conn.cursor()
+            cur.execute("SELECT actual_result, COUNT(*) FROM picks GROUP BY actual_result ORDER BY actual_result")
+            picks_by_status = {r[0]: r[1] for r in cur.fetchall()}
+            cur.execute("SELECT DISTINCT pick_date FROM picks ORDER BY pick_date DESC LIMIT 10")
+            recent_dates = [str(r[0]) for r in cur.fetchall()]
+            cur.execute("SELECT run_date, status, completed_at FROM pipeline_runs ORDER BY run_date DESC LIMIT 7")
+            cols = [d[0] for d in cur.description]
+            pipeline_runs = [dict(zip(cols, r)) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT pick_date, COUNT(*) as total,
+                       COUNT(*) FILTER (WHERE actual_result='WIN') as wins,
+                       COUNT(*) FILTER (WHERE actual_result='LOSS') as losses
+                FROM picks
+                WHERE pick_date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND actual_result != 'PENDING'
+                GROUP BY pick_date ORDER BY pick_date DESC
+            """)
+            cols2 = [d[0] for d in cur.description]
+            graded_by_date = [dict(zip(cols2, r)) for r in cur.fetchall()]
+        return {"picks_by_status": picks_by_status, "recent_pick_dates": recent_dates,
+                "pipeline_runs": pipeline_runs, "graded_by_date": graded_by_date}
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
 @app.route("/status")
 def status():
     """Friendly HTML status page — pipeline health at a glance."""
@@ -1236,6 +1269,47 @@ function forceOdds(btn) {{
 
 # ── Performance / backtesting routes ─────────────────────────────────────────
 
+def _build_perf_from_json(days: int) -> list:
+    """Fallback: build perf rows from daily analysis JSON files when DB has no grades."""
+    import glob as _glob
+    from datetime import date as _d, timedelta as _td
+    cutoff = (_d.today() - _td(days=days)).isoformat()
+    pattern = os.path.join(BASE_DIR, "picks", "mlb_analysis_*.json")
+    rows = []
+    agg = {}  # (pick_type, tier) -> {wins, losses, pushes, total_conf}
+    for fpath in sorted(_glob.glob(pattern)):
+        fname = os.path.basename(fpath)
+        date_str = fname.replace("mlb_analysis_", "").replace(".json", "")
+        if date_str < cutoff:
+            continue
+        try:
+            with open(fpath, encoding="utf-8") as f:
+                data = json.load(f)
+            for p in data.get("graded_picks", []):
+                result = p.get("result", "")
+                if result not in ("WIN", "LOSS", "PUSH"):
+                    continue
+                key = (p.get("type", "ML"), p.get("tier", "LEAN"))
+                if key not in agg:
+                    agg[key] = {"wins": 0, "losses": 0, "pushes": 0, "conf_sum": 0, "count": 0}
+                agg[key]["wins"]   += 1 if result == "WIN"  else 0
+                agg[key]["losses"] += 1 if result == "LOSS" else 0
+                agg[key]["pushes"] += 1 if result == "PUSH" else 0
+                agg[key]["conf_sum"] += float(p.get("conf", 0))
+                agg[key]["count"] += 1
+        except Exception:
+            continue
+    for (pick_type, tier), v in agg.items():
+        denom = v["wins"] + v["losses"]
+        rows.append({
+            "pick_type": pick_type, "tier": tier,
+            "wins": v["wins"], "losses": v["losses"], "pushes": v["pushes"],
+            "win_rate": round(v["wins"]/denom, 3) if denom else None,
+            "avg_conf": round(v["conf_sum"]/v["count"], 4) if v["count"] else None,
+        })
+    return rows
+
+
 @app.route("/performance")
 def performance():
     """Browser → visual dashboard. API clients (Accept: application/json) → JSON."""
@@ -1282,6 +1356,12 @@ def performance_html():
         rows = get_accuracy_summary(days=days) or []
     except Exception as e:
         rows = []
+
+    # Fall back to daily analysis JSON files if DB has no grades yet
+    _from_json = False
+    if not rows:
+        rows = _build_perf_from_json(days) or []
+        _from_json = bool(rows)
 
     try:
         from db.picks_store import get_accuracy_by_market_signal, get_monthly_accuracy
@@ -1874,7 +1954,7 @@ def performance_html():
     return Response(html, content_type="text/html; charset=utf-8")
 
 
-# ── Scheduled 6am ET daily pipeline ────────────────────────────────────────────
+# ── Scheduled 6am ET daily pipeline ──────────────────────────────────────────────
 def _seconds_until_6am_et() -> float:
     """Return seconds until next 6:00am Eastern Time."""
     now    = datetime.now(ET)
@@ -2080,7 +2160,7 @@ def _schedule_adaptive_refresh():
                     game_et  = game_utc.astimezone(ET)
                     if earliest_et is None or game_et < earliest_et:
                         earliest_et = game_et
-                except ValueError:
+                except Exception:
                     continue
     except Exception as e:
         log.warning(f"Adaptive refresh: could not read schedule CSV: {e}")
@@ -2127,7 +2207,7 @@ def _schedule_adaptive_refresh():
 
 
 
-# ── Startup ─────────────────────────────────────────────────────────────────────────────────────
+# ── Startup ───────────────────────────────────────────────────────────────────────────────────────────
 def warm_cache():
     """
     On startup:
@@ -2139,14 +2219,14 @@ def warm_cache():
     def _warm():
         time.sleep(2)   # let Flask finish binding first
 
-        # ── Step 1: DB schema ──────────────────────────────────────────────────────────────────────────────────
+        # ── Step 1: DB schema ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
         if _DB_AVAILABLE:
             try:
                 _db_create_all()
             except Exception as e:
                 log.warning(f"DB schema init failed (non-fatal): {e}")
 
-        # ── Step 2: CSV sync download ─────────────────────────────────────────────────────────────────────────────
+        # ── Step 2: CSV sync download ────────────────────────────────────────────────────────────────────────────────────────────────────────
         if _DB_AVAILABLE:
             try:
                 if _storage_ok():
@@ -2161,7 +2241,7 @@ def warm_cache():
             except Exception as e:
                 log.warning(f"Startup CSV sync failed (non-fatal): {e}")
 
-        # ── Step 3: Pipeline ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        # ── Step 3: Pipeline ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
         if _needs_pipeline_run():
             log.info("No pipeline data for today -- running full pipeline on startup...")
             _run_full_pipeline()
@@ -2177,7 +2257,7 @@ def warm_cache():
             except Exception as _sar_e:
                 log.warning(f"Adaptive refresh re-scheduling failed (non-fatal): {_sar_e}")
 
-        # ── Step 3b: Seed cache from R2 HTML ───────────────────────
+        # ── Step 3b: Seed cache from R2 HTML ────────────────────────────
         # If Railway restarted mid-day after a deploy, the in-memory cache is gone but
         # R2 has the HTML generated this morning. Seed the cache with it NOW so the site
         # serves the full dashboard immediately. If fresh generation succeeds later, it
@@ -2196,19 +2276,15 @@ def warm_cache():
                     try:
                         with _tmpmod.NamedTemporaryFile(suffix=".html", delete=False) as _tf:
                             _tf_path = _tf.name
-                        _r2.download_file(_bucket(), _r2_key, _tf_path)
-                        with open(_tf_path, encoding="utf-8") as _f:
-                            _r2_html = _f.read()
-                        os.remove(_tf_path)
-                        if _r2_html:
+                        _r2.download_file(_bucket, _r2_key, _tf_path)
+                        with open(_tf_path, encoding="utf-8", errors="replace") as _hf:
+                            _html = _hf.read()
+                        os.unlink(_tf_path)
+                        if len(_html) > 10_000:   # sanity: must be a real dashboard
                             with _cache_lock:
-                                _cache["html"] = _r2_html
-                                # Set generated_at=0 so background regen always replaces this
-                                # with fresh HTML from the current code, even if _generate()
-                                # returns None (games started). The R2 HTML is just a stopgap
-                                # while regeneration runs (~60s after startup).
-                                _cache["generated_at"] = 0
-                                _cache["r2_seeded"] = True
+                                _cache["html"]         = _html
+                                _cache["generated_at"] = time.time()
+                                _cache["r2_seeded"]    = True
                             log.info(f"Startup: cache seeded from R2 ({_r2_key}) -- site ready immediately.")
                             break
                     except Exception:
