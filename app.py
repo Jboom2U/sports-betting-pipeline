@@ -972,6 +972,29 @@ def force_pipeline():
 
 
 
+@app.route("/admin/grade-backfill")
+def grade_backfill():
+    """Run grader for any pick dates that have no graded results."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/grade-backfill")
+    import threading
+    def _run():
+        from run_analysis import run as grade_run
+        dates_to_grade = ['2026-06-09','2026-06-12','2026-06-16','2026-06-17','2026-07-03']
+        results = []
+        for d in dates_to_grade:
+            try:
+                grade_run(d)
+                results.append(f"{d}: OK")
+                log.info(f"grade-backfill: {d} complete")
+            except Exception as e:
+                results.append(f"{d}: ERROR {e}")
+                log.warning(f"grade-backfill: {d} failed: {e}")
+        log.info(f"grade-backfill done: {results}")
+    threading.Thread(target=_run, daemon=True).start()
+    return Response("<h2>Grade backfill started</h2><p>Check /db-diag in ~60 seconds to see updated counts.</p><p><a href='/db-diag'>→ /db-diag</a></p>", mimetype="text/html")
+
+
 @app.route("/force-html")
 def force_html():
     """
