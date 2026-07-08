@@ -651,6 +651,7 @@ def backfill_scored_games_sharp_signals(clean_dir: str, days: int = 14) -> int:
     """
     import csv as _csv
     import glob as _glob
+    import os as _os
     from datetime import date, timedelta
 
     updated = 0
@@ -661,7 +662,7 @@ def backfill_scored_games_sharp_signals(clean_dir: str, days: int = 14) -> int:
             cur = conn.cursor()
             for i in range(days):
                 d = (date.today() - timedelta(days=i)).strftime("%Y-%m-%d")
-                pattern = os.path.join(clean_dir, f"mlb_line_movement_{d}.csv")
+                pattern = _os.path.join(clean_dir, f"mlb_line_movement_{d}.csv")
                 files = _glob.glob(pattern)
                 if not files:
                     continue
