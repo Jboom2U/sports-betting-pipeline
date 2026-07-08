@@ -972,6 +972,36 @@ def force_pipeline():
 
 
 
+@app.route("/admin/kalshi-debug")
+def kalshi_debug():
+    """Show raw Kalshi market titles to diagnose matching failures."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/kalshi-debug")
+    try:
+        from scrapers.mlb_kalshi_scraper import _get_api_key, fetch_all_mlb_markets
+        api_key = _get_api_key()
+        markets = fetch_all_mlb_markets(api_key)
+        rows = ""
+        for m in markets[:50]:
+            title  = m.get("title", "")
+            ticker = m.get("ticker", "")
+            status = m.get("status", "")
+            yes_ask = m.get("yes_ask", "")
+            rows += f"<tr><td>{ticker}</td><td>{status}</td><td>{yes_ask}</td><td>{title}</td></tr>"
+        html = f"""<html><head><title>Kalshi Debug</title>
+<style>body{{font-family:monospace;background:#0d1117;color:#e6edf3;padding:20px}}
+table{{border-collapse:collapse;width:100%}}
+th,td{{border:1px solid #30363d;padding:6px 10px;text-align:left}}
+th{{background:#161b22;color:#8b949e}}
+tr:nth-child(even){{background:#161b22}}</style></head>
+<body><h2>Kalshi Raw Markets ({len(markets)} total)</h2>
+<table><tr><th>Ticker</th><th>Status</th><th>Yes Ask</th><th>Title</th></tr>
+{rows}</table></body></html>"""
+        return Response(html, mimetype="text/html")
+    except Exception as e:
+        return Response(f"<pre>Error: {e}</pre>", mimetype="text/html")
+
+
 @app.route("/admin/grade-backfill")
 def grade_backfill():
     """Run grader for any pick dates that have no graded results."""
