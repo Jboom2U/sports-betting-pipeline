@@ -45,6 +45,7 @@ except ImportError as _e:
     _DB_AVAILABLE = False
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("ADMIN_SECRET") or os.environ.get("SECRET_KEY", "statalizers-dev-fallback")
 Compress(app)   # gzip all responses — shrinks 570KB HTML to ~80KB
 
 BASE_DIR  = os.path.dirname(__file__)
