@@ -180,7 +180,7 @@ YOUR TASK: Critically review the picks. Push back where reasoning looks weak. Bu
 
 Respond with STRICT JSON only, no prose outside the JSON:
 {
-  "reviews": [{"pick": "<exact pick text>", "verdict": "agree"|"fade", "conf": <0-100>, "reason": "<1 sentence>"}],
+  "reviews": [{"pick": "<exact pick text, copied verbatim from the list above with NOTHING appended>", "verdict": "agree"|"fade", "conf": <0-100>, "reason": "<1 sentence>"}],
   "best_bet": "<pick text you rate highest>",
   "parlays": [
     {"legs": ["<pick text>", "<pick text>"], "conf": <0-100 combined>, "reason": "<1 sentence>"},
@@ -197,6 +197,19 @@ function shortName(model) {
   return model.split("/").pop().replace(":free", "");
 }
 
+const DISPLAY_NAMES = { statalizers: "Statalizers", claude: "Claude" };
+function dispName(model) {
+  const sn = shortName(model);
+  if (DISPLAY_NAMES[sn]) return DISPLAY_NAMES[sn];
+  if (sn.startsWith("gemini")) return "Gemini";
+  if (sn.startsWith("nemotron")) return "NemoTron";
+  if (sn.startsWith("gpt-oss")) return "OpenAI";
+  if (sn.startsWith("trinity")) return "Trinity";
+  if (sn.startsWith("gemma")) return "Gemma";
+  if (sn.startsWith("deepseek")) return "DeepSeek";
+  return sn.charAt(0).toUpperCase() + sn.slice(1);
+}
+
 function cleanPick(str) {
   return String(str || "").split("|")[0].replace(/\[(ML|RL|TOTAL|PROP)\]/gi, "").replace(/\s+/g, " ").trim();
 }
@@ -206,10 +219,10 @@ function pickMatch(a, b) {
 }
 
 function computeConsensus(picks, responses) {
-  const out = picks.map(p => ({ ...p, confs: { statalizers: p.conf }, fades: [] }));
+  const out = picks.map(p => ({ ...p, confs: { Statalizers: p.conf }, fades: [] }));
   for (const r of responses) {
     if (!r.parsed || !Array.isArray(r.parsed.reviews)) continue;
-    const sn = shortName(r.model);
+    const sn = dispName(r.model);
     for (const p of out) {
       const rev = r.parsed.reviews.find(v => pickMatch(v.pick, p.pick));
       if (!rev) continue;
@@ -259,14 +272,14 @@ async function recordSourcePicks(env, runId, date, consensus, dossier, responses
     env.DB.prepare("INSERT INTO source_picks (run_id, run_date, source, category, pick, conf) VALUES (?,?,?,?,?,?)")
       .bind(runId, date, source, category, pick, Math.round(conf || 0)).run();
   for (const p of consensus.filter(x => x.type === "ML").sort((a, b) => b.conf - a.conf).slice(0, 5))
-    await add("statalizers", "ML_TOP5", p.pick, p.conf);
+    await add("Statalizers", "ML_TOP5", p.pick, p.conf);
   for (const p of (dossier.props || []).filter(x => x.prop_type === "HR").slice(0, 3))
-    await add("statalizers", "HR_PROP", `${p.player} HR (${p.game})`, p.conf);
+    await add("Statalizers", "HR_PROP", `${p.player} HR (${p.game})`, p.conf);
   for (const p of (dossier.props || []).filter(x => x.prop_type !== "HR").slice(0, 3))
-    await add("statalizers", "PLAYER_PROP", `${p.player} ${p.prop_type} ${p.line} (${p.game})`, p.conf);
+    await add("Statalizers", "PLAYER_PROP", `${p.player} ${p.prop_type} ${p.line} (${p.game})`, p.conf);
   for (const r of responses) {
     if (!r.parsed) continue;
-    const sn = shortName(r.model);
+    const sn = dispName(r.model);
     const agrees = (r.parsed.reviews || []).filter(v => v.verdict !== "fade" && Number(v.conf) > 0);
     const mls = agrees.filter(v => {
       const cp = consensus.find(x => pickMatch(x.pick, v.pick));
@@ -352,7 +365,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px;borde
 .muted{color:#9fb0d0;font-size:12px}.fade{color:#ff9aa8;font-size:12px}
 .blend{font-weight:600;font-size:15px}
 .tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
-.tab{padding:3px 10px;font-size:12px;border-radius:99px;background:#1a2233;border:1px solid #33405c;color:#9fb0d0;cursor:pointer}
+.tab{padding:5px 14px;font-size:14px;border-radius:99px;background:#1a2233;border:1px solid #33405c;color:#9fb0d0;cursor:pointer}
 .tab.on{background:#3b4f7a;color:#fff;border-color:#7fa0e0;font-weight:600}
 .pill{display:inline-block;background:#1e2840;border:1px solid #33405c;border-radius:99px;padding:1px 8px;font-size:11px;color:#aebfe0;margin-left:6px}
 </style>`;
@@ -417,10 +430,10 @@ async function reportPage(env) {
     return `<tr><td>${p.isBest ? "⭐ " : ""}${esc(p.pick)}</td><td>${esc(p.type)}</td><td class="blend">${p.blended}%</td><td><span class="muted">${confStr}</span>${fadeStr ? '<br><span class="fade">' + fadeStr + "</span>" : ""}</td></tr>`;
   }).join("");
 
-  const modelBadges = responses.map(r => `<span class="badge ${r.error ? "bad" : "ok"}">${esc(shortName(r.model))}${r.error ? " ✗" : " ✓"}</span>`).join(" ");
+  const modelBadges = responses.map(r => `<span class="badge ${r.error ? "bad" : "ok"}">${esc(dispName(r.model))}${r.error ? " ✗" : " ✓"}</span>`).join(" ");
 
-  const sources = [["statalizers", null]];
-  for (const r of responses) if (r.parsed) sources.push([shortName(r.model), r.parsed]);
+  const sources = [["Statalizers", null]];
+  for (const r of responses) if (r.parsed) sources.push([dispName(r.model), r.parsed]);
 
   let tabSeq = 0;
   const tabbedCard = (title, renderSrc) => {
@@ -433,7 +446,7 @@ async function reportPage(env) {
   };
 
   const mlCard = tabbedCard("Top 5 ML picks", (src, parsed) => {
-    if (src === "statalizers") {
+    if (src === "Statalizers") {
       const top = consensus.filter(x => x.type === "ML").sort((a, b) => b.conf - a.conf).slice(0, 5);
       return top.map(x => `<p class="item">${esc(x.pick)} <span class="muted">${x.conf}%</span></p>`).join("");
     }
@@ -446,14 +459,14 @@ async function reportPage(env) {
   });
 
   const parlayCard = tabbedCard("Parlay recommendations", (src, parsed) => {
-    const list = src === "statalizers" ? statalizersParlays(consensus) : (parsed?.parlays || []);
+    const list = src === "Statalizers" ? statalizersParlays(consensus) : (parsed?.parlays || []);
     return list.slice(0, 3).map(pl =>
       `<p class="item">${(pl.legs || []).map(l => esc(cleanPick(l))).join(" + ")}<br><span class="muted">${Math.round(pl.conf || 0)}% combined${fairOdds(pl.conf) ? " · fair " + fairOdds(pl.conf) : ""}${pl.reason ? " — " + esc(pl.reason) : ""}</span></p>`
     ).join("");
   });
 
   const hrCard = tabbedCard("Top 3 HR props", (src, parsed) => {
-    if (src === "statalizers") {
+    if (src === "Statalizers") {
       const hr = (dossier.props || []).filter(x => x.prop_type === "HR").slice(0, 3);
       return hr.map(x => `<p class="item">${esc(x.player)} <span class="muted">(${esc(x.game)}) ${x.conf}%${x.reasoning ? " — " + esc(x.reasoning) : ""}</span></p>`).join("");
     }
@@ -461,7 +474,7 @@ async function reportPage(env) {
   });
 
   const propsCard = tabbedCard("Top 3 player props", (src, parsed) => {
-    if (src === "statalizers") {
+    if (src === "Statalizers") {
       const pr = (dossier.props || []).filter(x => x.prop_type !== "HR").slice(0, 3);
       return pr.map(x => `<p class="item">${esc(x.player)} ${esc(x.prop_type)} ${esc(x.line)} <span class="muted">(${esc(x.game)}) ${x.conf}%${x.reasoning ? " — " + esc(x.reasoning) : ""}</span></p>`).join("");
     }
@@ -469,7 +482,7 @@ async function reportPage(env) {
   });
 
   const best = consensus.find(x => x.isBest);
-  const bestVotes = responses.filter(r => r.parsed?.best_bet).map(r => `<b>${esc(shortName(r.model))}</b>: ${esc(cleanPick(r.parsed.best_bet))}`).join("<br>");
+  const bestVotes = responses.filter(r => r.parsed?.best_bet).map(r => `<b>${esc(dispName(r.model))}</b>: ${esc(cleanPick(r.parsed.best_bet))}`).join("<br>");
   const bestHtml = best ? `<div class="card"><h3>Best bet</h3><p class="item">⭐ ${esc(best.pick)} — <span class="blend">${best.blended}%</span> blended</p>${bestVotes ? `<div class="src">Model best-bet votes</div><p class="item muted">${bestVotes}</p>` : ""}</div>` : "";
 
   const track = (await env.DB.prepare("SELECT source, SUM(result='WIN') w, SUM(result='LOSS') l, SUM(result='PUSH') pu FROM source_picks WHERE result IS NOT NULL GROUP BY source ORDER BY w DESC").all()).results || [];
