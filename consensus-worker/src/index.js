@@ -386,6 +386,13 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px;borde
 .tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
 .tab{padding:5px 14px;font-size:14px;border-radius:99px;background:#1a2233;border:1px solid #33405c;color:#9fb0d0;cursor:pointer}
 .tab.on{background:#3b4f7a;color:#fff;border-color:#7fa0e0;font-weight:600}
+.mx td,.mx th{font-size:13px;padding:6px 8px;white-space:nowrap}
+.mx td:first-child{white-space:normal}
+.ca{background:#12352466;color:#7ee2a8;text-align:center;border-radius:6px}
+.cf{background:#3a162066;color:#ff9aa8;text-align:center;border-radius:6px}
+.cn{color:#5a6880;text-align:center}
+.una{border:1px solid #2e7d4f;background:#12352433}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
 .pill{display:inline-block;background:#1e2840;border:1px solid #33405c;border-radius:99px;padding:1px 8px;font-size:11px;color:#aebfe0;margin-left:6px}
 </style>`;
 
@@ -443,7 +450,7 @@ async function reportPage(env) {
   const latest = await env.DB.prepare("SELECT id, status, started_at FROM runs ORDER BY id DESC LIMIT 1").first();
   const banner = (latest && latest.status === "running")
     ? `<div class="card" style="border-color:#8a6d1a"><p class="item">⏳ Consensus run #${latest.id} in progress (started ${esc(latest.started_at)} UTC, takes about a minute) — refresh shortly.</p></div>` : "";
-  const rerunForm = `<div class="card"><form method="POST" action="/api/run" onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Started - refresh in a minute'"><textarea name="claude_analysis" rows="4" style="width:100%" placeholder="Optional: paste Claude's analysis to include next run"></textarea><p><button>Rerun consensus</button></p></form></div><p><a href="/settings">settings</a></p>`;
+  const rerunForm = `<div class="card"><form method="POST" action="/api/run" onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Started - refresh in a minute'"><textarea name="claude_analysis" rows="4" style="width:100%" placeholder="Optional: paste Claude's analysis to include next run"></textarea><p><button>Rerun consensus</button></p></form></div><p><a href="/compare">comparison</a> · <a href="/settings">settings</a></p>`;
   if (!run) return page("MLB consensus report", `${banner}<p>No completed runs yet.</p>${rerunForm}`);
 
   const dossier = JSON.parse(run.dossier || "{}");
@@ -546,6 +553,66 @@ async function reportPage(env) {
     </div>${tabScript}`);
 }
 
+
+async function comparePage(env) {
+  const run = await env.DB.prepare("SELECT * FROM runs WHERE status='complete' ORDER BY id DESC LIMIT 1").first();
+  if (!run) return page("Model comparison", `<p>No completed runs yet.</p><p><a href="/">report</a></p>`);
+  const dossier = JSON.parse(run.dossier || "{}");
+  const picks = dossier.picks || [];
+  const rows = (await env.DB.prepare("SELECT model, parsed_json, error FROM model_responses WHERE run_id=?").bind(run.id).all()).results || [];
+  const responses = rows.map(r => ({ model: r.model, parsed: r.parsed_json ? JSON.parse(r.parsed_json) : null, error: r.error }));
+  const consensus = computeConsensus(picks, responses);
+  const cols = ["Statalizers", ...responses.filter(r => r.parsed).map(r => dispName(r.model))];
+
+  const isUnanimous = p => {
+    const modelConfs = Object.entries(p.confs).filter(([k]) => k !== "Statalizers").map(([, v]) => v);
+    return !p.fades.length && modelConfs.length >= 2 && modelConfs.every(v => v >= 60) && p.conf >= 60;
+  };
+  const unanimous = consensus.filter(isUnanimous);
+  const unaHtml = unanimous.length
+    ? `<div class="card una"><h3>Unanimous plays — every model agrees at 60%+</h3>` +
+      unanimous.map(p => `<p class="item">${esc(p.pick)} <span class="muted">blend ${p.blended}% · ${Object.entries(p.confs).map(([k, v]) => `${esc(k)} ${v}%`).join(" · ")}</span></p>`).join("") + "</div>"
+    : `<div class="card"><h3>Unanimous plays</h3><p class="item muted">No pick has full agreement at 60%+ today.</p></div>`;
+
+  const matrixHead = `<tr><th>Pick</th><th>Blend</th>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr>`;
+  const matrixRows = consensus.map(p => {
+    const cells = cols.map(c => {
+      if (p.confs[c] !== undefined) return `<td class="ca">${p.confs[c]}%</td>`;
+      if (p.fades.some(f => f.model === c)) return `<td class="cf">fade</td>`;
+      return `<td class="cn">—</td>`;
+    }).join("");
+    return `<tr><td>${p.isBest ? "⭐ " : ""}${esc(p.pick)}</td><td class="blend">${p.blended}%</td>${cells}</tr>`;
+  }).join("");
+
+  const bestCols = cols.map(c => {
+    let val = "";
+    if (c === "Statalizers") { const b = [...consensus].sort((a, x) => x.conf - a.conf)[0]; val = b ? `${esc(b.pick)} <span class="muted">${b.conf}%</span>` : ""; }
+    else { const r = responses.find(x => x.parsed && dispName(x.model) === c); val = r?.parsed?.best_bet ? esc(cleanPick(r.parsed.best_bet)) : '<span class="muted">none</span>'; }
+    return `<div class="card"><h3>${esc(c)}</h3><p class="item">${val}</p></div>`;
+  }).join("");
+
+  const top5Cols = cols.map(c => {
+    let items = [];
+    if (c === "Statalizers") {
+      items = consensus.filter(x => x.type === "ML").sort((a, b) => b.conf - a.conf).slice(0, 5).map(x => `${esc(x.pick)} <span class="muted">${x.conf}%</span>`);
+    } else {
+      const r = responses.find(x => x.parsed && dispName(x.model) === c);
+      const agrees = (r?.parsed?.reviews || []).filter(v => v.verdict !== "fade" && Number(v.conf) > 0);
+      items = agrees.filter(v => { const cp = consensus.find(x => pickMatch(x.pick, v.pick)); return cp && cp.type === "ML"; })
+        .sort((a, b) => Number(b.conf) - Number(a.conf)).slice(0, 5)
+        .map(v => `${esc(cleanPick(v.pick))} <span class="muted">${Math.round(v.conf)}%</span>`);
+    }
+    return `<div class="card"><h3>${esc(c)}</h3>${items.length ? items.map(i => `<p class="item">${i}</p>`).join("") : '<p class="item muted">none</p>'}</div>`;
+  }).join("");
+
+  return page(`Model comparison — ${run.run_date}`, `
+    <p><a href="/">← report</a> · run #${run.id}</p>
+    ${unaHtml}
+    <div class="card"><h3>Agreement matrix</h3><div style="overflow-x:auto"><table class="mx">${matrixHead}${matrixRows}</table></div></div>
+    <h3>Best bet by source</h3><div class="cols">${bestCols}</div>
+    <h3>Top 5 ML by source</h3><div class="cols">${top5Cols}</div>`);
+}
+
 // ── router ───────────────────────────────────────────────────────────────────
 export default {
   async scheduled(event, env, ctx) {
@@ -576,6 +643,7 @@ export default {
     if (!adminHash) return loginPage(true);
     if (!(await isAuthed(request, env))) return loginPage(false);
 
+    if (path === "/compare") return comparePage(env);
     if (path === "/settings") return settingsPage(env);
     if (path === "/api/keys" && request.method === "POST") {
       const d = await request.json();
