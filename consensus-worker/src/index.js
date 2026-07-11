@@ -176,7 +176,7 @@ ${hrProps.map(propLine).join("\n") || "(none)"}
 STATALIZERS OTHER PLAYER PROP CANDIDATES:
 ${otherProps.map(propLine).join("\n") || "(none)"}
 ${claudeAnalysis ? "\nCLAUDE'S INDEPENDENT ANALYSIS:\n" + claudeAnalysis + "\n" : ""}
-YOUR TASK: Critically review the picks. Push back where reasoning looks weak. Build parlays from the strongest plays (never two legs from the same game). Pick the best HR props and player props. Use ONLY the data provided plus general baseball knowledge — do not invent injuries or results you cannot know.
+YOUR TASK: Review EVERY pick listed above and give each a verdict — agree (with your own win probability) or fade. Do not skip picks you agree with. Push back where reasoning looks weak. Build parlays from the strongest plays (never two legs from the same game). Pick the best HR props and player props. Use ONLY the data provided plus general baseball knowledge — do not invent injuries or results you cannot know.
 
 Respond with STRICT JSON only, no prose outside the JSON:
 {
@@ -455,7 +455,16 @@ async function reportPage(env) {
       const cp = consensus.find(x => pickMatch(x.pick, v.pick));
       return cp && cp.type === "ML";
     }).sort((a, b) => Number(b.conf) - Number(a.conf)).slice(0, 5);
-    return top.map(v => `<p class="item">${esc(cleanPick(v.pick))} <span class="muted">${Math.round(v.conf)}%</span></p>`).join("");
+    if (top.length) return top.map(v => `<p class="item">${esc(cleanPick(v.pick))} <span class="muted">${Math.round(v.conf)}%</span></p>`).join("");
+    const legs = new Set();
+    if (parsed?.best_bet) legs.add(cleanPick(parsed.best_bet));
+    for (const pl of (parsed?.parlays || [])) for (const l of (pl.legs || [])) legs.add(cleanPick(l));
+    const mlLegs = [...legs].filter(l => {
+      const cp = consensus.find(x => pickMatch(x.pick, l));
+      return cp && cp.type === "ML";
+    }).slice(0, 5);
+    if (!mlLegs.length) return "";
+    return mlLegs.map(l => `<p class="item">${esc(l)}</p>`).join("") + `<p class="muted">derived from its parlays/best bet</p>`;
   });
 
   const parlayCard = tabbedCard("Parlay recommendations", (src, parsed) => {
