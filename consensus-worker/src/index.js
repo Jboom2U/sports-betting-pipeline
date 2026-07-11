@@ -197,13 +197,21 @@ function shortName(model) {
   return model.split("/").pop().replace(":free", "");
 }
 
+function cleanPick(str) {
+  return String(str || "").split("|")[0].replace(/\[(ML|RL|TOTAL|PROP)\]/gi, "").replace(/\s+/g, " ").trim();
+}
+function pickMatch(a, b) {
+  const x = cleanPick(a).toLowerCase(), y = cleanPick(b).toLowerCase();
+  return !!(x && y && (x === y || x.includes(y) || y.includes(x)));
+}
+
 function computeConsensus(picks, responses) {
   const out = picks.map(p => ({ ...p, confs: { statalizers: p.conf }, fades: [] }));
   for (const r of responses) {
     if (!r.parsed || !Array.isArray(r.parsed.reviews)) continue;
     const sn = shortName(r.model);
     for (const p of out) {
-      const rev = r.parsed.reviews.find(v => v.pick && (v.pick === p.pick || p.pick.includes(v.pick) || v.pick.includes(p.pick)));
+      const rev = r.parsed.reviews.find(v => pickMatch(v.pick, p.pick));
       if (!rev) continue;
       if (rev.verdict === "fade") p.fades.push({ model: sn, reason: rev.reason || "fade" });
       else if (Number(rev.conf) > 0) p.confs[sn] = Math.round(Number(rev.conf));
@@ -261,13 +269,13 @@ async function recordSourcePicks(env, runId, date, consensus, dossier, responses
     const sn = shortName(r.model);
     const agrees = (r.parsed.reviews || []).filter(v => v.verdict !== "fade" && Number(v.conf) > 0);
     const mls = agrees.filter(v => {
-      const cp = consensus.find(x => x.pick === v.pick || x.pick.includes(v.pick) || (v.pick && v.pick.includes(x.pick)));
+      const cp = consensus.find(x => pickMatch(x.pick, v.pick));
       return cp && cp.type === "ML";
     }).sort((a, b) => Number(b.conf) - Number(a.conf)).slice(0, 5);
-    for (const v of mls) await add(sn, "ML_TOP5", v.pick, v.conf);
+    for (const v of mls) await add(sn, "ML_TOP5", cleanPick(v.pick), v.conf);
     for (const x of (r.parsed.hr_props || []).slice(0, 3)) await add(sn, "HR_PROP", `${x.player} HR`, x.conf);
     for (const x of (r.parsed.player_props || []).slice(0, 3)) await add(sn, "PLAYER_PROP", `${x.player} ${x.prop || ""}`.trim(), x.conf);
-    if (r.parsed.best_bet) await add(sn, "BEST_BET", r.parsed.best_bet, 0);
+    if (r.parsed.best_bet) await add(sn, "BEST_BET", cleanPick(r.parsed.best_bet), 0);
   }
 }
 
@@ -343,6 +351,9 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px;borde
 .item{font-size:13px;margin:0 0 6px;line-height:1.45}
 .muted{color:#9fb0d0;font-size:12px}.fade{color:#ff9aa8;font-size:12px}
 .blend{font-weight:600;font-size:15px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.tab{padding:3px 10px;font-size:12px;border-radius:99px;background:#1a2233;border:1px solid #33405c;color:#9fb0d0;cursor:pointer}
+.tab.on{background:#3b4f7a;color:#fff;border-color:#7fa0e0;font-weight:600}
 .pill{display:inline-block;background:#1e2840;border:1px solid #33405c;border-radius:99px;padding:1px 8px;font-size:11px;color:#aebfe0;margin-left:6px}
 </style>`;
 
@@ -408,67 +419,63 @@ async function reportPage(env) {
 
   const modelBadges = responses.map(r => `<span class="badge ${r.error ? "bad" : "ok"}">${esc(shortName(r.model))}${r.error ? " ✗" : " ✓"}</span>`).join(" ");
 
-  const sideSection = (title, renderSrc) => {
-    let html = `<div class="card"><h3>${title}</h3>`;
-    html += `<div class="src">Statalizers</div>` + renderSrc("statalizers", null);
-    for (const r of responses) {
-      if (!r.parsed) continue;
-      html += `<div class="src">${esc(shortName(r.model))}</div>` + renderSrc(shortName(r.model), r.parsed);
-    }
-    return html + "</div>";
+  const sources = [["statalizers", null]];
+  for (const r of responses) if (r.parsed) sources.push([shortName(r.model), r.parsed]);
+
+  let tabSeq = 0;
+  const tabbedCard = (title, renderSrc) => {
+    const id = "tc" + (++tabSeq);
+    const btns = sources.map(([name], i) =>
+      `<button type="button" class="tab${i === 0 ? " on" : ""}" data-card="${id}" data-i="${i}">${esc(name)}</button>`).join("");
+    const panes = sources.map(([name, parsed], i) =>
+      `<div class="pane" data-card="${id}" data-i="${i}" style="display:${i === 0 ? "block" : "none"}">${renderSrc(name, parsed) || '<p class="item muted">none</p>'}</div>`).join("");
+    return `<div class="card"><h3>${title}</h3><div class="tabs">${btns}</div>${panes}</div>`;
   };
 
-  const mlHtml = sideSection("Top 5 ML picks", (src, parsed) => {
+  const mlCard = tabbedCard("Top 5 ML picks", (src, parsed) => {
     if (src === "statalizers") {
       const top = consensus.filter(x => x.type === "ML").sort((a, b) => b.conf - a.conf).slice(0, 5);
-      if (!top.length) return `<p class="item muted">none</p>`;
       return top.map(x => `<p class="item">${esc(x.pick)} <span class="muted">${x.conf}%</span></p>`).join("");
     }
     const agrees = (parsed?.reviews || []).filter(v => v.verdict !== "fade" && Number(v.conf) > 0);
     const top = agrees.filter(v => {
-      const cp = consensus.find(x => x.pick === v.pick || x.pick.includes(v.pick) || (v.pick && v.pick.includes(x.pick)));
+      const cp = consensus.find(x => pickMatch(x.pick, v.pick));
       return cp && cp.type === "ML";
     }).sort((a, b) => Number(b.conf) - Number(a.conf)).slice(0, 5);
-    if (!top.length) return `<p class="item muted">none</p>`;
-    return top.map(v => `<p class="item">${esc(v.pick)} <span class="muted">${Math.round(v.conf)}%</span></p>`).join("");
+    return top.map(v => `<p class="item">${esc(cleanPick(v.pick))} <span class="muted">${Math.round(v.conf)}%</span></p>`).join("");
   });
 
-  const parlaysHtml = sideSection("Parlay recommendations", (src, parsed) => {
+  const parlayCard = tabbedCard("Parlay recommendations", (src, parsed) => {
     const list = src === "statalizers" ? statalizersParlays(consensus) : (parsed?.parlays || []);
-    if (!list.length) return `<p class="item muted">none</p>`;
     return list.slice(0, 3).map(pl =>
-      `<p class="item">${(pl.legs || []).map(esc).join(" + ")}<br><span class="muted">${Math.round(pl.conf || 0)}% combined${fairOdds(pl.conf) ? " · fair " + fairOdds(pl.conf) : ""}${pl.reason ? " — " + esc(pl.reason) : ""}</span></p>`
+      `<p class="item">${(pl.legs || []).map(l => esc(cleanPick(l))).join(" + ")}<br><span class="muted">${Math.round(pl.conf || 0)}% combined${fairOdds(pl.conf) ? " · fair " + fairOdds(pl.conf) : ""}${pl.reason ? " — " + esc(pl.reason) : ""}</span></p>`
     ).join("");
   });
 
-  const hrHtml = sideSection("Top 3 HR props", (src, parsed) => {
+  const hrCard = tabbedCard("Top 3 HR props", (src, parsed) => {
     if (src === "statalizers") {
-      const hr = (dossier.props || []).filter(p => p.prop_type === "HR").slice(0, 3);
-      if (!hr.length) return `<p class="item muted">none</p>`;
-      return hr.map(p => `<p class="item">${esc(p.player)} <span class="muted">(${esc(p.game)}) ${p.conf}%${p.reasoning ? " — " + esc(p.reasoning) : ""}</span></p>`).join("");
+      const hr = (dossier.props || []).filter(x => x.prop_type === "HR").slice(0, 3);
+      return hr.map(x => `<p class="item">${esc(x.player)} <span class="muted">(${esc(x.game)}) ${x.conf}%${x.reasoning ? " — " + esc(x.reasoning) : ""}</span></p>`).join("");
     }
-    const list = parsed?.hr_props || [];
-    if (!list.length) return `<p class="item muted">none</p>`;
-    return list.slice(0, 3).map(p => `<p class="item">${esc(p.player)} <span class="muted">${Math.round(p.conf || 0)}%${p.reason ? " — " + esc(p.reason) : ""}</span></p>`).join("");
+    return (parsed?.hr_props || []).slice(0, 3).map(x => `<p class="item">${esc(x.player)} <span class="muted">${Math.round(x.conf || 0)}%${x.reason ? " — " + esc(x.reason) : ""}</span></p>`).join("");
   });
 
-  const propsHtml = sideSection("Top 3 player props", (src, parsed) => {
+  const propsCard = tabbedCard("Top 3 player props", (src, parsed) => {
     if (src === "statalizers") {
-      const pr = (dossier.props || []).filter(p => p.prop_type !== "HR").slice(0, 3);
-      if (!pr.length) return `<p class="item muted">none</p>`;
-      return pr.map(p => `<p class="item">${esc(p.player)} ${esc(p.prop_type)} ${esc(p.line)} <span class="muted">(${esc(p.game)}) ${p.conf}%${p.reasoning ? " — " + esc(p.reasoning) : ""}</span></p>`).join("");
+      const pr = (dossier.props || []).filter(x => x.prop_type !== "HR").slice(0, 3);
+      return pr.map(x => `<p class="item">${esc(x.player)} ${esc(x.prop_type)} ${esc(x.line)} <span class="muted">(${esc(x.game)}) ${x.conf}%${x.reasoning ? " — " + esc(x.reasoning) : ""}</span></p>`).join("");
     }
-    const list = parsed?.player_props || [];
-    if (!list.length) return `<p class="item muted">none</p>`;
-    return list.slice(0, 3).map(p => `<p class="item">${esc(p.player)} ${esc(p.prop || "")} <span class="muted">${Math.round(p.conf || 0)}%${p.reason ? " — " + esc(p.reason) : ""}</span></p>`).join("");
+    return (parsed?.player_props || []).slice(0, 3).map(x => `<p class="item">${esc(x.player)} ${esc(x.prop || "")} <span class="muted">${Math.round(x.conf || 0)}%${x.reason ? " — " + esc(x.reason) : ""}</span></p>`).join("");
   });
 
-  const best = consensus.find(p => p.isBest);
-  const bestVotes = responses.filter(r => r.parsed?.best_bet).map(r => `${esc(shortName(r.model))}: ${esc(r.parsed.best_bet)}`).join("<br>");
+  const best = consensus.find(x => x.isBest);
+  const bestVotes = responses.filter(r => r.parsed?.best_bet).map(r => `<b>${esc(shortName(r.model))}</b>: ${esc(cleanPick(r.parsed.best_bet))}`).join("<br>");
   const bestHtml = best ? `<div class="card"><h3>Best bet</h3><p class="item">⭐ ${esc(best.pick)} — <span class="blend">${best.blended}%</span> blended</p>${bestVotes ? `<div class="src">Model best-bet votes</div><p class="item muted">${bestVotes}</p>` : ""}</div>` : "";
 
   const track = (await env.DB.prepare("SELECT source, SUM(result='WIN') w, SUM(result='LOSS') l, SUM(result='PUSH') pu FROM source_picks WHERE result IS NOT NULL GROUP BY source ORDER BY w DESC").all()).results || [];
   const trackHtml = track.length ? '<div class="card"><h3>Track record (graded)</h3>' + track.map(t => `<p class="item">${esc(t.source)} <span class="muted">${t.w}-${t.l}${t.pu ? "-" + t.pu : ""}</span></p>`).join("") + "</div>" : "";
+
+  const tabScript = `<script>document.addEventListener('click',function(e){var t=e.target.closest('.tab');if(!t)return;var c=t.dataset.card;document.querySelectorAll('.tab[data-card="'+c+'"]').forEach(function(b){b.classList.toggle('on',b===t)});document.querySelectorAll('.pane[data-card="'+c+'"]').forEach(function(p){p.style.display=p.dataset.i===t.dataset.i?'block':'none'})});</script>`;
 
   return page(`MLB consensus report — ${run.run_date}`, `
     <p>${modelBadges} <span class="muted">run #${run.id} · ${esc(run.slate_summary || "")}</span></p>
@@ -480,12 +487,12 @@ async function reportPage(env) {
       <div>
         ${trackHtml}
         ${bestHtml}
-        ${mlHtml}
-        ${parlaysHtml}
-        ${hrHtml}
-        ${propsHtml}
+        ${mlCard}
+        ${parlayCard}
+        ${hrCard}
+        ${propsCard}
       </div>
-    </div>`);
+    </div>${tabScript}`);
 }
 
 // ── router ───────────────────────────────────────────────────────────────────
