@@ -284,6 +284,10 @@ function statalizersParlays(consensus) {
 
 // ── source pick tracking + grading ──────────────────────────────────────────
 async function recordSourcePicks(env, runId, date, consensus, dossier, responses) {
+  const srcs = ["Statalizers", ...responses.filter(r => r.parsed).map(r => dispName(r.model))];
+  await env.DB.prepare(
+    `DELETE FROM source_picks WHERE run_date=? AND source IN (${srcs.map(() => "?").join(",")})`
+  ).bind(date, ...srcs).run();
   const add = (source, category, pick, conf) =>
     env.DB.prepare("INSERT INTO source_picks (run_id, run_date, source, category, pick, conf) VALUES (?,?,?,?,?,?)")
       .bind(runId, date, source, category, pick, Math.round(conf || 0)).run();
@@ -436,8 +440,11 @@ function esc(s) { return String(s || "").replace(/</g, "&lt;"); }
 
 async function reportPage(env) {
   const run = await env.DB.prepare("SELECT * FROM runs WHERE status='complete' ORDER BY id DESC LIMIT 1").first();
-  const rerunForm = `<div class="card"><form method="POST" action="/api/run"><textarea name="claude_analysis" rows="4" style="width:100%" placeholder="Optional: paste Claude's analysis to include next run"></textarea><p><button>Rerun consensus</button></p></form></div><p><a href="/settings">settings</a></p>`;
-  if (!run) return page("MLB consensus report", `<p>No completed runs yet.</p>${rerunForm}`);
+  const latest = await env.DB.prepare("SELECT id, status, started_at FROM runs ORDER BY id DESC LIMIT 1").first();
+  const banner = (latest && latest.status === "running")
+    ? `<div class="card" style="border-color:#8a6d1a"><p class="item">⏳ Consensus run #${latest.id} in progress (started ${esc(latest.started_at)} UTC, takes about a minute) — refresh shortly.</p></div>` : "";
+  const rerunForm = `<div class="card"><form method="POST" action="/api/run" onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Started - refresh in a minute'"><textarea name="claude_analysis" rows="4" style="width:100%" placeholder="Optional: paste Claude's analysis to include next run"></textarea><p><button>Rerun consensus</button></p></form></div><p><a href="/settings">settings</a></p>`;
+  if (!run) return page("MLB consensus report", `${banner}<p>No completed runs yet.</p>${rerunForm}`);
 
   const dossier = JSON.parse(run.dossier || "{}");
   const picks = dossier.picks || [];
@@ -521,6 +528,7 @@ async function reportPage(env) {
   const tabScript = `<script>document.addEventListener('click',function(e){var t=e.target.closest('.tab');if(!t)return;var c=t.dataset.card;document.querySelectorAll('.tab[data-card="'+c+'"]').forEach(function(b){b.classList.toggle('on',b===t)});document.querySelectorAll('.pane[data-card="'+c+'"]').forEach(function(p){p.style.display=p.dataset.i===t.dataset.i?'block':'none'})});</script>`;
 
   return page(`MLB consensus report — ${run.run_date}`, `
+    ${banner}
     <p>${modelBadges} <span class="muted">run #${run.id} · ${esc(run.slate_summary || "")}</span></p>
     <div class="layout">
       <div>
@@ -543,7 +551,7 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(gradeSourcePicks(env).then(() => runConsensus(env, null)));
   },
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
     const adminHash = await getSetting(env, "admin_hash");
@@ -603,11 +611,14 @@ export default {
     if (path === "/api/run" && request.method === "POST") {
       let claude = null;
       const ct = request.headers.get("Content-Type") || "";
-      if (ct.includes("form")) { const f = await request.formData(); claude = f.get("claude_analysis") || null; }
-      else if (ct.includes("json")) { claude = (await request.json()).claude_analysis || null; }
-      const result = await runConsensus(env, claude);
-      if (ct.includes("form")) return new Response(null, { status: 302, headers: { "Location": "/" } });
-      return Response.json(result);
+      if (ct.includes("form")) {
+        const f = await request.formData();
+        claude = f.get("claude_analysis") || null;
+        ctx.waitUntil(runConsensus(env, claude));
+        return new Response(null, { status: 302, headers: { "Location": "/" } });
+      }
+      claude = (await request.json()).claude_analysis || null;
+      return Response.json(await runConsensus(env, claude));
     }
     return reportPage(env);
   }
