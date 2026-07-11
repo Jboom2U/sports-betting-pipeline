@@ -84,24 +84,51 @@ function extractJson(text) {
 }
 
 // ── dossier from R2 ──────────────────────────────────────────────────────────
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (field !== "" || row.length) { row.push(field); rows.push(row); row = []; field = ""; }
+      if (c === "\r" && text[i + 1] === "\n") i++;
+    } else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
 async function loadDossier(env, date) {
-  const out = { date, picks: [], schedule: "", raw: null };
-  const obj = await env.DATA.get(`picks/mlb_analysis_${date}.json`);
+  const out = { date, picks: [], schedule: "" };
+  const obj = await env.DATA.get(`picks/mlb_picks_${date}.csv`);
   if (obj) {
-    try {
-      const j = JSON.parse(await obj.text());
-      out.raw = j;
-      const arr = j.picks || j.today_picks || j.plays || [];
-      out.picks = arr.map(p => ({
-        pick: p.label || p.pick || `${p.team || ""} ${p.pick_type || ""}`.trim(),
-        game: p.game || "",
-        type: p.pick_type || p.type || "",
-        odds: p.odds || p.price || "",
-        conf: Number(p.conf || p.confidence || 0),
-        tier: p.tier || "",
-        narrative: p.narrative || ""
-      })).filter(p => p.pick);
-    } catch (e) { out.error = "analysis JSON parse failed: " + e.message; }
+    const rows = parseCsv(await obj.text());
+    if (rows.length > 1) {
+      const header = rows[0].map(h => h.trim().toLowerCase());
+      const idx = k => header.indexOf(k);
+      for (const r of rows.slice(1)) {
+        let conf = parseFloat(r[idx("conf")] || "0") || 0;
+        if (conf <= 1) conf = conf * 100;
+        const label = (r[idx("label")] || "").trim();
+        if (!label) continue;
+        out.picks.push({
+          pick: label,
+          game: (r[idx("game")] || "").trim(),
+          type: (r[idx("type")] || "").trim(),
+          odds: "",
+          conf: Math.round(conf * 10) / 10,
+          tier: (r[idx("tier")] || "").trim(),
+          narrative: (r[idx("reasoning")] || "").trim()
+        });
+      }
+    }
+  } else {
+    out.error = `picks/mlb_picks_${date}.csv not found in R2 — has today's pipeline run?`;
   }
   const sched = await env.DATA.get("data/clean/mlb_schedule_master.csv");
   if (sched) {
@@ -142,8 +169,8 @@ async function runConsensus(env, claudeAnalysis) {
   const runId = ins.meta.last_row_id;
   if (!dossier.picks.length) {
     await env.DB.prepare("UPDATE runs SET status='failed', error=? WHERE id=?")
-      .bind("no picks found in R2 for " + date, runId).run();
-    return { runId, error: "No picks in R2 for " + date + ". Has the 6am pipeline run?" };
+      .bind(dossier.error || ("no picks found in R2 for " + date), runId).run();
+    return { runId, error: dossier.error || ("No picks in R2 for " + date) };
   }
   const prompt = buildPrompt(dossier, claudeAnalysis);
   const orModels = ((await getSetting(env, "openrouter_models")) ||
