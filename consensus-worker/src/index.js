@@ -418,6 +418,21 @@ async function reportPage(env) {
     return html + "</div>";
   };
 
+  const mlHtml = sideSection("Top 5 ML picks", (src, parsed) => {
+    if (src === "statalizers") {
+      const top = consensus.filter(x => x.type === "ML").sort((a, b) => b.conf - a.conf).slice(0, 5);
+      if (!top.length) return `<p class="item muted">none</p>`;
+      return top.map(x => `<p class="item">${esc(x.pick)} <span class="muted">${x.conf}%</span></p>`).join("");
+    }
+    const agrees = (parsed?.reviews || []).filter(v => v.verdict !== "fade" && Number(v.conf) > 0);
+    const top = agrees.filter(v => {
+      const cp = consensus.find(x => x.pick === v.pick || x.pick.includes(v.pick) || (v.pick && v.pick.includes(x.pick)));
+      return cp && cp.type === "ML";
+    }).sort((a, b) => Number(b.conf) - Number(a.conf)).slice(0, 5);
+    if (!top.length) return `<p class="item muted">none</p>`;
+    return top.map(v => `<p class="item">${esc(v.pick)} <span class="muted">${Math.round(v.conf)}%</span></p>`).join("");
+  });
+
   const parlaysHtml = sideSection("Parlay recommendations", (src, parsed) => {
     const list = src === "statalizers" ? statalizersParlays(consensus) : (parsed?.parlays || []);
     if (!list.length) return `<p class="item muted">none</p>`;
@@ -465,6 +480,7 @@ async function reportPage(env) {
       <div>
         ${trackHtml}
         ${bestHtml}
+        ${mlHtml}
         ${parlaysHtml}
         ${hrHtml}
         ${propsHtml}
