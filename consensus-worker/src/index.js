@@ -52,6 +52,21 @@ async function callGemini(env, prompt) {
   return { model: `gemini/${model}`, text, latency };
 }
 
+async function callOpenAI(env, prompt) {
+  const key = await getSetting(env, "openai_key");
+  if (!key) return null;
+  const model = (await getSetting(env, "openai_model")) || "gpt-5.4-mini";
+  const t0 = Date.now();
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] }) });
+  const latency = Date.now() - t0;
+  if (!res.ok) return { model: `openai-api/${model}`, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`, latency };
+  const data = await res.json();
+  return { model: `openai-api/${model}`, text: data?.choices?.[0]?.message?.content || "", latency };
+}
+
 async function callOpenRouter(env, modelId, prompt) {
   const key = await getSetting(env, "openrouter_key");
   if (!key) return { model: modelId, error: "no key configured" };
@@ -203,7 +218,8 @@ function dispName(model) {
   if (DISPLAY_NAMES[sn]) return DISPLAY_NAMES[sn];
   if (sn.startsWith("gemini")) return "Gemini";
   if (sn.startsWith("nemotron")) return "NemoTron";
-  if (sn.startsWith("gpt-oss")) return "OpenAI";
+  if (sn.startsWith("gpt-oss")) return "GPT-OSS";
+  if (sn.startsWith("gpt-")) return "OpenAI";
   if (sn.startsWith("trinity")) return "Trinity";
   if (sn.startsWith("gemma")) return "Gemma";
   if (sn.startsWith("deepseek")) return "DeepSeek";
@@ -325,10 +341,9 @@ async function runConsensus(env, claudeAnalysis) {
     "deepseek/deepseek-v4-flash:free,openai/gpt-oss-120b:free,nvidia/nemotron-3-super-120b-a12b:free")
     .split(",").map(s => s.trim()).filter(Boolean);
 
-  const results = await Promise.all([
-    callGemini(env, prompt),
-    ...orModels.map(m => callOpenRouter(env, m, prompt))
-  ]);
+  const calls = [callGemini(env, prompt), ...orModels.map(m => callOpenRouter(env, m, prompt))];
+  if (await getSetting(env, "openai_key")) calls.push(callOpenAI(env, prompt));
+  const results = (await Promise.all(calls)).filter(Boolean);
 
   for (const r of results) {
     r.parsed = r.text ? extractJson(r.text) : null;
@@ -385,18 +400,24 @@ function loginPage(setup) {
 async function settingsPage(env) {
   const g = await getSetting(env, "gemini_key");
   const o = await getSetting(env, "openrouter_key");
+  const oa = await getSetting(env, "openai_key");
+  const oaModel = (await getSetting(env, "openai_model")) || "gpt-5.4-mini";
   const models = (await getSetting(env, "openrouter_models")) || "deepseek/deepseek-v4-flash:free,openai/gpt-oss-120b:free,nvidia/nemotron-3-super-120b-a12b:free";
   return page("Consensus settings", `
   <div class="card"><h3>API keys</h3>
     <p>Gemini: ${g ? '<span class="badge ok">saved</span>' : '<span class="badge bad">not set</span>'}
-       OpenRouter: ${o ? '<span class="badge ok">saved</span>' : '<span class="badge bad">not set</span>'}</p>
+       OpenRouter: ${o ? '<span class="badge ok">saved</span>' : '<span class="badge bad">not set</span>'}
+       OpenAI: ${oa ? '<span class="badge ok">saved</span>' : '<span class="badge bad">not set</span>'}</p>
     <form id="kf">
       <p><input style="width:100%" type="password" name="gemini_key" placeholder="Gemini API key (leave blank to keep)"></p>
       <p><input style="width:100%" type="password" name="openrouter_key" placeholder="OpenRouter API key (leave blank to keep)"></p>
+      <p><input style="width:100%" type="password" name="openai_key" placeholder="OpenAI API key (leave blank to keep)"></p>
+      <p><input style="width:100%" name="openai_model" value="${oaModel}" title="OpenAI model"></p>
       <p><input style="width:100%" name="openrouter_models" value="${models}"></p>
       <button type="submit">Save</button>
       <button type="button" onclick="test('gemini')">Test Gemini</button>
       <button type="button" onclick="test('openrouter')">Test OpenRouter</button>
+      <button type="button" onclick="test('openai')">Test OpenAI</button>
       <span id="msg"></span>
     </form></div>
   <p><a href="/">← report</a></p>
@@ -550,7 +571,7 @@ export default {
     if (path === "/settings") return settingsPage(env);
     if (path === "/api/keys" && request.method === "POST") {
       const d = await request.json();
-      for (const k of ["gemini_key", "openrouter_key", "openrouter_models"]) {
+      for (const k of ["gemini_key", "openrouter_key", "openrouter_models", "openai_key", "openai_model"]) {
         if (d[k]) await setSetting(env, k, d[k].trim());
       }
       return Response.json({ ok: true });
@@ -562,6 +583,12 @@ export default {
           const key = await getSetting(env, "gemini_key");
           if (!key) return Response.json({ ok: false, error: "no key saved" });
           const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+          return Response.json(r.ok ? { ok: true } : { ok: false, error: `HTTP ${r.status}` });
+        }
+        if (provider === "openai") {
+          const key = await getSetting(env, "openai_key");
+          if (!key) return Response.json({ ok: false, error: "no key saved" });
+          const r = await fetch("https://api.openai.com/v1/models", { headers: { "Authorization": `Bearer ${key}` } });
           return Response.json(r.ok ? { ok: true } : { ok: false, error: `HTTP ${r.status}` });
         }
         if (provider === "openrouter") {
