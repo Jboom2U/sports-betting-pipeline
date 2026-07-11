@@ -1,16 +1,13 @@
-// picks-consensus — multi-AI consensus review of Statalizers daily picks
-// Reads dossier data from R2 (statalizers-data), relays to Gemini + OpenRouter
-// models, stores consensus in D1, serves report + settings UI.
-// API keys are entered on /settings — never stored in code.
-
-const ET_OFFSET_GUESS = -4; // EDT; only used for date labeling
+// picks-consensus v2 — multi-AI consensus review of Statalizers daily picks
+// Dossier (picks + props + schedule) from R2 → Gemini + OpenRouter models →
+// consensus computed at render time from model_responses, so external rows
+// (e.g. model='claude' inserted via D1) appear automatically.
 
 function etToday() {
-  const now = new Date(Date.now() + ET_OFFSET_GUESS * 3600 * 1000);
+  const now = new Date(Date.now() - 4 * 3600 * 1000);
   return now.toISOString().slice(0, 10);
 }
 
-// ── settings helpers ─────────────────────────────────────────────────────────
 async function getSetting(env, key) {
   const row = await env.DB.prepare("SELECT value FROM settings WHERE key=?").bind(key).first();
   return row ? row.value : null;
@@ -22,7 +19,6 @@ async function setSetting(env, key, value) {
   ).bind(key, value).run();
 }
 
-// ── auth (password set on first visit, session = HMAC cookie) ───────────────
 async function sha256hex(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
@@ -108,33 +104,48 @@ function parseCsv(text) {
   return rows;
 }
 
+function csvObjects(text) {
+  const rows = parseCsv(text);
+  if (rows.length < 2) return [];
+  const header = rows[0].map(h => h.trim().toLowerCase());
+  return rows.slice(1).map(r => {
+    const o = {};
+    header.forEach((h, i) => { o[h] = (r[i] || "").trim(); });
+    return o;
+  });
+}
+
 async function loadDossier(env, date) {
-  const out = { date, picks: [], schedule: "" };
+  const out = { date, picks: [], props: [], schedule: "" };
   const obj = await env.DATA.get(`picks/mlb_picks_${date}.csv`);
   if (obj) {
-    const rows = parseCsv(await obj.text());
-    if (rows.length > 1) {
-      const header = rows[0].map(h => h.trim().toLowerCase());
-      const idx = k => header.indexOf(k);
-      for (const r of rows.slice(1)) {
-        let conf = parseFloat(r[idx("conf")] || "0") || 0;
-        if (conf <= 1) conf = conf * 100;
-        const label = (r[idx("label")] || "").trim();
-        if (!label) continue;
-        const game = (r[idx("game")] || "").trim();
-        out.picks.push({
-          pick: game ? `${game}: ${label}` : label,
-          game: (r[idx("game")] || "").trim(),
-          type: (r[idx("type")] || "").trim(),
-          odds: "",
-          conf: Math.round(conf * 10) / 10,
-          tier: (r[idx("tier")] || "").trim(),
-          narrative: (r[idx("reasoning")] || "").trim()
-        });
-      }
+    for (const r of csvObjects(await obj.text())) {
+      let conf = parseFloat(r.conf || "0") || 0;
+      if (conf <= 1) conf = conf * 100;
+      if (!r.label) continue;
+      out.picks.push({
+        pick: r.game ? `${r.game}: ${r.label}` : r.label,
+        game: r.game || "", type: r.type || "", odds: "",
+        conf: Math.round(conf * 10) / 10,
+        tier: r.tier || "", narrative: r.reasoning || ""
+      });
     }
   } else {
     out.error = `picks/mlb_picks_${date}.csv not found in R2 — has today's pipeline run?`;
+  }
+  const pobj = await env.DATA.get(`picks/mlb_props_${date}.csv`);
+  if (pobj) {
+    for (const r of csvObjects(await pobj.text())) {
+      let conf = parseFloat(r.confidence || "0") || 0;
+      if (conf <= 1) conf = conf * 100;
+      if (!r.player_name) continue;
+      out.props.push({
+        player: r.player_name, game: r.game || "",
+        prop_type: r.prop_type || "", line: r.line || "", proj: r.proj || "",
+        conf: Math.round(conf * 10) / 10, tier: r.tier || "", reasoning: r.reasoning || ""
+      });
+    }
+    out.props.sort((a, b) => b.conf - a.conf);
   }
   const sched = await env.DATA.get("data/clean/mlb_schedule_master.csv");
   if (sched) {
@@ -146,41 +157,152 @@ async function loadDossier(env, date) {
 
 function buildPrompt(dossier, claudeAnalysis) {
   const picksBlock = dossier.picks.map(p =>
-    `- ${p.pick} [${p.type}] ${p.odds ? "odds " + p.odds : ""} | model conf ${p.conf}% (${p.tier})${p.narrative ? " | " + p.narrative : ""}`
+    `- ${p.pick} [${p.type}] | model conf ${p.conf}% (${p.tier})${p.narrative ? " | " + p.narrative : ""}`
   ).join("\n");
+  const hrProps = dossier.props.filter(p => p.prop_type === "HR").slice(0, 10);
+  const otherProps = dossier.props.filter(p => p.prop_type !== "HR").slice(0, 15);
+  const propLine = p => `- ${p.player} (${p.game}) ${p.prop_type} ${p.line ? "line " + p.line : ""} | proj ${p.proj} | conf ${p.conf}%${p.reasoning ? " | " + p.reasoning : ""}`;
   return `You are a professional sports betting analyst reviewing another model's MLB picks for ${dossier.date}.
 
 TODAY'S SCHEDULE (from official data):
 ${dossier.schedule || "(unavailable)"}
 
-STATALIZERS MODEL PICKS (Pythagorean model using pitcher ERA/FIP/WHIP, Statcast, bullpen fatigue, park factors, weather, umpire, sharp line movement):
+STATALIZERS MODEL GAME PICKS (Pythagorean model: pitcher ERA/FIP/WHIP, Statcast, bullpen fatigue, park factors, weather, umpire, sharp line movement):
 ${picksBlock || "(no picks found)"}
+
+STATALIZERS HR PROP CANDIDATES:
+${hrProps.map(propLine).join("\n") || "(none)"}
+
+STATALIZERS OTHER PLAYER PROP CANDIDATES:
+${otherProps.map(propLine).join("\n") || "(none)"}
 ${claudeAnalysis ? "\nCLAUDE'S INDEPENDENT ANALYSIS:\n" + claudeAnalysis + "\n" : ""}
-YOUR TASK: Critically review each pick. Push back where the reasoning looks weak. Use ONLY the data provided plus general baseball knowledge — do not invent injuries or recent results you cannot know.
+YOUR TASK: Critically review the picks. Push back where reasoning looks weak. Build parlays from the strongest plays (never two legs from the same game). Pick the best HR props and player props. Use ONLY the data provided plus general baseball knowledge — do not invent injuries or results you cannot know.
 
 Respond with STRICT JSON only, no prose outside the JSON:
 {
-  "reviews": [{"pick": "<exact pick text>", "verdict": "agree"|"fade", "conf": <0-100 your win probability>, "reason": "<1 sentence>"}],
+  "reviews": [{"pick": "<exact pick text>", "verdict": "agree"|"fade", "conf": <0-100>, "reason": "<1 sentence>"}],
   "best_bet": "<pick text you rate highest>",
-  "own_plays": [{"pick": "<any play you like that is not listed>", "conf": <0-100>, "reason": "<1 sentence>"}]
-}`;
+  "parlays": [
+    {"legs": ["<pick text>", "<pick text>"], "conf": <0-100 combined>, "reason": "<1 sentence>"},
+    {"legs": ["<pick>", "<pick>", "<pick>"], "conf": <0-100>, "reason": "<1 sentence>"}
+  ],
+  "hr_props": [{"player": "<name>", "conf": <0-100>, "reason": "<1 sentence>"}],
+  "player_props": [{"player": "<name>", "prop": "<e.g. Over 1.5 TB>", "conf": <0-100>, "reason": "<1 sentence>"}]
+}
+Limit hr_props and player_props to your top 3 each, parlays to one 2-leg, one 3-leg, one 4-leg.`;
+}
+
+// ── consensus math (shared by run + render) ─────────────────────────────────
+function shortName(model) {
+  return model.split("/").pop().replace(":free", "");
+}
+
+function computeConsensus(picks, responses) {
+  const out = picks.map(p => ({ ...p, confs: { statalizers: p.conf }, fades: [] }));
+  for (const r of responses) {
+    if (!r.parsed || !Array.isArray(r.parsed.reviews)) continue;
+    const sn = shortName(r.model);
+    for (const p of out) {
+      const rev = r.parsed.reviews.find(v => v.pick && (v.pick === p.pick || p.pick.includes(v.pick) || v.pick.includes(p.pick)));
+      if (!rev) continue;
+      if (rev.verdict === "fade") p.fades.push({ model: sn, reason: rev.reason || "fade" });
+      else if (Number(rev.conf) > 0) p.confs[sn] = Math.round(Number(rev.conf));
+    }
+  }
+  for (const p of out) {
+    const vals = Object.values(p.confs);
+    p.blended = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  }
+  out.sort((a, b) => b.blended - a.blended);
+  const noFade = out.filter(p => !p.fades.length);
+  const best = (noFade.length ? noFade : out)[0];
+  if (best) best.isBest = true;
+  return out;
+}
+
+function fairOdds(prob) {
+  if (prob <= 0 || prob >= 100) return "";
+  const p = prob / 100;
+  return p >= 0.5 ? `-${Math.round(100 * p / (1 - p))}` : `+${Math.round(100 * (1 - p) / p)}`;
+}
+
+function statalizersParlays(consensus) {
+  const legs = [];
+  const usedGames = new Set();
+  for (const p of consensus) {
+    if (p.conf < 57 || !p.game || usedGames.has(p.game)) continue;
+    usedGames.add(p.game);
+    legs.push(p);
+    if (legs.length >= 4) break;
+  }
+  const mk = n => {
+    if (legs.length < n) return null;
+    const sel = legs.slice(0, n);
+    const prob = Math.round(sel.reduce((a, l) => a * (l.conf / 100), 1) * 100);
+    return { legs: sel.map(l => l.pick), conf: prob, reason: "top non-overlapping plays by model confidence" };
+  };
+  return [mk(2), mk(3), mk(4)].filter(Boolean);
+}
+
+
+// ── source pick tracking + grading ──────────────────────────────────────────
+async function recordSourcePicks(env, runId, date, consensus, dossier, responses) {
+  const add = (source, category, pick, conf) =>
+    env.DB.prepare("INSERT INTO source_picks (run_id, run_date, source, category, pick, conf) VALUES (?,?,?,?,?,?)")
+      .bind(runId, date, source, category, pick, Math.round(conf || 0)).run();
+  for (const p of consensus.filter(x => x.type === "ML").sort((a, b) => b.conf - a.conf).slice(0, 5))
+    await add("statalizers", "ML_TOP5", p.pick, p.conf);
+  for (const p of (dossier.props || []).filter(x => x.prop_type === "HR").slice(0, 3))
+    await add("statalizers", "HR_PROP", `${p.player} HR (${p.game})`, p.conf);
+  for (const p of (dossier.props || []).filter(x => x.prop_type !== "HR").slice(0, 3))
+    await add("statalizers", "PLAYER_PROP", `${p.player} ${p.prop_type} ${p.line} (${p.game})`, p.conf);
+  for (const r of responses) {
+    if (!r.parsed) continue;
+    const sn = shortName(r.model);
+    const agrees = (r.parsed.reviews || []).filter(v => v.verdict !== "fade" && Number(v.conf) > 0);
+    const mls = agrees.filter(v => {
+      const cp = consensus.find(x => x.pick === v.pick || x.pick.includes(v.pick) || (v.pick && v.pick.includes(x.pick)));
+      return cp && cp.type === "ML";
+    }).sort((a, b) => Number(b.conf) - Number(a.conf)).slice(0, 5);
+    for (const v of mls) await add(sn, "ML_TOP5", v.pick, v.conf);
+    for (const x of (r.parsed.hr_props || []).slice(0, 3)) await add(sn, "HR_PROP", `${x.player} HR`, x.conf);
+    for (const x of (r.parsed.player_props || []).slice(0, 3)) await add(sn, "PLAYER_PROP", `${x.player} ${x.prop || ""}`.trim(), x.conf);
+    if (r.parsed.best_bet) await add(sn, "BEST_BET", r.parsed.best_bet, 0);
+  }
+}
+
+async function gradeSourcePicks(env) {
+  const days = (await env.DB.prepare("SELECT DISTINCT run_date FROM source_picks WHERE result IS NULL AND run_date < ?").bind(etToday()).all()).results || [];
+  for (const { run_date } of days) {
+    const obj = await env.DATA.get(`picks/mlb_analysis_${run_date}.json`);
+    if (!obj) continue;
+    let graded;
+    try { graded = JSON.parse(await obj.text()).graded_picks || []; } catch { continue; }
+    const pending = (await env.DB.prepare("SELECT id, pick FROM source_picks WHERE result IS NULL AND run_date=?").bind(run_date).all()).results || [];
+    for (const sp of pending) {
+      const g = graded.find(gp => gp.label && (sp.pick.includes(gp.label) || gp.label.includes(sp.pick)));
+      if (g && ["WIN", "LOSS", "PUSH"].includes(g.result))
+        await env.DB.prepare("UPDATE source_picks SET result=? WHERE id=?").bind(g.result, sp.id).run();
+    }
+  }
 }
 
 // ── consensus run ────────────────────────────────────────────────────────────
 async function runConsensus(env, claudeAnalysis) {
   const date = etToday();
   const dossier = await loadDossier(env, date);
-  const ins = await env.DB.prepare("INSERT INTO runs (run_date, slate_summary) VALUES (?, ?)")
-    .bind(date, `${dossier.picks.length} picks`).run();
+  const prompt = dossier.picks.length ? buildPrompt(dossier, claudeAnalysis) : null;
+  const ins = await env.DB.prepare("INSERT INTO runs (run_date, slate_summary, dossier, prompt) VALUES (?, ?, ?, ?)")
+    .bind(date, `${dossier.picks.length} picks, ${dossier.props.length} props`, JSON.stringify(dossier), prompt).run();
   const runId = ins.meta.last_row_id;
   if (!dossier.picks.length) {
     await env.DB.prepare("UPDATE runs SET status='failed', error=? WHERE id=?")
       .bind(dossier.error || ("no picks found in R2 for " + date), runId).run();
     return { runId, error: dossier.error || ("No picks in R2 for " + date) };
   }
-  const prompt = buildPrompt(dossier, claudeAnalysis);
   const orModels = ((await getSetting(env, "openrouter_models")) ||
-    "deepseek/deepseek-v4-flash:free,openai/gpt-oss-120b:free,nvidia/nemotron-3-super-120b-a12b:free").split(",").map(s => s.trim()).filter(Boolean);
+    "deepseek/deepseek-v4-flash:free,openai/gpt-oss-120b:free,nvidia/nemotron-3-super-120b-a12b:free")
+    .split(",").map(s => s.trim()).filter(Boolean);
 
   const results = await Promise.all([
     callGemini(env, prompt),
@@ -188,53 +310,41 @@ async function runConsensus(env, claudeAnalysis) {
   ]);
 
   for (const r of results) {
-    const parsed = r.text ? extractJson(r.text) : null;
-    r.parsed = parsed;
+    r.parsed = r.text ? extractJson(r.text) : null;
     await env.DB.prepare(
       "INSERT INTO model_responses (run_id, model, raw_response, parsed_json, latency_ms, error) VALUES (?,?,?,?,?,?)"
-    ).bind(runId, r.model, r.text || null, parsed ? JSON.stringify(parsed) : null, r.latency || null, r.error || null).run();
+    ).bind(runId, r.model, r.text || null, r.parsed ? JSON.stringify(r.parsed) : null, r.latency || null, r.error || null).run();
   }
 
-  // blend per pick
-  const bestVotes = {};
-  for (const p of dossier.picks) {
-    const confs = { statalizers: p.conf };
-    const fades = [];
-    for (const r of results) {
-      if (!r.parsed?.reviews) continue;
-      const rev = r.parsed.reviews.find(v => v.pick && (v.pick === p.pick || p.pick.includes(v.pick) || v.pick.includes(p.pick)));
-      if (!rev) continue;
-      const short = r.model.split("/").pop().replace(":free", "");
-      if (rev.verdict === "fade") fades.push(`${short}: ${rev.reason || "fade"}`);
-      else if (Number(rev.conf) > 0) confs[short] = Number(rev.conf);
-    }
-    const vals = Object.values(confs);
-    const blended = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
-    p.blended = blended; p.confs = confs; p.fades = fades;
+  const consensus = computeConsensus(dossier.picks, results);
+  for (const p of consensus) {
     await env.DB.prepare(
-      "INSERT INTO consensus_picks (run_id, run_date, pick, pick_type, odds, statalizers_conf, model_confs, blended_conf, fades) VALUES (?,?,?,?,?,?,?,?,?)"
-    ).bind(runId, date, p.pick, p.type, String(p.odds), p.conf, JSON.stringify(confs), blended, JSON.stringify(fades)).run();
+      "INSERT INTO consensus_picks (run_id, run_date, pick, pick_type, odds, statalizers_conf, model_confs, blended_conf, fades, is_best_bet) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    ).bind(runId, date, p.pick, p.type, "", p.conf, JSON.stringify(p.confs), p.blended,
+           JSON.stringify(p.fades.map(f => `${f.model}: ${f.reason}`)), p.isBest ? 1 : 0).run();
   }
-  for (const r of results) {
-    const bb = r.parsed?.best_bet;
-    if (bb) bestVotes[bb] = (bestVotes[bb] || 0) + 1;
-  }
-  const noFade = dossier.picks.filter(p => !p.fades.length);
-  const pool = noFade.length ? noFade : dossier.picks;
-  const best = pool.sort((a, b) => b.blended - a.blended)[0];
-  if (best) {
-    await env.DB.prepare("UPDATE consensus_picks SET is_best_bet=1 WHERE run_id=? AND pick=?").bind(runId, best.pick).run();
-  }
+  await recordSourcePicks(env, runId, date, consensus, dossier, results);
   await env.DB.prepare("UPDATE runs SET status='complete' WHERE id=?").bind(runId).run();
   return { runId, date, picks: dossier.picks.length, models: results.map(r => ({ model: r.model, ok: !!r.parsed, error: r.error })) };
 }
 
 // ── HTML ─────────────────────────────────────────────────────────────────────
-const CSS = `<style>body{font-family:system-ui,sans-serif;background:#0f1420;color:#e6e9f0;max-width:920px;margin:0 auto;padding:24px}
+const CSS = `<style>
+body{font-family:system-ui,sans-serif;background:#0f1420;color:#e6e9f0;max-width:1200px;margin:0 auto;padding:24px}
 a{color:#7fb3ff}input,button,textarea{font:inherit;padding:8px 12px;border-radius:8px;border:1px solid #33405c;background:#1a2233;color:#e6e9f0}
-button{cursor:pointer;background:#2b3a55}table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px;border-bottom:1px solid #26304a;text-align:left}
+button{cursor:pointer;background:#2b3a55}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px;border-bottom:1px solid #26304a;text-align:left;vertical-align:top}
 .badge{padding:2px 8px;border-radius:99px;font-size:12px}.ok{background:#123524;color:#7ee2a8}.bad{background:#3a1620;color:#ff9aa8}
-.card{background:#161d2e;border:1px solid #26304a;border-radius:12px;padding:16px;margin:12px 0}</style>`;
+.card{background:#161d2e;border:1px solid #26304a;border-radius:12px;padding:14px 16px;margin:0 0 14px}
+.card h3{margin:0 0 10px;font-size:15px;color:#c7d2ea}
+.layout{display:grid;grid-template-columns:1.7fr 1fr;gap:18px;align-items:start}
+@media(max-width:900px){.layout{grid-template-columns:1fr}}
+.src{font-size:11px;color:#8fa3c8;text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
+.item{font-size:13px;margin:0 0 6px;line-height:1.45}
+.muted{color:#9fb0d0;font-size:12px}.fade{color:#ff9aa8;font-size:12px}
+.blend{font-weight:600;font-size:15px}
+.pill{display:inline-block;background:#1e2840;border:1px solid #33405c;border-radius:99px;padding:1px 8px;font-size:11px;color:#aebfe0;margin-left:6px}
+</style>`;
 
 function page(title, body) {
   return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>${CSS}</head><body><h2>${title}</h2>${body}</body></html>`,
@@ -257,8 +367,8 @@ async function settingsPage(env) {
     <p>Gemini: ${g ? '<span class="badge ok">saved</span>' : '<span class="badge bad">not set</span>'}
        OpenRouter: ${o ? '<span class="badge ok">saved</span>' : '<span class="badge bad">not set</span>'}</p>
     <form id="kf">
-      <p><input style="width:100%" type="password" name="gemini_key" placeholder="Gemini API key (aistudio.google.com)"></p>
-      <p><input style="width:100%" type="password" name="openrouter_key" placeholder="OpenRouter API key (openrouter.ai)"></p>
+      <p><input style="width:100%" type="password" name="gemini_key" placeholder="Gemini API key (leave blank to keep)"></p>
+      <p><input style="width:100%" type="password" name="openrouter_key" placeholder="OpenRouter API key (leave blank to keep)"></p>
       <p><input style="width:100%" name="openrouter_models" value="${models}"></p>
       <button type="submit">Save</button>
       <button type="button" onclick="test('gemini')">Test Gemini</button>
@@ -273,33 +383,99 @@ async function settingsPage(env) {
     msg.textContent=r.ok?'Saved':'Save failed';setTimeout(()=>location.reload(),600)};
   async function test(p){msg.textContent='Testing '+p+'…';
     const r=await fetch('/api/test-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:p})});
-    const j=await r.json();msg.innerHTML=j.ok?'<span class="badge ok">'+p+' connected</span>':'<span class="badge bad">'+ (j.error||'failed')+'</span>'}
+    const j=await r.json();msg.innerHTML=j.ok?'<span class="badge ok">'+p+' connected</span>':'<span class="badge bad">'+(j.error||'failed')+'</span>'}
   </script>`);
 }
 
+function esc(s) { return String(s || "").replace(/</g, "&lt;"); }
+
 async function reportPage(env) {
-  const run = await env.DB.prepare("SELECT * FROM runs ORDER BY id DESC LIMIT 1").first();
-  if (!run) return page("MLB consensus report", `<p>No runs yet.</p><div class="card"><form method="POST" action="/api/run"><textarea name="claude_analysis" rows="6" style="width:100%" placeholder="Optional: paste Claude's analysis here"></textarea><p><button>Run consensus now</button></p></form></div><p><a href="/settings">settings</a></p>`);
-  const picks = (await env.DB.prepare("SELECT * FROM consensus_picks WHERE run_id=? ORDER BY blended_conf DESC").bind(run.id).all()).results || [];
-  const models = (await env.DB.prepare("SELECT model, error, latency_ms FROM model_responses WHERE run_id=?").bind(run.id).all()).results || [];
-  const rows = picks.map(p => {
-    const confs = JSON.parse(p.model_confs || "{}");
-    const fades = JSON.parse(p.fades || "[]");
-    const confStr = Object.entries(confs).map(([k, v]) => `${k} ${v}%`).join(" · ");
-    return `<tr><td>${p.is_best_bet ? "⭐ " : ""}${p.pick}</td><td>${p.pick_type || ""}</td><td>${p.odds || ""}</td><td><b>${p.blended_conf}%</b></td><td style="font-size:12px;color:#9fb0d0">${confStr}${fades.length ? '<br><span style="color:#ff9aa8">' + fades.join("; ") + "</span>" : ""}</td></tr>`;
+  const run = await env.DB.prepare("SELECT * FROM runs WHERE status='complete' ORDER BY id DESC LIMIT 1").first();
+  const rerunForm = `<div class="card"><form method="POST" action="/api/run"><textarea name="claude_analysis" rows="4" style="width:100%" placeholder="Optional: paste Claude's analysis to include next run"></textarea><p><button>Rerun consensus</button></p></form></div><p><a href="/settings">settings</a></p>`;
+  if (!run) return page("MLB consensus report", `<p>No completed runs yet.</p>${rerunForm}`);
+
+  const dossier = JSON.parse(run.dossier || "{}");
+  const picks = dossier.picks || [];
+  const rows = (await env.DB.prepare("SELECT model, parsed_json, error FROM model_responses WHERE run_id=?").bind(run.id).all()).results || [];
+  const responses = rows.map(r => ({ model: r.model, parsed: r.parsed_json ? JSON.parse(r.parsed_json) : null, error: r.error }));
+  const consensus = computeConsensus(picks, responses);
+
+  const tableRows = consensus.map(p => {
+    const confStr = Object.entries(p.confs).map(([k, v]) => `${esc(k)} ${v}%`).join(" · ");
+    const fadeStr = p.fades.map(f => `${esc(f.model)}: ${esc(f.reason)}`).join("<br>");
+    return `<tr><td>${p.isBest ? "⭐ " : ""}${esc(p.pick)}</td><td>${esc(p.type)}</td><td class="blend">${p.blended}%</td><td><span class="muted">${confStr}</span>${fadeStr ? '<br><span class="fade">' + fadeStr + "</span>" : ""}</td></tr>`;
   }).join("");
-  const modelBadges = models.map(m => `<span class="badge ${m.error ? "bad" : "ok"}">${m.model}${m.error ? " ✗" : " ✓"}</span>`).join(" ");
+
+  const modelBadges = responses.map(r => `<span class="badge ${r.error ? "bad" : "ok"}">${esc(shortName(r.model))}${r.error ? " ✗" : " ✓"}</span>`).join(" ");
+
+  const sideSection = (title, renderSrc) => {
+    let html = `<div class="card"><h3>${title}</h3>`;
+    html += `<div class="src">Statalizers</div>` + renderSrc("statalizers", null);
+    for (const r of responses) {
+      if (!r.parsed) continue;
+      html += `<div class="src">${esc(shortName(r.model))}</div>` + renderSrc(shortName(r.model), r.parsed);
+    }
+    return html + "</div>";
+  };
+
+  const parlaysHtml = sideSection("Parlay recommendations", (src, parsed) => {
+    const list = src === "statalizers" ? statalizersParlays(consensus) : (parsed?.parlays || []);
+    if (!list.length) return `<p class="item muted">none</p>`;
+    return list.slice(0, 3).map(pl =>
+      `<p class="item">${(pl.legs || []).map(esc).join(" + ")}<br><span class="muted">${Math.round(pl.conf || 0)}% combined${fairOdds(pl.conf) ? " · fair " + fairOdds(pl.conf) : ""}${pl.reason ? " — " + esc(pl.reason) : ""}</span></p>`
+    ).join("");
+  });
+
+  const hrHtml = sideSection("Top 3 HR props", (src, parsed) => {
+    if (src === "statalizers") {
+      const hr = (dossier.props || []).filter(p => p.prop_type === "HR").slice(0, 3);
+      if (!hr.length) return `<p class="item muted">none</p>`;
+      return hr.map(p => `<p class="item">${esc(p.player)} <span class="muted">(${esc(p.game)}) ${p.conf}%${p.reasoning ? " — " + esc(p.reasoning) : ""}</span></p>`).join("");
+    }
+    const list = parsed?.hr_props || [];
+    if (!list.length) return `<p class="item muted">none</p>`;
+    return list.slice(0, 3).map(p => `<p class="item">${esc(p.player)} <span class="muted">${Math.round(p.conf || 0)}%${p.reason ? " — " + esc(p.reason) : ""}</span></p>`).join("");
+  });
+
+  const propsHtml = sideSection("Top 3 player props", (src, parsed) => {
+    if (src === "statalizers") {
+      const pr = (dossier.props || []).filter(p => p.prop_type !== "HR").slice(0, 3);
+      if (!pr.length) return `<p class="item muted">none</p>`;
+      return pr.map(p => `<p class="item">${esc(p.player)} ${esc(p.prop_type)} ${esc(p.line)} <span class="muted">(${esc(p.game)}) ${p.conf}%${p.reasoning ? " — " + esc(p.reasoning) : ""}</span></p>`).join("");
+    }
+    const list = parsed?.player_props || [];
+    if (!list.length) return `<p class="item muted">none</p>`;
+    return list.slice(0, 3).map(p => `<p class="item">${esc(p.player)} ${esc(p.prop || "")} <span class="muted">${Math.round(p.conf || 0)}%${p.reason ? " — " + esc(p.reason) : ""}</span></p>`).join("");
+  });
+
+  const best = consensus.find(p => p.isBest);
+  const bestVotes = responses.filter(r => r.parsed?.best_bet).map(r => `${esc(shortName(r.model))}: ${esc(r.parsed.best_bet)}`).join("<br>");
+  const bestHtml = best ? `<div class="card"><h3>Best bet</h3><p class="item">⭐ ${esc(best.pick)} — <span class="blend">${best.blended}%</span> blended</p>${bestVotes ? `<div class="src">Model best-bet votes</div><p class="item muted">${bestVotes}</p>` : ""}</div>` : "";
+
+  const track = (await env.DB.prepare("SELECT source, SUM(result='WIN') w, SUM(result='LOSS') l, SUM(result='PUSH') pu FROM source_picks WHERE result IS NOT NULL GROUP BY source ORDER BY w DESC").all()).results || [];
+  const trackHtml = track.length ? '<div class="card"><h3>Track record (graded)</h3>' + track.map(t => `<p class="item">${esc(t.source)} <span class="muted">${t.w}-${t.l}${t.pu ? "-" + t.pu : ""}</span></p>`).join("") + "</div>" : "";
+
   return page(`MLB consensus report — ${run.run_date}`, `
-    <p>${modelBadges} <span style="color:#9fb0d0">status: ${run.status}</span></p>
-    <table><tr><th>Pick</th><th>Type</th><th>Odds</th><th>Blend</th><th>Model confs / pushback</th></tr>${rows}</table>
-    <div class="card"><form method="POST" action="/api/run"><textarea name="claude_analysis" rows="5" style="width:100%" placeholder="Optional: paste Claude's analysis to include next run"></textarea><p><button>Rerun consensus</button></p></form></div>
-    <p><a href="/settings">settings</a></p>`);
+    <p>${modelBadges} <span class="muted">run #${run.id} · ${esc(run.slate_summary || "")}</span></p>
+    <div class="layout">
+      <div>
+        <table><tr><th>Pick</th><th>Type</th><th>Blend</th><th>Model confs / pushback</th></tr>${tableRows}</table>
+        ${rerunForm}
+      </div>
+      <div>
+        ${trackHtml}
+        ${bestHtml}
+        ${parlaysHtml}
+        ${hrHtml}
+        ${propsHtml}
+      </div>
+    </div>`);
 }
 
 // ── router ───────────────────────────────────────────────────────────────────
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runConsensus(env, null));
+    ctx.waitUntil(gradeSourcePicks(env).then(() => runConsensus(env, null)));
   },
   async fetch(request, env) {
     const url = new URL(request.url);

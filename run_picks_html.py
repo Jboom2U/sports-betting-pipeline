@@ -4470,6 +4470,22 @@ def main(date=None, no_open=False):
                 "reasoning": p.get("reasoning", ""),
             })
 
+    # Props CSV for the consensus worker (non-fatal)
+    props_csv_path = os.path.join(PICKS_DIR, f"mlb_props_{actual_date}.csv")
+    try:
+        prop_fields = ["date", "game", "away_team", "home_team", "prop_type",
+                       "player_name", "line", "proj", "confidence", "tier", "reasoning"]
+        with open(props_csv_path, "w", newline="", encoding="utf-8") as pf:
+            pwriter = _csv.DictWriter(pf, fieldnames=prop_fields, extrasaction="ignore")
+            pwriter.writeheader()
+            for pr in (props or []):
+                prow = {k: pr.get(k, "") for k in prop_fields}
+                prow["date"] = actual_date
+                pwriter.writerow(prow)
+        log.info(f"Props CSV: {props_csv_path} ({len(props or [])} rows)")
+    except Exception as _pe:
+        log.warning(f"Props CSV write failed (non-fatal): {_pe}")
+
     log.info(f"Dashboard saved: {out_path}")
     log.info(f"Picks CSV: {csv_path} ({len(picks)} rows)")
     log.info(f"Latest copy: {latest_path}")
@@ -4481,6 +4497,7 @@ def main(date=None, no_open=False):
         _upload_file(out_path,    f"picks/mlb_picks_{actual_date}.html")
         _upload_file(latest_path, "picks/mlb_picks_latest.html")
         _upload_file(csv_path,    f"picks/mlb_picks_{actual_date}.csv")
+        _upload_file(props_csv_path, f"picks/mlb_props_{actual_date}.csv")
         log.info(f"Picks HTML + CSV uploaded to R2 (picks/mlb_picks_{actual_date}.html/.csv)")
     except Exception as _e:
         log.warning(f"R2 HTML upload failed (non-fatal): {_e}")
