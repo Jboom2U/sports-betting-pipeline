@@ -60,10 +60,15 @@ async function callOpenRouter(env, modelId, prompt) {
   const key = await getSetting(env, "openrouter_key");
   if (!key) return { model: modelId, error: "no key configured" };
   const t0 = Date.now();
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: prompt }] }) });
+  let res;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: prompt }] }) });
+    if (res.status !== 429 || attempt === 1) break;
+    await new Promise(r2 => setTimeout(r2, 5000));
+  }
   const latency = Date.now() - t0;
   if (!res.ok) return { model: modelId, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`, latency };
   const data = await res.json();
@@ -116,8 +121,9 @@ async function loadDossier(env, date) {
         if (conf <= 1) conf = conf * 100;
         const label = (r[idx("label")] || "").trim();
         if (!label) continue;
+        const game = (r[idx("game")] || "").trim();
         out.picks.push({
-          pick: label,
+          pick: game ? `${game}: ${label}` : label,
           game: (r[idx("game")] || "").trim(),
           type: (r[idx("type")] || "").trim(),
           odds: "",
@@ -174,7 +180,7 @@ async function runConsensus(env, claudeAnalysis) {
   }
   const prompt = buildPrompt(dossier, claudeAnalysis);
   const orModels = ((await getSetting(env, "openrouter_models")) ||
-    "deepseek/deepseek-r1:free,openai/gpt-oss-120b:free").split(",").map(s => s.trim()).filter(Boolean);
+    "deepseek/deepseek-v4-flash:free,openai/gpt-oss-120b:free,nvidia/nemotron-3-super-120b-a12b:free").split(",").map(s => s.trim()).filter(Boolean);
 
   const results = await Promise.all([
     callGemini(env, prompt),
@@ -245,7 +251,7 @@ function loginPage(setup) {
 async function settingsPage(env) {
   const g = await getSetting(env, "gemini_key");
   const o = await getSetting(env, "openrouter_key");
-  const models = (await getSetting(env, "openrouter_models")) || "deepseek/deepseek-r1:free,openai/gpt-oss-120b:free";
+  const models = (await getSetting(env, "openrouter_models")) || "deepseek/deepseek-v4-flash:free,openai/gpt-oss-120b:free,nvidia/nemotron-3-super-120b-a12b:free";
   return page("Consensus settings", `
   <div class="card"><h3>API keys</h3>
     <p>Gemini: ${g ? '<span class="badge ok">saved</span>' : '<span class="badge bad">not set</span>'}
