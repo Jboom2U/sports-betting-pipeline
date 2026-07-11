@@ -1,0 +1,15 @@
+name = "picks-consensus"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[triggers]
+crons = ["45 10 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "consensus-db"
+database_id = "eef9ebb4-846a-4e8b-9ba5-7091c71ca19a"
+
+[[r2_buckets]]
+binding = "DATA"
+bucket_name = "statalizers-data"

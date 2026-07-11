@@ -101,6 +101,83 @@ def get_api_key() -> str:
     return ""
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QUOTA GUARD — budget Odds API calls, route overflow to Pinnacle
+# The API key is shared with other tools, so we guard on BOTH our own daily
+# call count AND the last-known remaining credits reported by the API.
+# State lives in the existing site_config table (non-fatal if DB unavailable).
+# ─────────────────────────────────────────────────────────────────────────────
+_LAST_REMAINING = None
+
+
+def _cfg_get(key: str):
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            if not conn:
+                return None
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM site_config WHERE key = %s", (key,))
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception as e:
+        log.warning(f"Quota guard: config read failed (non-fatal): {e}")
+        return None
+
+
+def _cfg_set(key: str, value):
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            if not conn:
+                return
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO site_config (key, value, updated_at) "
+                "VALUES (%s, %s, NOW()) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                (key, str(value)),
+            )
+    except Exception as e:
+        log.warning(f"Quota guard: config write failed (non-fatal): {e}")
+
+
+def _todays_call_count(today: str) -> int:
+    val = _cfg_get(f"odds_api_calls_{today}")
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _quota_guard(today: str):
+    """Return (allowed: bool, reason: str). Non-fatal: allows call if DB is down."""
+    budget  = int(os.getenv("ODDS_API_DAILY_BUDGET", "2"))
+    reserve = int(os.getenv("ODDS_API_RESERVE", "60"))
+    count   = _todays_call_count(today)
+    if count >= budget:
+        return False, f"daily budget reached ({count}/{budget} Odds API calls today)"
+    rem = _cfg_get("odds_api_remaining")
+    try:
+        rem = int(rem)
+    except (TypeError, ValueError):
+        rem = None
+    if rem is not None:
+        if rem <= 15:
+            return False, f"only {rem} credits left this month — preserving remainder"
+        if rem < reserve and count >= 1:
+            return False, (f"{rem} credits left (below reserve {reserve}) — "
+                           f"limiting to one Odds API call per day until monthly reset")
+    return True, ""
+
+
+def _record_call(today: str):
+    _cfg_set(f"odds_api_calls_{today}", _todays_call_count(today) + 1)
+    if _LAST_REMAINING is not None:
+        _cfg_set("odds_api_remaining", _LAST_REMAINING)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # FETCH
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,6 +197,12 @@ def fetch_odds(api_key: str) -> list:
 
     remaining = resp.headers.get("x-requests-remaining", "?")
     used      = resp.headers.get("x-requests-used", "?")
+
+    global _LAST_REMAINING
+    try:
+        _LAST_REMAINING = int(remaining)
+    except (ValueError, TypeError):
+        _LAST_REMAINING = None
 
     try:
         rem_int = int(remaining)
@@ -418,6 +501,18 @@ def run() -> dict:
     today         = now_et.strftime("%Y-%m-%d")
     snapshot_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    allowed, guard_reason = _quota_guard(today)
+    if not allowed:
+        log.warning(f"Odds API quota guard: {guard_reason}. Using Pinnacle fallback instead.")
+        try:
+            from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
+            result = run_pinnacle()
+            result["guard"] = guard_reason
+            return result
+        except Exception as pe:
+            log.error(f"Pinnacle fallback failed after quota guard: {pe}")
+            return {"snapshots": 0, "movements": 0, "error": guard_reason}
+
     try:
         games = fetch_odds(api_key)
     except Exception as e:
@@ -437,6 +532,8 @@ def run() -> dict:
         log.error(f"Odds fetch failed: {e}")
         return {"snapshots": 0, "movements": 0, "error": str(e),
                 "quota_exceeded": quota_exceeded}
+
+    _record_call(today)
 
     # Filter to today's games using ET date conversion (same logic as parse_game)
     def _game_et_date(g):
