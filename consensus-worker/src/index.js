@@ -393,6 +393,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px;borde
 .cn{color:#5a6880;text-align:center}
 .una{border:1px solid #2e7d4f;background:#12352433}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.ghdr{background:#1c2438;color:#aebfe0;font-size:12px;letter-spacing:.04em;text-transform:uppercase;padding:6px 8px}
 .pill{display:inline-block;background:#1e2840;border:1px solid #33405c;border-radius:99px;padding:1px 8px;font-size:11px;color:#aebfe0;margin-left:6px}
 </style>`;
 
@@ -462,7 +463,7 @@ async function reportPage(env) {
   const tableRows = consensus.map(p => {
     const confStr = Object.entries(p.confs).map(([k, v]) => `${esc(k)} ${v}%`).join(" · ");
     const fadeStr = p.fades.map(f => `${esc(f.model)}: ${esc(f.reason)}`).join("<br>");
-    return `<tr><td>${p.isBest ? "⭐ " : ""}${esc(p.pick)}</td><td>${esc(p.type)}</td><td class="blend">${p.blended}%</td><td><span class="muted">${confStr}</span>${fadeStr ? '<br><span class="fade">' + fadeStr + "</span>" : ""}</td></tr>`;
+    return `<tr><td>${p.isBest ? "⭐ " : ""}${fmtPick(p.pick)}</td><td>${esc(p.type)}</td><td class="blend">${p.blended}%</td><td><span class="muted">${confStr}</span>${fadeStr ? '<br><span class="fade">' + fadeStr + "</span>" : ""}</td></tr>`;
   }).join("");
 
   const modelBadges = responses.map(r => `<span class="badge ${r.error ? "bad" : "ok"}">${esc(dispName(r.model))}${r.error ? " ✗" : " ✓"}</span>`).join(" ");
@@ -554,6 +555,12 @@ async function reportPage(env) {
 }
 
 
+function fmtPick(pick) {
+  const i = String(pick || "").indexOf(": ");
+  if (i === -1) return `<b>${esc(pick)}</b>`;
+  return `<span class="muted">${esc(pick.slice(0, i))}</span><br><b>${esc(pick.slice(i + 2))}</b>`;
+}
+
 async function comparePage(env) {
   const run = await env.DB.prepare("SELECT * FROM runs WHERE status='complete' ORDER BY id DESC LIMIT 1").first();
   if (!run) return page("Model comparison", `<p>No completed runs yet.</p><p><a href="/">report</a></p>`);
@@ -575,13 +582,26 @@ async function comparePage(env) {
     : `<div class="card"><h3>Unanimous plays</h3><p class="item muted">No pick has full agreement at 60%+ today.</p></div>`;
 
   const matrixHead = `<tr><th>Pick</th><th>Blend</th>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr>`;
-  const matrixRows = consensus.map(p => {
-    const cells = cols.map(c => {
-      if (p.confs[c] !== undefined) return `<td class="ca">${p.confs[c]}%</td>`;
-      if (p.fades.some(f => f.model === c)) return `<td class="cf">fade</td>`;
-      return `<td class="cn">—</td>`;
+  const gameOrder = [];
+  const byGame = new Map();
+  for (const p of consensus) {
+    const g = p.game || p.pick;
+    if (!byGame.has(g)) { byGame.set(g, []); gameOrder.push(g); }
+    byGame.get(g).push(p);
+  }
+  const matrixRows = gameOrder.map(g => {
+    const hdr = `<tr><td colspan="${2 + cols.length}" class="ghdr">${esc(g)}</td></tr>`;
+    const body = byGame.get(g).map(p => {
+      const cells = cols.map(c => {
+        if (p.confs[c] !== undefined) return `<td class="ca">${p.confs[c]}%</td>`;
+        if (p.fades.some(f => f.model === c)) return `<td class="cf">fade</td>`;
+        return `<td class="cn">—</td>`;
+      }).join("");
+      const i = p.pick.indexOf(": ");
+      const bet = i === -1 ? p.pick : p.pick.slice(i + 2);
+      return `<tr><td>${p.isBest ? "⭐ " : ""}<b>${esc(bet)}</b></td><td class="blend">${p.blended}%</td>${cells}</tr>`;
     }).join("");
-    return `<tr><td>${p.isBest ? "⭐ " : ""}${esc(p.pick)}</td><td class="blend">${p.blended}%</td>${cells}</tr>`;
+    return hdr + body;
   }).join("");
 
   const bestCols = cols.map(c => {
