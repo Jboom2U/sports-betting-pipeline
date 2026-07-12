@@ -537,7 +537,7 @@ async function reportPage(env) {
 
   return page(`MLB consensus report — ${run.run_date}`, `
     ${banner}
-    <p>${modelBadges} <span class="muted">run #${run.id} · ${esc(run.slate_summary || "")}</span></p>
+    <p>${modelBadges} <span class="muted">run #${run.id} · ${esc(run.slate_summary || "")} · data pulled ${etStamp(run.started_at)}</span></p>
     <div class="layout">
       <div>
         <table><tr><th>Pick</th><th>Type</th><th>Blend</th><th>Model confs / pushback</th></tr>${tableRows}</table>
@@ -554,6 +554,12 @@ async function reportPage(env) {
     </div>${tabScript}`);
 }
 
+
+function etStamp(sqliteUtc) {
+  if (!sqliteUtc) return "";
+  const d = new Date(sqliteUtc.replace(" ", "T") + "Z");
+  return d.toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + " ET";
+}
 
 function fmtPick(pick) {
   const i = String(pick || "").indexOf(": ");
@@ -626,7 +632,7 @@ async function comparePage(env) {
   }).join("");
 
   return page(`Model comparison — ${run.run_date}`, `
-    <p><a href="/">← report</a> · run #${run.id}</p>
+    <p><a href="/">← report</a> · run #${run.id} · ${esc(run.slate_summary || "")} · data pulled ${etStamp(run.started_at)}</p>
     ${unaHtml}
     <div class="card"><h3>Agreement matrix</h3><div style="overflow-x:auto"><table class="mx">${matrixHead}${matrixRows}</table></div></div>
     <h3>Best bet by source</h3><div class="cols">${bestCols}</div>
