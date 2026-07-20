@@ -1351,6 +1351,153 @@ to act on. Pushes excluded from win rate.</span>
     return Response(html, mimetype="text/html")
 
 
+@app.route("/admin/signal-audit")
+def signal_audit():
+    """
+    Signal audit: for every model input, measure whether it actually VARIES
+    across today's slate.
+
+    A signal that returns the same value for all games contributes nothing to
+    pick differentiation no matter how it is weighted. A signal pinned at a
+    clamp boundary for every game is broken (see the k_rate bug, where every
+    team maxed the 1.4 multiplier). This route distinguishes "working",
+    "constant", and "all-default" without guessing.
+
+    Read-only. Scores the slate in memory; writes nothing.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/signal-audit")
+
+    import statistics as _stats
+
+    date_str = request.args.get("date") or datetime.now(ET).strftime("%Y-%m-%d")
+
+    try:
+        from model.mlb_model import MLBModel
+        model = MLBModel()
+        model.load()
+        games = [g for g in model.schedule if g.get("game_date") == date_str]
+        seen, sched = set(), []
+        for g in games:
+            k = (g.get("away_team", ""), g.get("home_team", ""))
+            if k not in seen:
+                seen.add(k)
+                sched.append(g)
+        scored = [model.score_game(g) for g in sched]
+    except Exception as e:
+        import traceback
+        return Response(f"<h2>Scoring failed</h2><pre>{traceback.format_exc()}</pre>",
+                        mimetype="text/html"), 500
+
+    if not scored:
+        return Response(f"<h2>No games scored for {date_str}</h2>", mimetype="text/html")
+
+    # Signals grouped by the subsystem that feeds them, so a dead scraper is obvious.
+    GROUPS = {
+        "Park":            ["park_runs", "park_hr"],
+        "Starting pitcher":["away_sp_era", "home_sp_era", "away_sp_fip", "home_sp_fip",
+                            "away_sp_whip", "home_sp_whip", "away_sp_k9", "home_sp_k9"],
+        "SP recent form":  ["away_sp_r_era", "home_sp_r_era", "away_sp_gs", "home_sp_gs",
+                            "away_sp_trend", "home_sp_trend"],
+        "Platoon splits":  ["away_era_vs_lhb", "away_era_vs_rhb",
+                            "home_era_vs_lhb", "home_era_vs_rhb"],
+        "Team offense":    ["away_rpg", "home_rpg", "away_ops", "home_ops",
+                            "away_form_rpg", "home_form_rpg",
+                            "away_form_wpct", "home_form_wpct"],
+        "Bullpen":         ["away_bp_era", "home_bp_era", "away_bp_whip", "home_bp_whip",
+                            "away_bp_found", "home_bp_found"],
+        "Bullpen fatigue": ["away_fatigue_tier", "home_fatigue_tier",
+                            "away_bp_pitches_1d", "home_bp_pitches_1d"],
+        "Umpire":          ["hp_ump", "ump_factor", "ump_rpg"],
+        "Weather":         ["weather_flag", "wind_component", "wind_label",
+                            "wind_speed", "temp_f", "precip_prob", "has_roof"],
+        "Lineups":         ["away_lineup_ops", "home_lineup_ops", "lineup_confirmed"],
+        "Rest":            ["away_rest", "home_rest"],
+        "Odds / movement": ["ml_away_odds", "ml_home_odds", "total_odds_line",
+                            "ml_signal", "total_signal", "sharp_side",
+                            "ml_move_away", "total_move"],
+        "Polymarket":      ["poly_away_prob", "poly_home_prob",
+                            "poly_market_signal", "poly_market_gap"],
+        "Kalshi/combined": ["combined_away_prob", "combined_home_prob"],
+        "ADJUSTMENTS":     ["ml_adj", "total_adj", "rest_ml_adj", "gap_adj",
+                            "market_ml_adj", "conv_adj"],
+        "Output":          ["exp_away", "exp_home", "exp_total",
+                            "away_wp", "home_wp", "ml_conf"],
+    }
+
+    n = len(scored)
+
+    def assess(field):
+        vals = [g.get(field) for g in scored]
+        present = [v for v in vals if v is not None]
+        if not present:
+            return {"status": "MISSING", "detail": "all None", "distinct": 0, "sample": ""}
+        distinct = len({str(v) for v in present})
+        nums = []
+        for v in present:
+            if isinstance(v, bool):
+                nums.append(1.0 if v else 0.0)
+            elif isinstance(v, (int, float)):
+                nums.append(float(v))
+        sample = ", ".join(str(v) for v in present[:3])
+        if distinct == 1:
+            return {"status": "CONSTANT", "detail": f"every game = {present[0]}",
+                    "distinct": 1, "sample": sample}
+        if nums and len(nums) == len(present):
+            lo, hi = min(nums), max(nums)
+            sd = _stats.pstdev(nums) if len(nums) > 1 else 0.0
+            return {"status": "OK",
+                    "detail": f"min {lo:.3g} / max {hi:.3g} / sd {sd:.3g}",
+                    "distinct": distinct, "sample": sample}
+        return {"status": "OK", "detail": f"{distinct} distinct values",
+                "distinct": distinct, "sample": sample}
+
+    rows = []
+    for group, fields in GROUPS.items():
+        rows.append(("GROUP", group, "", "", ""))
+        for f in fields:
+            a = assess(f)
+            rows.append(("ROW", f, a["status"], a["detail"], a["sample"]))
+
+    body = []
+    for kind, a, b, c, d in rows:
+        if kind == "GROUP":
+            body.append(f'<tr class="grp"><td colspan="4">{a}</td></tr>')
+        else:
+            cls = {"OK": "ok", "CONSTANT": "warn", "MISSING": "bad"}.get(b, "")
+            body.append(f'<tr><td class="f">{a}</td><td class="{cls}">{b}</td>'
+                        f'<td>{c}</td><td class="s">{d}</td></tr>')
+
+    dead = sum(1 for k, a, b, c, d in rows if k == "ROW" and b in ("CONSTANT", "MISSING"))
+    total = sum(1 for k, *_ in rows if k == "ROW")
+
+    html = f"""<!doctype html><html><head><meta charset="utf-8">
+<title>Signal Audit</title><style>
+body{{background:#0d1117;color:#c9d1d9;font-family:system-ui,sans-serif;padding:24px;
+max-width:1100px;margin:0 auto}}
+h2{{color:#58a6ff}} table{{border-collapse:collapse;width:100%;margin-top:12px}}
+td{{padding:6px 10px;border-bottom:1px solid #21262d;font-size:13px;vertical-align:top}}
+.grp td{{background:#161b22;color:#79c0ff;font-weight:700;font-size:12px;
+text-transform:uppercase;letter-spacing:.5px;padding-top:12px}}
+.f{{font-family:ui-monospace,monospace;color:#c9d1d9;width:200px}}
+.ok{{color:#3fb950;font-weight:600;width:90px}}
+.warn{{color:#d29922;font-weight:600}} .bad{{color:#f85149;font-weight:600}}
+.s{{color:#6e7681;font-size:11px;font-family:ui-monospace,monospace}}
+.hdr{{background:#161b22;padding:14px 18px;border-radius:8px}}
+a{{color:#58a6ff}}</style></head><body>
+<h2>Signal Audit — {date_str}</h2>
+<div class="hdr"><b>{n} games scored</b> &middot; <b>{dead}/{total}</b> signals are
+CONSTANT or MISSING across the slate.<br>
+<span style="color:#8b949e;font-size:13px">CONSTANT means every game got the same
+value, so the signal cannot differentiate picks regardless of its weight. MISSING
+means the field was never populated. Both indicate a broken or unwired input, not
+a tuning problem.</span></div>
+<table>{''.join(body)}</table>
+<p><a href="/admin">&larr; Admin</a> &middot; <a href="/admin/calibration">Calibration</a></p>
+</body></html>"""
+    return Response(html, mimetype="text/html")
+
+
 @app.route("/status")
 def status():
     """Friendly HTML status page — pipeline health at a glance."""
