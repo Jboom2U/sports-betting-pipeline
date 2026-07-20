@@ -1009,18 +1009,98 @@ def grade_backfill():
         return redirect("/admin/login?next=/admin/grade-backfill")
     import threading
     def _run():
-        from run_analysis import run as grade_run
-        dates_to_grade = ['2026-06-09','2026-06-12','2026-06-16','2026-06-17','2026-07-03']
-        results = []
-        for d in dates_to_grade:
-            try:
-                grade_run(d)
-                results.append(f"{d}: OK")
-                log.info(f"grade-backfill: {d} complete")
-            except Exception as e:
-                results.append(f"{d}: ERROR {e}")
-                log.warning(f"grade-backfill: {d} failed: {e}")
-        log.info(f"grade-backfill done: {results}")
+        """
+        Rebuild the picks table from the graded analysis JSONs in R2.
+
+        R2 is the authoritative record: the pipeline has uploaded a graded
+        mlb_analysis_<date>.json every morning, while DB writes were silently
+        failing whenever the connection pool was exhausted. Those JSONs already
+        contain the grades, so this is a pure import -- no MLB/ESPN refetch and
+        no Odds API usage.
+
+        push_grades_to_db() only UPDATEs, so dates whose 6am save_picks failed
+        have no rows to grade. This inserts what is missing, then grades it.
+
+        Idempotent: matches on (pick_date, game, pick_type, label) rather than
+        the table's UNIQUE (pick_date, game_id, pick_type), because game_id does
+        not survive into graded_picks and NULL never conflicts in Postgres.
+        """
+        import json
+        from db.csv_sync import _get_client, _bucket
+        from db.connection import db_conn
+
+        client = _get_client()
+        if client is None:
+            log.warning("r2-backfill: no storage client -- check STORAGE_* env vars")
+            return
+        bucket = _bucket()
+
+        keys, token = [], None
+        while True:
+            kw = {"Bucket": bucket, "Prefix": "picks/mlb_analysis_"}
+            if token:
+                kw["ContinuationToken"] = token
+            resp = client.list_objects_v2(**kw)
+            keys += [o["Key"] for o in resp.get("Contents", [])]
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextContinuationToken")
+        keys.sort()
+        log.info(f"r2-backfill: {len(keys)} analysis files found in R2")
+
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        inserted = updated = skipped = files = 0
+
+        with db_conn() as conn:
+            if conn is None:
+                log.warning("r2-backfill: no DB connection")
+                return
+            cur = conn.cursor()
+            for key in keys:
+                date_str = key.replace("picks/mlb_analysis_", "").replace(".json", "")
+                if len(date_str) != 10 or date_str >= today:
+                    continue
+                try:
+                    body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+                    data = json.loads(body)
+                except Exception as e:
+                    log.warning(f"r2-backfill: {key} unreadable: {e}")
+                    continue
+                files += 1
+                for gp in data.get("graded_picks", []):
+                    result = gp.get("result", "")
+                    game   = gp.get("game", "")
+                    label  = gp.get("label", "")
+                    ptype  = (gp.get("type") or "ML").upper()
+                    if result not in ("WIN", "LOSS", "PUSH") or not game or not label:
+                        skipped += 1
+                        continue
+                    cur.execute(
+                        "SELECT id, actual_result FROM picks "
+                        "WHERE pick_date=%s AND game=%s AND pick_type=%s AND label=%s",
+                        (date_str, game, ptype, label),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        if row[1] != result:
+                            cur.execute(
+                                "UPDATE picks SET actual_result=%s, graded_at=NOW() WHERE id=%s",
+                                (result, row[0]),
+                            )
+                            updated += 1
+                    else:
+                        cur.execute(
+                            "INSERT INTO picks (pick_date, game, pick_type, label, team, "
+                            "conf, tier, reasoning, actual_result, graded_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())",
+                            (date_str, game, ptype, label, gp.get("team"),
+                             float(gp.get("conf") or 0), (gp.get("tier") or "LEAN").upper(),
+                             gp.get("reasoning", ""), result),
+                        )
+                        inserted += 1
+
+        log.info(f"r2-backfill done: {files} files, {inserted} inserted, "
+                 f"{updated} updated, {skipped} skipped")
     threading.Thread(target=_run, daemon=True).start()
     return Response("<h2>Grade backfill started</h2><p>Check /db-diag in ~60 seconds to see updated counts.</p><p><a href='/db-diag'>→ /db-diag</a></p>", mimetype="text/html")
 
