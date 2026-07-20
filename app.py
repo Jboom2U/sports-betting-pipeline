@@ -1194,6 +1194,152 @@ def db_diag():
         return {"error": str(e)}, 500
 
 
+@app.route("/admin/calibration")
+def calibration():
+    """
+    Calibration report: does a 70% pick actually win 70%?
+
+    Buckets every graded pick by predicted confidence and compares predicted
+    vs actual win rate, with a 95% confidence interval on each bucket so small
+    samples are not mistaken for signal. Breakdowns by pick_type and tier.
+
+    Read-only. Never writes.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/calibration")
+
+    import math
+    from db.connection import db_conn
+
+    BREAK_EVEN = 52.38  # -110 juice
+    MIN_N      = 200    # below this, treat differences as noise
+
+    try:
+        with db_conn() as conn:
+            if conn is None:
+                return Response("<h2>No DB connection</h2>", mimetype="text/html"), 503
+            cur = conn.cursor()
+            # market_signal is present in production but absent from schema.py,
+            # so it may not exist on a DB rebuilt via create_all(). Degrade
+            # gracefully instead of 500-ing the whole report.
+            base = ("SELECT pick_type, tier, conf, actual_result{extra} "
+                    "FROM picks WHERE actual_result IN ('WIN','LOSS','PUSH') "
+                    "AND conf IS NOT NULL")
+            try:
+                cur.execute(base.format(extra=", market_signal"))
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                cur = conn.cursor()
+                cur.execute(base.format(extra=""))
+                rows = [r + (None,) for r in cur.fetchall()]
+    except Exception as e:
+        return Response(f"<h2>Query failed</h2><pre>{e}</pre>", mimetype="text/html"), 500
+
+    if not rows:
+        return Response(
+            "<h2>No graded picks</h2><p>Run /admin/grade-backfill first.</p>",
+            mimetype="text/html")
+
+    def norm(c):
+        c = float(c or 0)
+        return c * 100 if c <= 1 else c
+
+    BANDS = [(0,50),(50,55),(55,60),(60,65),(65,70),(70,75),(75,80),(80,101)]
+
+    def bucketize(subset):
+        out = []
+        for lo, hi in BANDS:
+            sel = [r for r in subset if lo <= norm(r[2]) < hi]
+            if not sel:
+                continue
+            w = sum(1 for r in sel if r[3] == "WIN")
+            l = sum(1 for r in sel if r[3] == "LOSS")
+            pu = sum(1 for r in sel if r[3] == "PUSH")
+            n = w + l
+            if n == 0:
+                continue
+            actual = w / n * 100
+            pred   = sum(norm(r[2]) for r in sel) / len(sel)
+            ci     = 1.96 * math.sqrt((actual/100) * (1 - actual/100) / n) * 100
+            out.append({"band": f"{lo}-{hi if hi<101 else '100'}%", "n": n, "push": pu,
+                        "pred": pred, "actual": actual, "gap": actual - pred, "ci": ci})
+        return out
+
+    def table(title, buckets, note=""):
+        if not buckets:
+            return ""
+        h = [f'<h3>{title}</h3>']
+        if note:
+            h.append(f'<p class="note">{note}</p>')
+        h.append('<table><tr><th>Conf band</th><th>N</th><th>Predicted</th>'
+                 '<th>Actual</th><th>Gap</th><th>95% CI</th><th></th></tr>')
+        for b in buckets:
+            gap_cls = "good" if b["gap"] >= -1 else ("bad" if b["gap"] < -5 else "warn")
+            thin    = '<span class="thin">thin sample</span>' if b["n"] < MIN_N else ""
+            h.append(
+                f'<tr><td>{b["band"]}</td><td>{b["n"]}</td>'
+                f'<td>{b["pred"]:.1f}%</td><td>{b["actual"]:.1f}%</td>'
+                f'<td class="{gap_cls}">{b["gap"]:+.1f}</td>'
+                f'<td>&plusmn;{b["ci"]:.1f}</td><td>{thin}</td></tr>')
+        h.append('</table>')
+        return "".join(h)
+
+    parts = [table("All graded picks", bucketize(rows))]
+
+    for pt in sorted({r[0] for r in rows if r[0]}):
+        sub = [r for r in rows if r[0] == pt]
+        parts.append(table(f"Pick type: {pt}", bucketize(sub),
+                           f"{len(sub)} graded"))
+
+    for tr in sorted({r[1] for r in rows if r[1]}):
+        sub = [r for r in rows if r[1] == tr]
+        parts.append(table(f"Tier: {tr}", bucketize(sub), f"{len(sub)} graded"))
+
+    sig = {}
+    for r in rows:
+        k = r[4] or "NONE"
+        d = sig.setdefault(k, [0, 0])
+        if r[3] == "WIN":  d[0] += 1
+        if r[3] == "LOSS": d[1] += 1
+    sig_rows = "".join(
+        f'<tr><td>{k}</td><td>{v[0]}-{v[1]}</td>'
+        f'<td>{(v[0]/(v[0]+v[1])*100 if v[0]+v[1] else 0):.1f}%</td></tr>'
+        for k, v in sorted(sig.items()))
+
+    tot_w = sum(1 for r in rows if r[3] == "WIN")
+    tot_l = sum(1 for r in rows if r[3] == "LOSS")
+    tot_wr = tot_w / (tot_w + tot_l) * 100 if tot_w + tot_l else 0
+
+    html = f"""<!doctype html><html><head><meta charset="utf-8">
+<title>Statalizers - Calibration</title><style>
+body{{background:#0d1117;color:#c9d1d9;font-family:system-ui,-apple-system,sans-serif;
+padding:24px;max-width:1000px;margin:0 auto}}
+h2{{color:#58a6ff}} h3{{color:#79c0ff;margin-top:28px;border-bottom:1px solid #21262d;padding-bottom:6px}}
+table{{border-collapse:collapse;width:100%;margin:10px 0 18px}}
+th,td{{padding:7px 10px;text-align:left;border-bottom:1px solid #21262d;font-size:14px}}
+th{{color:#8b949e;font-weight:600;font-size:12px;text-transform:uppercase}}
+.good{{color:#3fb950}} .warn{{color:#d29922}} .bad{{color:#f85149}}
+.thin{{color:#6e7681;font-size:11px;font-style:italic}}
+.note{{color:#8b949e;font-size:13px;margin:4px 0}}
+.hdr{{background:#161b22;padding:14px 18px;border-radius:8px;margin-bottom:8px}}
+a{{color:#58a6ff}}</style></head><body>
+<h2>Model Calibration</h2>
+<div class="hdr">
+<b>{tot_w}-{tot_l}</b> overall &middot; <b>{tot_wr:.1f}%</b> win rate &middot;
+break-even <b>{BREAK_EVEN}%</b> at -110<br>
+<span class="note">Gap = actual minus predicted. Negative means overconfident.
+Buckets under {MIN_N} picks are flagged; their confidence intervals are too wide
+to act on. Pushes excluded from win rate.</span>
+</div>
+{''.join(parts)}
+<h3>Market signal</h3>
+<table><tr><th>Signal</th><th>W-L</th><th>Win %</th></tr>{sig_rows}</table>
+<p><a href="/admin">&larr; Admin</a> &middot; <a href="/performance-html">Performance</a></p>
+</body></html>"""
+    return Response(html, mimetype="text/html")
+
+
 @app.route("/status")
 def status():
     """Friendly HTML status page — pipeline health at a glance."""
