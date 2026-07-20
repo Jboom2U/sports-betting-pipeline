@@ -24,3 +24,6 @@ kalshi_private.pem
 data/clean/
 picks/*.csv
 picks/*.html
+
+# one-off admin setup scaffolding
+_setup_admin.py
