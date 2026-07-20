@@ -1066,7 +1066,7 @@ def grade_backfill():
                 except Exception as e:
                     log.warning(f"r2-backfill: {key} unreadable: {e}")
                     continue
-                files += 1
+                file_ins = file_upd = 0
                 for gp in data.get("graded_picks", []):
                     result = gp.get("result", "")
                     game   = gp.get("game", "")
@@ -1087,7 +1087,7 @@ def grade_backfill():
                                 "UPDATE picks SET actual_result=%s, graded_at=NOW() WHERE id=%s",
                                 (result, row[0]),
                             )
-                            updated += 1
+                            file_upd += 1
                     else:
                         cur.execute(
                             "INSERT INTO picks (pick_date, game, pick_type, label, team, "
@@ -1097,7 +1097,18 @@ def grade_backfill():
                              float(gp.get("conf") or 0), (gp.get("tier") or "LEAN").upper(),
                              gp.get("reasoning", ""), result),
                         )
-                        inserted += 1
+                        file_ins += 1
+                # Commit per file. A single transaction across all ~60 files
+                # means one bad row silently discards the entire backfill,
+                # because db_conn() rolls back and logs the error as non-fatal.
+                try:
+                    conn.commit()
+                    files += 1
+                    inserted += file_ins
+                    updated  += file_upd
+                except Exception as e:
+                    conn.rollback()
+                    log.warning(f"r2-backfill: {date_str} rolled back: {e}")
 
         log.info(f"r2-backfill done: {files} files, {inserted} inserted, "
                  f"{updated} updated, {skipped} skipped")
