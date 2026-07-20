@@ -55,6 +55,14 @@ ET        = ZoneInfo("America/New_York")
 # ── Cache ─────────────────────────────────────────────────────────────────────
 CACHE_TTL = 10 * 60          # seconds — regenerate dashboard every 10 minutes
 _cache_lock = threading.Lock()
+
+# Set once the startup R2 CSV sync has finished. Dashboard regeneration loads
+# every master CSV from data/clean/, and Railway's healthcheck hits / the moment
+# Flask binds -- which fired _regenerate_in_background() while download_all() was
+# still writing files. The model then loaded a half-populated directory and
+# scored games with pitcher stats, team hitting and even the schedule missing,
+# logging only "File not found" warnings. Gate regeneration on this.
+_csv_ready = threading.Event()
 _cache = {
     "html":         None,
     "generated_at": 0,
@@ -410,6 +418,11 @@ def _regenerate_in_background():
     def _worker():
         started = time.time()
         try:
+            # Wait for the startup CSV sync before touching the model. Without
+            # this the model can load an empty data/clean/ and score on defaults.
+            if not _csv_ready.wait(timeout=180):
+                log.warning("Cache regen: CSV sync not confirmed after 180s — "
+                            "proceeding, model data may be incomplete.")
             # Odds snapshots run only via the adaptive refresh (2h before first pitch)
             # and the 6am pipeline — NOT on every cache cycle. Keeps Odds API usage
             # to ~2 pulls/day (~60/month) instead of the old every-2-hour loop.
@@ -1390,7 +1403,30 @@ def signal_audit():
                         mimetype="text/html"), 500
 
     if not scored:
-        return Response(f"<h2>No games scored for {date_str}</h2>", mimetype="text/html")
+        # Diagnose rather than dead-end: show what the loaded schedule actually
+        # contains so a date mismatch is distinguishable from an empty load.
+        from collections import Counter as _C
+        counts = _C(g.get("game_date", "?") for g in model.schedule)
+        near = sorted([d for d in counts if d >= date_str])[:5]
+        far  = sorted(counts)[-5:]
+        rows = "".join(
+            f"<tr><td>{d}</td><td>{counts[d]} games</td></tr>"
+            for d in sorted(set(near) | set(far))
+        )
+        return Response(f"""<!doctype html><html><head><meta charset="utf-8">
+<title>Signal Audit</title><style>body{{background:#0d1117;color:#c9d1d9;
+font-family:system-ui,sans-serif;padding:24px;max-width:800px;margin:0 auto}}
+h2{{color:#58a6ff}} td{{padding:5px 12px;border-bottom:1px solid #21262d}}
+a{{color:#58a6ff}} code{{color:#79c0ff}}</style></head><body>
+<h2>No games scored for {date_str}</h2>
+<p>Schedule loaded <b>{len(model.schedule)}</b> total rows across
+<b>{len(counts)}</b> distinct dates.</p>
+<p>Nearest and latest dates present:</p><table>{rows}</table>
+<p style="color:#8b949e">If the dates look right but today is absent, the schedule
+CSV on this container is stale. If the total row count is 0, <code>model.load()</code>
+found no CSV at all. Retry a listed date with
+<code>/admin/signal-audit?date=YYYY-MM-DD</code>.</p>
+<p><a href="/admin">&larr; Admin</a></p></body></html>""", mimetype="text/html")
 
     # Signals grouped by the subsystem that feeds them, so a dead scraper is obvious.
     GROUPS = {
@@ -2678,6 +2714,12 @@ def warm_cache():
                     log.debug("Object storage not configured -- skipping CSV sync.")
             except Exception as e:
                 log.warning(f"Startup CSV sync failed (non-fatal): {e}")
+            finally:
+                # Always release the gate, even on failure — a stalled sync must
+                # not block the dashboard forever.
+                _csv_ready.set()
+        else:
+            _csv_ready.set()
 
         # ── Step 3: Pipeline ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
         if _needs_pipeline_run():

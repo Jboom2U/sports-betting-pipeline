@@ -284,11 +284,124 @@ Expected behavior — Polymarket hard caps at 10,000 markets. The 422 is caught 
 - TOSSUP picks now graded in DB (push_grades_to_db uses full graded list) — sharp table shows results for all tiers
 - TOSSUP picks included in graded_display — yesterday panel shows all graded games (15+ picks per day)
 
+## 📊 CALIBRATION FINDINGS — 2026-07-20 (read before tuning anything)
+
+First real calibration run, on 1,459 graded picks covering ~May 15 to Jul 19,
+after backfilling the picks table from R2. See `/admin/calibration`.
+
+**Overall: 714-745, 48.9%. Break-even at -110 is 52.38%. The model is 3.4 points
+underwater over two months.**
+
+### The core problem: confidence does not discriminate
+
+| band | n | predicted | actual |
+|---|---|---|---|
+| 50-55% | 286 | 52.5% | 44.8% |
+| 55-60% | 298 | 57.6% | 45.6% |
+| 60-65% | 279 | 62.5% | 49.5% |
+| 65-70% | 214 | 67.3% | 50.5% |
+| 70-75% | 266 | 72.7% | 49.6% |
+
+Predicted rises 20 points; actual rises ~5 and is not monotonic. All five bands
+clear n=200 (CI ≈ ±6) and are statistically indistinguishable from each other.
+**Between 50% and 75% confidence the model's number carries almost no
+information.** That covers 1,343 of 1,459 graded picks.
+
+Real edge exists only at the top: 75-80% wins 67.5% (n=40), 80%+ wins 63.8%
+(n=47). Small samples but clearly separated from everything below.
+
+### Three specific findings
+
+1. **Run line is a systematic loser.** 222 graded. Every band deeply negative:
+   37.9% at 50-55 (n=103), 38.2% at 55-60, 36.8% at 65-70. The 60% RL threshold
+   in `model/mlb_picks.py` is not protecting anything. Consider suppressing RL.
+2. **Totals cap confirmed.** `total_conf_base = min(0.74, ...)` at
+   `model/mlb_model.py:972` bunches distinct games onto one number. TOTAL at
+   70-75 is n=204, actual 49.0% vs 72.9% predicted (gap -23.9, CI ±6.9).
+3. **Tiers are inverted.** Approx win rates: STRONG 53.1%, LOCK 48.8%,
+   TOSSUP 47.7%, LEAN 45.5%. LOCK at 65-70 wins 35.8% (n=53). STRONG is the only
+   tier above break-even; LOCK is the worst-performing high tier.
+
+### Tier/conf mismatch (unresolved)
+
+`tier` and `conf` are assigned from different numbers. CLAUDE.md documents
+LOCK as 75%+, but LOCK contains picks at 65-70% conf; STRONG (doc: 68-75) holds
+picks at 60-65. Probably pre- vs post-adjustment confidence. Any tier-based
+analysis is untrustworthy until this is traced.
+
+### Open data-integrity question (resolve before acting on the above)
+
+`/admin/calibration` market signal table splits by source: NEUTRAL = 737
+live-saved picks at 51.8%; NONE = 722 backfilled picks at 46.0%. Same date
+range, same model, 5.8 points apart — larger than chance comfortably explains.
+Either the live grading path (`push_grades_to_db`) and the JSON grading path
+disagree about outcomes, or the deploy-day sample is skewed. **Resolve this
+first; it affects confidence in every number above.**
+
+### What NOT to do
+
+Do not tune signal weights in `/admin/model-config`. Weight tuning assumes the
+model ranks correctly and needs rebalancing. The data says the confidence output
+is near-uninformative across its main range — a structural problem in how
+signals combine into a probability, not a weighting problem.
+
+---
+
 ## Active Work Queue
-1. **Kalshi market matching** — debug raw KXMLB market titles vs schedule team names
-2. **Batter Statcast 1-row load bug** — trace why 532-row CSV produces 1 row on model load
-3. **Game picks independent of lineups** — ML/RL/total picks at 6am, props only need lineup confirmation
-4. **Projected props** — publish props early for everyday regulars (PROJECTED), update on lineup confirm
+1. **Resolve the 51.8% vs 46.0% split** between live-saved and backfilled picks
+   (see Calibration Findings). Gates all model work.
+2. **Trace the tier/conf mismatch** — tier labels do not match their documented
+   confidence ranges.
+3. **Run line** — decide whether to suppress RL entirely (39-44% over 222 picks).
+4. **Totals cap** — replace `min(0.74, ...)` at `mlb_model.py:972` with something
+   that keeps discriminating past ~1.7 runs of edge.
+5. **K prop inflation (props, lower priority)** — `mlb_props_model.py:775` reads
+   `strikeout_rate`; the CSV column is `k_rate`. Falls through to a fallback whose
+   denominator defaults to 1, so `kr` = raw season strikeout total (~1420). That
+   blows past the 1.4 clamp at line 641, so EVERY team maxes the multiplier and
+   every K projection is inflated ~40%. Also: `mlb_team_hitting_master.csv` only
+   holds 2023-2025, and line 772 keeps the first row per team, so even fixed it
+   would score 2026 games on 2023 rates.
+6. **Batter Statcast 1-row load bug** — 532-row CSV produces 1 row on model load.
+7. **Game picks independent of lineups** — ML/RL/total at 6am, props wait for
+   lineup confirmation.
+8. **Projected props** — publish early for everyday regulars (PROJECTED).
+
+## Housekeeping / latent issues
+- `market_signal` is used by `save_picks` but is **not in `db/schema.py`** — no
+  column definition, no migration. It exists in production only. A DB rebuilt via
+  `create_all()` would make every pick write fail silently.
+- `routes/routes/analytics.py` is a stray duplicate of `routes/analytics.py`.
+- `kalshi_private.pem` was untracked on 2026-07-20 but remains in git history —
+  **rotate the Kalshi key.**
+- Kalshi markets span multiple dates; `extract_game_probabilities` does not filter
+  by date, so a future game can collide with today's. Ticker carries the date.
+- CLAUDE.md route list and env vars drifted ~27 commits behind before 2026-07-20;
+  `/force-refresh` documented below does not exist (actual route is `/refresh`).
+
+## Fixed 2026-07-20
+- **DB connection pool leak** (root cause of ~2 months of silent data loss):
+  `run_picks_html.py` called `get_conn()` then `conn.close()`, never returning the
+  slot to the pool. maxconn=5 drained ~50 min after each deploy, so DB writes only
+  succeeded on deploy days. Now uses the `db_conn()` context manager. maxconn 5→10.
+  Missing-DATABASE_URL log lifted DEBUG→WARNING (Railway logs at INFO, so it was
+  invisible).
+- **`/admin/grade-backfill` rewritten** — was a hardcoded 5-date list; now
+  enumerates `picks/mlb_analysis_*.json` from R2 and inserts+grades, committing
+  per file. Idempotent on (pick_date, game, pick_type, label).
+- **`/admin/calibration` added** — predicted vs actual by conf band, pick type,
+  and tier, with 95% CIs and thin-sample flags.
+- **Kalshi parsing fixed** — titles use ambiguous city names ("Chicago WS",
+  "Los Angeles D"); TEAM_ALIASES is keyed on nicknames the titles never contain;
+  and the old regex captured "Toronto Winner". Now parses the ticker
+  (`KXMLBGAME-26JUL221335PITNYY-NYY`) via `KALSHI_ABBR`, and inverts yes_prob when
+  the contract covers the home side. Note: market signal stays NEUTRAL for all
+  historical picks — CONFIRM/DIVERGE needs both Kalshi and Polymarket probs, and
+  Kalshi has been returning 0 matches, so that dimension was dead the whole time.
+- **Gamelog transaction abort** — an empty `game_date` raised a date syntax error
+  that poisoned the transaction, so every subsequent row failed with "current
+  transaction is aborted" and logged hundreds of duplicate lines. Now skips empty
+  dates, wraps each row in a SAVEPOINT, and caps the log noise.
 
 ## Key Coding Conventions
 - All scrapers have a `run()` function as entry point

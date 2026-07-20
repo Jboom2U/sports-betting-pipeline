@@ -4385,15 +4385,21 @@ def main(date=None, no_open=False):
         with _dbc2() as _conn2:
             if _conn2:
                 with _conn2.cursor() as _cur2:
+                    # player_prop_history columns are game_date and result (TEXT),
+                    # not prop_date/hit. The old names raised
+                    # 'column "hit" does not exist' on every single run, so this
+                    # panel has never populated. result is 'WIN'/'LOSS'/'PUSH',
+                    # so it must be compared, not treated as a boolean.
                     _cur2.execute(
-                        "SELECT player_name, prop_type, hit FROM player_prop_history "
-                        "WHERE prop_date = %s AND hit IS NOT NULL ORDER BY hit DESC",
+                        "SELECT player_name, prop_type, result FROM player_prop_history "
+                        "WHERE game_date = %s AND result IS NOT NULL "
+                        "ORDER BY CASE result WHEN 'WIN' THEN 0 ELSE 1 END",
                         (_yday_str,)
                     )
                     _prop_rows = _cur2.fetchall()
-                _pw = sum(1 for r in _prop_rows if r[2])
-                _pl = sum(1 for r in _prop_rows if not r[2])
-                _top = [{"player": r[0], "prop_type": r[1], "hit": r[2]}
+                _pw = sum(1 for r in _prop_rows if r[2] == "WIN")
+                _pl = sum(1 for r in _prop_rows if r[2] == "LOSS")
+                _top = [{"player": r[0], "prop_type": r[1], "hit": r[2] == "WIN"}
                         for r in _prop_rows[:6]]
                 yesterday_data["props_yesterday"] = {"wins": _pw, "losses": _pl, "top": _top}
     except Exception as _pe:
