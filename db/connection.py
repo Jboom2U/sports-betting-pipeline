@@ -36,7 +36,9 @@ def _build_pool():
 
     url = os.environ.get("DATABASE_URL", "").strip()
     if not url:
-        log.debug("DATABASE_URL not set — DB persistence disabled.")
+        # WARNING not DEBUG: Railway logs at INFO, so a debug line here made a
+        # missing DATABASE_URL completely silent and undiagnosable.
+        log.warning("DATABASE_URL not set — DB persistence disabled.")
         return None
 
     try:
@@ -49,7 +51,7 @@ def _build_pool():
 
         _pool = pg_pool.ThreadedConnectionPool(
             minconn=1,
-            maxconn=5,
+            maxconn=10,
             dsn=url,
             connect_timeout=10,
         )

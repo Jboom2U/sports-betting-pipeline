@@ -4378,22 +4378,24 @@ def main(date=None, no_open=False):
     try:
         from datetime import datetime as _dt2, timedelta as _td2
         _yday_str = (_dt2.strptime(actual_date, "%Y-%m-%d") - _td2(days=1)).strftime("%Y-%m-%d")
-        from db.connection import get_conn as _gc2
-        _conn2 = _gc2()
-        if _conn2:
-            with _conn2.cursor() as _cur2:
-                _cur2.execute(
-                    "SELECT player_name, prop_type, hit FROM player_prop_history "
-                    "WHERE prop_date = %s AND hit IS NOT NULL ORDER BY hit DESC",
-                    (_yday_str,)
-                )
-                _prop_rows = _cur2.fetchall()
-            _conn2.close()
-            _pw = sum(1 for r in _prop_rows if r[2])
-            _pl = sum(1 for r in _prop_rows if not r[2])
-            _top = [{"player": r[0], "prop_type": r[1], "hit": r[2]}
-                    for r in _prop_rows[:6]]
-            yesterday_data["props_yesterday"] = {"wins": _pw, "losses": _pl, "top": _top}
+        # NOTE: must use the db_conn() context manager. Calling get_conn() and
+        # then conn.close() leaks the pool slot permanently (psycopg2 keeps it
+        # marked in-use), which exhausts maxconn=5 after ~5 dashboard rebuilds.
+        from db.connection import db_conn as _dbc2
+        with _dbc2() as _conn2:
+            if _conn2:
+                with _conn2.cursor() as _cur2:
+                    _cur2.execute(
+                        "SELECT player_name, prop_type, hit FROM player_prop_history "
+                        "WHERE prop_date = %s AND hit IS NOT NULL ORDER BY hit DESC",
+                        (_yday_str,)
+                    )
+                    _prop_rows = _cur2.fetchall()
+                _pw = sum(1 for r in _prop_rows if r[2])
+                _pl = sum(1 for r in _prop_rows if not r[2])
+                _top = [{"player": r[0], "prop_type": r[1], "hit": r[2]}
+                        for r in _prop_rows[:6]]
+                yesterday_data["props_yesterday"] = {"wins": _pw, "losses": _pl, "top": _top}
     except Exception as _pe:
         log.debug(f"Yesterday props query failed: {_pe}")
     yesterday_json = json.dumps(yesterday_data)
