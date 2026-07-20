@@ -243,34 +243,83 @@ def _match_team(text: str) -> str:
     return text.strip()
 
 
+# Kalshi ticker abbreviations -> canonical schedule team names.
+# Titles use city-only names with ambiguous suffixes ("Chicago WS", "Los
+# Angeles D"), so we parse the TICKER instead, which carries unambiguous
+# standard abbreviations. Variants included in case Kalshi changes codes.
+KALSHI_ABBR = {
+    "AZ": "Arizona Diamondbacks",  "ARI": "Arizona Diamondbacks",
+    "ATL": "Atlanta Braves",       "BAL": "Baltimore Orioles",
+    "BOS": "Boston Red Sox",       "CHC": "Chicago Cubs",
+    "CWS": "Chicago White Sox",    "CHW": "Chicago White Sox",
+    "CIN": "Cincinnati Reds",      "CLE": "Cleveland Guardians",
+    "COL": "Colorado Rockies",     "DET": "Detroit Tigers",
+    "HOU": "Houston Astros",       "KC": "Kansas City Royals",
+    "KCR": "Kansas City Royals",   "LAA": "Los Angeles Angels",
+    "LAD": "Los Angeles Dodgers",  "MIA": "Miami Marlins",
+    "MIL": "Milwaukee Brewers",    "MIN": "Minnesota Twins",
+    "NYM": "New York Mets",        "NYY": "New York Yankees",
+    "ATH": "Athletics",            "OAK": "Athletics",
+    "PHI": "Philadelphia Phillies","PIT": "Pittsburgh Pirates",
+    "SD": "San Diego Padres",      "SDP": "San Diego Padres",
+    "SF": "San Francisco Giants",  "SFG": "San Francisco Giants",
+    "SEA": "Seattle Mariners",     "STL": "St. Louis Cardinals",
+    "TB": "Tampa Bay Rays",        "TBR": "Tampa Bay Rays",
+    "TEX": "Texas Rangers",        "TOR": "Toronto Blue Jays",
+    "WSH": "Washington Nationals", "WSN": "Washington Nationals",
+}
+
+# KXMLBGAME-26JUL221335PITNYY-NYY
+#           YY MON DD HHMM AWAY+HOME  SIDE
+_TICKER_RE = re.compile(
+    r"^KXMLBGAME-(\d{2})([A-Z]{3})(\d{2})(\d{4})([A-Z]+)-([A-Z]+)$", re.I)
+
+
+def _split_matchup(seg: str):
+    """Split a concatenated AWAYHOME abbreviation pair, e.g. 'PITNYY'."""
+    seg = seg.upper()
+    for i in range(2, len(seg) - 1):
+        a, b = seg[:i], seg[i:]
+        if a in KALSHI_ABBR and b in KALSHI_ABBR:
+            return KALSHI_ABBR[a], KALSHI_ABBR[b]
+    return None, None
+
+
 def parse_market_teams(market: dict):
     """
-    Parse (away_team, home_team, yes_prob) from a Kalshi market dict.
-    Returns None if the title can't be parsed into two teams.
+    Parse (away_team, home_team, away_prob) from a Kalshi market dict.
+
+    Parses the ticker rather than the title. Titles carry city-only names with
+    ambiguous suffixes ("Chicago WS" vs "Chicago C", "Los Angeles D" vs
+    "Los Angeles A") that cannot be resolved against full schedule names, and
+    TEAM_ALIASES is keyed on nicknames the titles never contain.
+
+    Each ticker is a contract on ONE side, so yes_prob is the probability for
+    the trailing team. It is inverted when that team is the home side, so the
+    returned value is always the AWAY probability.
+
+    Returns None if the ticker can't be parsed.
     """
-    title = market.get("title", "")
+    ticker = (market.get("ticker") or "").strip()
+    m = _TICKER_RE.match(ticker)
+    if not m:
+        return None
 
-    vs_patterns = [
-        r'(.+?)\s+(?:vs\.?|v\.?|at|@)\s+(.+?)(?:\s*[-—]|$|\?)',
-        r'(?:Will\s+)?(.+?)\s+(?:beat|defeat|win\s+(?:vs|against))\s+(.+?)(?:\s*\?|$)',
-    ]
+    away, home = _split_matchup(m.group(5))
+    if not away or not home:
+        log.debug(f"kalshi: unrecognized matchup segment {m.group(5)!r} in {ticker}")
+        return None
 
-    team_a, team_b = None, None
-    for pat in vs_patterns:
-        m = re.search(pat, title, re.IGNORECASE)
-        if m:
-            team_a = _match_team(m.group(1))
-            team_b = _match_team(m.group(2))
-            break
-
-    if not team_a or not team_b:
+    side = KALSHI_ABBR.get(m.group(6).upper())
+    if side not in (away, home):
         return None
 
     yes_ask  = market.get("yes_ask", 50)
     yes_bid  = market.get("yes_bid", 50)
     yes_prob = ((yes_ask + yes_bid) / 2) / 100.0
 
-    return team_a, team_b, yes_prob
+    away_prob = yes_prob if side == away else round(1.0 - yes_prob, 4)
+    return away, home, away_prob
 
 
 def extract_game_probabilities(markets: list) -> list:

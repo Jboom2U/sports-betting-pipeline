@@ -97,13 +97,24 @@ def upsert_game_logs(player_name: str, player_id: int, logs: list) -> int:
     """Insert/update game log rows. Returns count of rows upserted."""
     if not logs:
         return 0
-    count = 0
+    count = skipped = failed = 0
     with db_conn() as conn:
         if conn is None:
             return 0
         cur = conn.cursor()
         for row in logs:
+            # An empty game_date raises 'invalid input syntax for type date: ""',
+            # which aborts the transaction and makes every subsequent row in this
+            # loop fail with 'current transaction is aborted'. Skip them up front.
+            gd = row.get("game_date")
+            if isinstance(gd, str):
+                gd = gd.strip()
+            if not gd:
+                skipped += 1
+                continue
             try:
+                # SAVEPOINT so a single bad row cannot poison the whole batch.
+                cur.execute("SAVEPOINT gl_row")
                 cur.execute("""
                     INSERT INTO player_game_logs
                         (game_date, player_name, player_id, team, opponent, venue,
@@ -119,15 +130,27 @@ def upsert_game_logs(player_name: str, player_id: int, logs: list) -> int:
                         k    = EXCLUDED.k,
                         sb   = EXCLUDED.sb
                 """, (
-                    row["game_date"], player_name, player_id,
+                    gd, player_name, player_id,
                     row["team"], row["opponent"], row["venue"],
                     row["pitcher_hand"],
                     row["ab"], row["h"], row["hr"], row["rbi"],
                     row["bb"], row["k"], row["tb"], row["sb"],
                 ))
+                cur.execute("RELEASE SAVEPOINT gl_row")
                 count += 1
             except Exception as e:
-                log.warning(f"Row upsert failed for {player_name} {row.get('game_date')}: {e}")
+                failed += 1
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT gl_row")
+                except Exception:
+                    pass
+                # Log the first few only -- this used to emit hundreds of
+                # identical lines per player and drown the deploy logs.
+                if failed <= 3:
+                    log.warning(f"Row upsert failed for {player_name} {gd}: {e}")
+    if skipped or failed:
+        log.warning(f"player_game_logs [{player_name}]: {count} upserted, "
+                    f"{skipped} skipped (no game_date), {failed} failed")
     return count
 
 
