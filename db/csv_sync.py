@@ -43,7 +43,18 @@ SYNC_PATTERNS = [
     (RAW_DIR,   "raw/",   ["mlb_weather_*.csv",
                             "mlb_line_movement_*.csv",
                             "mlb_odds_master.csv",
-                            "mlb_hitter_stats_*.json"]),  # hitter stats for projected props
+                            "mlb_hitter_stats_*.json",   # hitter stats for projected props
+                            # The model reads these three from data/raw/ on every
+                            # load. Railway's filesystem is ephemeral, so without
+                            # syncing them a container restart silently kills the
+                            # umpire and bullpen-fatigue signals until the next 6am
+                            # pipeline run -- /admin/signal-audit showed hp_ump
+                            # "Unknown" and fatigue_tier NORMAL for all 15 games.
+                            # Lineups only survived because the hourly 10am-3pm
+                            # refresh re-scrapes them.
+                            "mlb_umpires_*.json",
+                            "mlb_bullpen_fatigue_*.json",
+                            "mlb_lineups_*.json"]),
 ]
 
 
