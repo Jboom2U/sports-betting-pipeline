@@ -1,5 +1,32 @@
 # Statalizers — Project Context for Claude
 
+## 📍 Which System Am I In? — Session Scope Map
+
+This folder holds **three related but separate systems**. Confirm which one the session is
+about before doing anything. Justin opens chats with a scope prefix; honor it.
+
+| Prefix | System | Lives in | Deploys with |
+|---|---|---|---|
+| `PIPELINE` | MLB data pipeline + model | `scrapers/`, `normalize/`, `model/`, `run_*.py` | `railway up` |
+| `DASHBOARD` | statalizers.com Flask app | `app.py`, `routes/`, `run_picks_html.py` | `railway up` |
+| `CONSENSUS` | Multi-AI pick review worker | `consensus-worker/` | `npx wrangler deploy` |
+| `PICKS-SITE` | picks.statalizers.com (capper picks, D1) | separate repo | Cloudflare |
+| `DAILY` | Routine daily pick runs, no code changes | n/a | n/a |
+
+**CONSENSUS is not the same as DASHBOARD.** The consensus worker is a Cloudflare Worker that
+reads pipeline output from R2 and sends it to Gemini/OpenRouter/OpenAI for critical review.
+It has its own D1 database (`consensus-db`), its own login, and its own cron (6:45am ET).
+It deploys with wrangler, NOT `railway up`, so it costs zero Odds API quota.
+
+**If the scope is ambiguous, ask before editing.** A change to `model/` can silently alter
+what the consensus worker reviews the next morning.
+
+### Session history note
+Cowork keeps roughly the last 50 sessions. Older ones age out and cannot be recovered.
+Anything worth keeping belongs in this file, not in a chat transcript.
+
+---
+
 ## ⚠️ CRITICAL: Never Run Git Commands From the Sandbox
 **The Cowork sandbox cannot delete lock files on the Windows-mounted repo.** Running `git add` or `git commit` from bash leaves `.git/index.lock` and `.git/HEAD.lock` stranded, breaking the next commit.
 - **Claude: make file edits only from the sandbox. Never run git add/commit/push from bash.**
