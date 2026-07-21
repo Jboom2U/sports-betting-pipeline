@@ -943,30 +943,51 @@ def run(date: str):
     """Grade picks for a single date. Returns the analysis dict."""
     log.info(f"Grading picks for {date}")
 
-    picks = load_picks(date)
-    if not picks:
-        # CSV not on disk (Railway ephemeral filesystem wiped on restart).
-        # Fall back to picks already stored in PostgreSQL.
-        log.info(f"Picks CSV not found for {date} -- trying DB fallback")
-        try:
-            from db.picks_store import get_picks as _db_get_picks
-            _db_rows = _db_get_picks(date)
-            if _db_rows:
-                picks = [
-                    {
-                        "date":      str(p.get("pick_date", date)),
-                        "game":      p.get("game", ""),
-                        "type":      p.get("pick_type", "").upper(),
-                        "label":     p.get("label", ""),
-                        "conf":      float(p.get("conf") or 0),
-                        "tier":      p.get("tier", "").upper(),
-                        "reasoning": p.get("reasoning", ""),
-                    }
-                    for p in _db_rows
-                ]
-                log.info(f"DB fallback: {len(picks)} picks loaded for {date}")
-        except Exception as _dbe:
-            log.debug(f"DB picks fallback failed: {_dbe}")
+    # Load from BOTH sources and keep whichever has more picks.
+    #
+    # The CSV alone is not trustworthy: the dashboard rewrites
+    # picks/mlb_picks_<date>.csv on every regeneration, and a regeneration that
+    # runs while master CSVs are missing (deploy restart, or the pre-fix UTC
+    # date rollover) scores on defaults and produces a short slate that
+    # overwrites the good morning file. On 2026-07-20 that left 6 picks in the
+    # CSV against 38 in Postgres, so only 6 of 38 got graded.
+    #
+    # The DB row is written once at 6am by save_picks and is never truncated by
+    # a later regeneration, so it is the more reliable count. Prefer whichever
+    # is larger rather than hardcoding a winner, so this still works if the DB
+    # is unavailable.
+    csv_picks = load_picks(date) or []
+
+    db_picks_norm = []
+    try:
+        from db.picks_store import get_picks as _db_get_picks
+        _db_rows = _db_get_picks(date)
+        if _db_rows:
+            db_picks_norm = [
+                {
+                    "date":      str(p.get("pick_date", date)),
+                    "game":      p.get("game", ""),
+                    "type":      p.get("pick_type", "").upper(),
+                    "label":     p.get("label", ""),
+                    "conf":      float(p.get("conf") or 0),
+                    "tier":      p.get("tier", "").upper(),
+                    "reasoning": p.get("reasoning", ""),
+                }
+                for p in _db_rows
+            ]
+    except Exception as _dbe:
+        log.debug(f"DB picks load failed: {_dbe}")
+
+    if len(db_picks_norm) > len(csv_picks):
+        picks = db_picks_norm
+        log.info(f"Grading source: DB ({len(db_picks_norm)} picks) — "
+                 f"CSV had only {len(csv_picks)}, likely overwritten by a "
+                 f"degraded dashboard regeneration.")
+    else:
+        picks = csv_picks
+        log.info(f"Grading source: CSV ({len(csv_picks)} picks), "
+                 f"DB had {len(db_picks_norm)}.")
+
     if not picks:
         log.warning(f"No picks found for {date} (CSV or DB)")
         return None
