@@ -465,6 +465,33 @@ Verify working before first pitch so all prop grading starts on clean data.
 
 ---
 
+## 🎲 HR WATCH + MONTE CARLO (flagged 2026-07-21, diagnosed not fixed)
+
+**Monte Carlo "Market Implied" column is a REAL bug — dead since built.**
+`build_monte_carlo()` in `model/mlb_analysis_sections.py:175` reads
+`p.get("ml_away_odds")` / `p.get("ml_home_odds")` off the PICK dict. But
+`generate_picks()` (`model/mlb_picks.py:92-100`) never writes odds onto the pick
+dict — it writes type/label/team/conf/tier/game. Odds live on the scored-game
+dict, carried as `p["game_data"]`. So pick_odds is always None -> market implied
+"N/A" -> EV tag "No Market" on every row. The hit-rate bars work (they just
+simulate model_p), but the model-vs-market EV comparison — the whole point of the
+tab — has never functioned.
+Fix: read `p.get("game_data",{}).get("ml_away_odds")`, or copy ml_away_odds/
+ml_home_odds/away_team onto the pick dict in generate_picks. Verify prep_picks
+doesn't strip game_data before the analysis sections run.
+
+**HR Watch is probably NOT broken — it's gated on confirmed lineups.**
+`build_hr_watch()` filters `all_props` for prop_type=="HR" AND not projected AND
+confidence>=0.08. HR props are only generated for confirmed lineups
+(`score_all_props` skips unconfirmed games). "No HR candidates — lineups not yet
+confirmed" is the correct message pre-lineup. TEST: re-check after lineups lock
+near game time. If candidates appear -> working as designed. If STILL empty after
+confirmation -> real bug, check whether HR props clear the 0.08 threshold at all
+(and note the K-rate-style team-data path is separate; HR uses hr_per_pa which
+the hitter scraper writes correctly).
+
+---
+
 ## Active Work Queue
 1. **Resolve the 51.8% vs 46.0% split** between live-saved and backfilled picks
    (see Calibration Findings). Gates all model work.
