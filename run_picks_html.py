@@ -1737,6 +1737,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <span class="filter-label">Confidence</span>
     <button class="filter-btn active" data-group="tier" data-val="all">All</button>
     <button class="filter-btn" data-group="tier" data-val="HIGHCONF">🔥 High Confidence</button>
+    <button class="filter-btn" data-group="tier" data-val="PROFIT">📈 Profitable</button>
     <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock — Best Bets</button>
     <button class="filter-btn" data-group="tier" data-val="STRONG">⭐⭐ Strong</button>
     <button class="filter-btn" data-group="tier" data-val="LEAN">⭐ Lean — Watch Only</button>
@@ -2204,7 +2205,12 @@ function renderPicks(){
     // TBD starter: \u26a0 badge already warns users -- picks remain visible in their model tier
     const show = (filterType==="all" || p.type===filterType)
               && (filterTier==="all"
-                  || (filterTier==="HIGHCONF" ? _isHighConf(p) : p.tier===filterTier))
+                  || (filterTier==="HIGHCONF" ? _isHighConf(p)
+                      // PROFIT is the inclusive band: the elite threshold sits
+                      // above the wide one, so a 🔥 pick is also profitable. The
+                      // card shows only one icon, but the filter shows both.
+                      : filterTier==="PROFIT" ? (_isHighConf(p) || _isProfitBand(p))
+                      : p.tier===filterTier))
               && (!filterTeam || p.away.toLowerCase().includes(filterTeam)
                              || p.home.toLowerCase().includes(filterTeam)
                              || p.team.toLowerCase().includes(filterTeam));
@@ -3504,6 +3510,7 @@ document.querySelectorAll(".filter-btn[data-group]").forEach(btn=>{
       b.classList.remove("active","active-gold","active-blue");
     });
     if(val==="HIGHCONF" || val==="LOCK") btn.classList.add("active-gold");
+    else if(val==="PROFIT") btn.classList.add("active");
     else if(val==="STRONG") btn.classList.add("active-blue");
     else btn.classList.add("active");
     if(group==="type") filterType = val;
