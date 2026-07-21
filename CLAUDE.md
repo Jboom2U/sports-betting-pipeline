@@ -455,11 +455,16 @@ stats, and confirm K prop opponent factors vary by team on the board.
 Verify working before first pitch so all prop grading starts on clean data.
 
 ### Also queued (props, lower urgency — NOT garbage, just unrefined)
-- **batting_order defaults to 5 for every hitter.** The hitter scraper does not
-  write `batting_order`, so RBI/runs props (`mlb_props_model.py:229,437,505`)
-  treat everyone as a #5 bat and the lineup-slot adjustment never differentiates.
-  Wire order from the confirmed lineup JSON. Touches the lineup-build path, so do
-  it deliberately, not before games. Props still compute correctly meanwhile.
+- **batting_order defaults to 5 for every hitter — CONFIRMED wrong on the board
+  2026-07-21.** RBI/runs props (`mlb_props_model.py:229,437,505`) read
+  `player.get("batting_order", 5)` and the hitter dict never carries it, so every
+  hitter is treated as a #5 bat and the lineup-slot adjustment is dead. BUT the
+  HR Watch tab shows CORRECT order numbers (#1,#2,#3...), so the order data DOES
+  exist in the confirmed-lineup JSON — it's just not attached to the player dict
+  in the props-scoring path (score_all_props, ~line 980 where `for player in
+  game.get("away_lineup")`). Fix: carry each hitter's lineup slot onto the player
+  dict there, same place HR Watch gets it. Data is reachable; this is wiring, not
+  a scrape. Props still compute correctly meanwhile (PA-based).
 - HR/hits/TB/RBI/runs/SB props otherwise verified sound 2026-07-21: matching
   column names, sane fallbacks, current-season rates (SEASON=datetime.now().year).
 
