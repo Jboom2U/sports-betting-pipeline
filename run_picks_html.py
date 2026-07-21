@@ -509,6 +509,88 @@ def prep_team_schedule(today: str) -> dict:
     return team_next
 
 
+def compute_high_conf_rule() -> dict:
+    """
+    Derive the "high confidence" threshold from the model's OWN graded record
+    instead of hardcoding a number.
+
+    For each pick_type, walk 5-point confidence bands and find the lowest band
+    where the model has actually beaten break-even on a usable sample. A band
+    qualifies when n >= MIN_N and win rate >= TARGET. Everything at or above
+    that confidence for that pick type gets flagged.
+
+    Returns {"ML": 75.0, ...} plus a per-type record string for the tooltip.
+    Falls back to ML>=75 if the DB is unavailable — that band is the only one
+    that beat break-even across the pre-2026-07-21 sample.
+    """
+    BREAK_EVEN = 52.38
+    TARGET     = 56.0   # margin above break-even so noise doesn't qualify a band
+    MIN_N      = 30
+
+    fallback = {"rule": {"ML": 75.0}, "record": {"ML": "ML 75%+ (pre-fix baseline)"},
+                "rule_wide": {}, "record_wide": {}}
+
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            if conn is None:
+                return fallback
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT pick_type, conf, actual_result FROM picks "
+                "WHERE actual_result IN ('WIN','LOSS') AND conf IS NOT NULL"
+            )
+            rows = cur.fetchall()
+    except Exception as e:
+        log.warning(f"high-conf rule: DB query failed, using fallback: {e}")
+        return fallback
+
+    if not rows:
+        return fallback
+
+    def norm(c):
+        c = float(c or 0)
+        return c * 100 if c <= 1 else c
+
+    rule, record = {}, {}
+    rule_wide, record_wide = {}, {}
+    for ptype in sorted({r[0] for r in rows if r[0]}):
+        sub = [(norm(r[1]), r[2]) for r in rows if r[0] == ptype]
+        # Two tiers, both derived from the model's own record:
+        #   ELITE — threshold with the highest win rate (fewest, strongest picks)
+        #   WIDE  — lowest threshold still clearing TARGET (more volume, thinner)
+        # These differ meaningfully. On pre-fix data ML>=75 nets 65.5% (n=87)
+        # while ML>=70 nets 58.6% (n=145), because the 70-75 sub-band alone loses
+        # at 48.3% and is carried by the bands above it. Both are profitable, so
+        # surface both and let the bet size reflect the difference.
+        elite = wide = None
+        for thresh in range(90, 49, -5):
+            sel = [r for r in sub if r[0] >= thresh]
+            n = len(sel)
+            if n < MIN_N:
+                continue
+            wins = sum(1 for r in sel if r[1] == "WIN")
+            wr = wins / n * 100
+            if wr >= TARGET:
+                if elite is None or wr > elite[2]:
+                    elite = (float(thresh), n, wr)
+                wide = (float(thresh), n, wr)   # keeps descending to the lowest pass
+        if elite:
+            rule[ptype] = elite[0]
+            record[ptype] = f"{ptype} {elite[0]:.0f}%+: {elite[1]} picks, {elite[2]:.1f}%"
+        if wide and (not elite or wide[0] < elite[0]):
+            rule_wide[ptype] = wide[0]
+            record_wide[ptype] = f"{ptype} {wide[0]:.0f}%+: {wide[1]} picks, {wide[2]:.1f}%"
+
+    if not rule and not rule_wide:
+        log.info("high-conf rule: no pick type clears target — no badges will show")
+        return {"rule": {}, "record": {}, "rule_wide": {}, "record_wide": {}}
+
+    log.info(f"high-conf rule from {len(rows)} graded picks: elite={record} wide={record_wide}")
+    return {"rule": rule, "record": record,
+            "rule_wide": rule_wide, "record_wide": record_wide}
+
+
 def prep_props(props: list) -> list:
     """Serialize player props for HTML embedding."""
     out = []
@@ -1183,6 +1265,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .hc-badge{
   background:linear-gradient(135deg,rgba(255,107,0,.18),rgba(255,183,77,.14));
   color:#ff9d3c;border:1px solid rgba(255,157,60,.45);
+  padding:2px 8px;border-radius:999px;font-size:.66rem;font-weight:800;
+  letter-spacing:.4px;white-space:nowrap;
+}
+.pb-badge{
+  background:rgba(63,185,80,.12);color:#3fb950;border:1px solid rgba(63,185,80,.4);
   padding:2px 8px;border-radius:999px;font-size:.66rem;font-weight:800;
   letter-spacing:.4px;white-space:nowrap;
 }
@@ -2068,8 +2155,30 @@ function refreshPropButtons(){
 // held even while the model was missing umpire/fatigue/platoon data. Everything
 // else (all TOTAL, all RL, ML under 75%) landed 44-55% — indistinguishable from
 // a coin flip. Threshold should be re-derived from post-2026-07-21 calibration.
+const HIGH_CONF = __HIGHCONF__;   // {rule:{ML:75}, record:{ML:"ML 75%+: 87 picks, 65.5%"}}
+
 function _isHighConf(p){
-  return p && p.type === "ML" && Number(p.conf) >= 75;
+  if(!p || !HIGH_CONF || !HIGH_CONF.rule) return false;
+  const t = HIGH_CONF.rule[p.type];
+  return t !== undefined && Number(p.conf) >= t;
+}
+
+function _isProfitBand(p){
+  if(!p || !HIGH_CONF || !HIGH_CONF.rule_wide) return false;
+  if(_isHighConf(p)) return false;          // elite badge already shown
+  const t = HIGH_CONF.rule_wide[p.type];
+  return t !== undefined && Number(p.conf) >= t;
+}
+
+function _profitBandTitle(p){
+  const r = HIGH_CONF && HIGH_CONF.record_wide ? HIGH_CONF.record_wide[p.type] : "";
+  return r ? "Profitable but thinner band — " + r : "Profitable band";
+}
+
+function _highConfTitle(p){
+  const r = HIGH_CONF && HIGH_CONF.record ? HIGH_CONF.record[p.type] : "";
+  return r ? "Derived from this model's graded record — " + r
+           : "High confidence band";
 }
 
 function renderPicks(){
@@ -2241,7 +2350,8 @@ function renderPicks(){
       <div class="pick-card tier-${p.tier}${_isFinal(_findScore(p))?' pick-done':''}${_isHighConf(p)?' pick-highconf':''}" data-type="${p.type}" data-tier="${p.tier}" data-highconf="${_isHighConf(p)?'1':'0'}">
         <div class="pick-top">
           <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
-          ${_isHighConf(p)?`<span class="hc-badge" title="ML at 75%+ — the only band with demonstrated edge (67.5% on n=40, 63.8% on n=47 since May 15)">🔥 HIGH CONFIDENCE</span>`:""}
+          ${_isHighConf(p)?`<span class="hc-badge" title="${_highConfTitle(p)}">🔥 HIGH CONFIDENCE</span>`:""}
+          ${_isProfitBand(p)?`<span class="pb-badge" title="${_profitBandTitle(p)}">📈 PROFITABLE</span>`:""}
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}${p.tier==="LEAN"?" — thin edge":""}</span>
         </div>
         <div class="pick-label">${p.label}</div>
@@ -4448,6 +4558,7 @@ def main(date=None, no_open=False):
     schedule_next_json  = json.dumps(prep_schedule_view(schedule_next_games, [], standings))
 
     # Serialize all data for HTML template injection
+    high_conf_json  = json.dumps(compute_high_conf_rule())
     picks_json      = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
     games_json      = json.dumps(prep_games(scored))
     p2_json         = json.dumps(prep_parlays(parlays_2))
@@ -4463,6 +4574,7 @@ def main(date=None, no_open=False):
 
     html = (HTML
             .replace("__DATE__",         actual_date)
+            .replace("__HIGHCONF__",     high_conf_json)
             .replace("__PICKS__",        picks_json)
             .replace("__GAMES__",        games_json)
             .replace("__P2__",           p2_json)
