@@ -773,28 +773,55 @@ def score_all_props(target_date: str = None) -> list[dict]:
             "bb_per_9": bb9,
         }
 
-    # ── Team K rate — from team hitting master (strikeouts / PA) ─────────────
+    # ── Team K rate — fraction of plate appearances ending in a strikeout ─────
+    #
+    # Two bugs fixed 2026-07-21:
+    #   1. This read a column named "strikeout_rate". The actual column is
+    #      "k_rate" (values ~0.20-0.26). The wrong name returned 0 and fell
+    #      into a fallback whose denominator defaulted to 1, so kr became the
+    #      RAW season strikeout total (~1420). That blew past the 1.4 clamp at
+    #      the score_k_prop call site, maxing the multiplier for EVERY team and
+    #      inflating every K projection ~40% (the "142000.0%" on the dashboard).
+    #   2. It kept the FIRST row per team. The master is ordered 2023->2025, so
+    #      it always used 2023 rates. Keep the LATEST season instead.
+    #
+    # A real k_rate sits in (0.10, 0.35); anything outside that is treated as
+    # bad data and falls back to the ~0.22 league average.
     team_k_rate: dict[str, float] = {}
+    team_k_season: dict[str, int] = {}
     for fname in ("mlb_team_hitting_master.csv", "mlb_team_stats_master.csv"):
         ts_path = os.path.join(DATA_DIR, "clean", fname)
         if os.path.exists(ts_path):
             with open(ts_path, encoding="utf-8") as f:
                 for row in csv.DictReader(f):
                     tname = row.get("team_name", "").strip()
-                    if not tname or tname in team_k_rate:
+                    if not tname:
                         continue
                     try:
-                        kr = float(row.get("strikeout_rate", 0) or 0)
-                        if kr == 0:
-                            so = float(row.get("strikeouts", row.get("so", 0)) or 0)
-                            pa = float(row.get("plate_appearances", row.get("pa", 1)) or 1)
-                            ab = float(row.get("at_bats", row.get("ab", 1)) or 1)
-                            # Fall back to SO/AB if PA not available
-                            denom = pa if pa > ab else ab
-                            kr = so / denom if denom > 0 else 0.220
-                        team_k_rate[tname] = kr
+                        season = int(float(row.get("season", 0) or 0))
+                    except (ValueError, TypeError):
+                        season = 0
+                    # only overwrite with a newer season
+                    if tname in team_k_season and season <= team_k_season[tname]:
+                        continue
+                    try:
+                        kr = float(row.get("k_rate", 0) or 0)
+                        if not (0.10 < kr < 0.35):
+                            # derive from counts if k_rate looks wrong
+                            so = float(row.get("strikeouts", 0) or 0)
+                            pa = float(row.get("plate_appearances", 0) or 0)
+                            if pa <= 0:
+                                # approximate PA from the components we do have
+                                ab = float(row.get("at_bats", 0) or 0)
+                                bb = float(row.get("walks", 0) or 0)
+                                pa = ab + bb
+                            kr = so / pa if pa > 0 else 0.220
+                        if not (0.10 < kr < 0.35):
+                            kr = 0.220
+                        team_k_rate[tname]   = kr
+                        team_k_season[tname] = season
                     except (ValueError, ZeroDivisionError):
-                        team_k_rate[tname] = 0.220
+                        team_k_rate.setdefault(tname, 0.220)
             break   # use first file found
 
     # ── Weather ───────────────────────────────────────────────────────────────

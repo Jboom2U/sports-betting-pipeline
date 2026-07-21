@@ -438,6 +438,33 @@ ticker fix from 2026-07-20 can produce any market signal at all.
 
 ---
 
+## 🌅 BUILD FIRST TOMORROW — 2026 team hitting data (confirm before games)
+
+**Must be done and verified before tomorrow's slate.** The team K-rate fix
+(2026-07-21) now reads `k_rate` correctly and uses the latest season per team,
+but `mlb_team_hitting_master.csv` only holds 2023-2025 — there is NO 2026 row —
+so K props currently score 2026 games on 2025 opponent K-rates. Better than the
+2023 rates it used before the fix, but still a season stale.
+
+Fix: the team hitting scraper must pull 2026. Find it (likely
+`mlb_team_scraper.py` or `mlb_hitter_scraper.py`'s team path), confirm its season
+list / `SEASON` includes 2026, run it, and verify `mlb_team_hitting_master.csv`
+gains 30 rows of 2026 data. Then `/admin/refresh-signals`-equivalent for team
+stats, and confirm K prop opponent factors vary by team on the board.
+
+Verify working before first pitch so all prop grading starts on clean data.
+
+### Also queued (props, lower urgency — NOT garbage, just unrefined)
+- **batting_order defaults to 5 for every hitter.** The hitter scraper does not
+  write `batting_order`, so RBI/runs props (`mlb_props_model.py:229,437,505`)
+  treat everyone as a #5 bat and the lineup-slot adjustment never differentiates.
+  Wire order from the confirmed lineup JSON. Touches the lineup-build path, so do
+  it deliberately, not before games. Props still compute correctly meanwhile.
+- HR/hits/TB/RBI/runs/SB props otherwise verified sound 2026-07-21: matching
+  column names, sane fallbacks, current-season rates (SEASON=datetime.now().year).
+
+---
+
 ## Active Work Queue
 1. **Resolve the 51.8% vs 46.0% split** between live-saved and backfilled picks
    (see Calibration Findings). Gates all model work.
