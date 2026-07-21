@@ -49,6 +49,18 @@ CONSENSUS_BOOKS = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbet",
 STEAM_THRESH  = 8
 DRIFT_THRESH  = 3
 
+# Totals move in RUNS, not moneyline points. Applying the 8/3 point thresholds
+# above to a run-line shift meant total_signal could only reach DRIFT after a
+# 3-run move and STEAM after 8 — neither happens in baseball, so total_signal
+# was permanently "STABLE" and the totals branch of
+# line_movement_confidence_adj() never fired. /admin/signal-audit flagged
+# total_signal CONSTANT=STABLE and total_adj CONSTANT while total_move itself
+# varied from -0.5 to +0.5.
+#
+# Half a run is a real move on a total; a full run is a big one.
+TOTAL_STEAM_THRESH = 1.0
+TOTAL_DRIFT_THRESH = 0.5
+
 SNAPSHOT_FIELDNAMES = [
     "snapshot_id", "snapshot_time", "game_id", "game_date", "game_time_utc",
     "away_team", "home_team",
@@ -351,10 +363,20 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
 # LINE MOVEMENT DETECTION
 # ─────────────────────────────────────────────────────────────────────────────
 def _signal(move: float | None) -> str:
+    """Classify a MONEYLINE move (units: odds points)."""
     if move is None:  return "NO_DATA"
     abs_m = abs(move)
     if abs_m >= STEAM_THRESH: return "STEAM"
     if abs_m >= DRIFT_THRESH: return "DRIFT"
+    return "STABLE"
+
+
+def _total_signal(move: float | None) -> str:
+    """Classify a TOTALS move (units: runs). See threshold note above."""
+    if move is None:  return "NO_DATA"
+    abs_m = abs(move)
+    if abs_m >= TOTAL_STEAM_THRESH: return "STEAM"
+    if abs_m >= TOTAL_DRIFT_THRESH: return "DRIFT"
     return "STABLE"
 
 
@@ -388,7 +410,7 @@ def detect_movement(prev_snaps: list, curr_snaps: list) -> list:
         total_move   = safe_move(curr, prev, "total_line")
 
         ml_signal    = _signal(ml_away_move or ml_home_move)
-        total_signal = _signal(total_move)
+        total_signal = _total_signal(total_move)
 
         # Determine sharp side from ML movement
         # Negative ML move = line got shorter = money coming in on that side
