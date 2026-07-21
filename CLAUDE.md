@@ -497,6 +497,42 @@ the hitter scraper writes correctly).
 
 ---
 
+## 💡 FEATURE IDEA: sportsbook lines card + interactive player profiles (scoped 2026-07-21)
+
+Justin wants RotoBot-AI-style interactive player pages (per-game trend bars over
+L5/L10/L20, splits, prop line vs actual) and a visible sportsbook lines display
+per matchup. Talked through, not started. Foundation is mostly already in place.
+
+### Step 1 — Sportsbook lines matchup card (SMALL, do first)
+The odds scraper ALREADY captures everything needed, from 5 books (DraftKings,
+FanDuel, BetMGM, Caesars, PointsBet):
+  - ml_away/ml_home (+ open/now/move), rl_away_line/price, rl_home_line/price,
+    total_line, total_over_price, total_under_price
+All stored on scored_games. This is a DISPLAY gap, not a data gap. Build a
+matchup card in run_picks_html.py showing RUN LINE / MONEYLINE / TOTAL for both
+teams (like RotoBot's matchup grid). No new scraping.
+Note on Hard Rock: the Odds API supports a fixed book list; Hard Rock is not
+reliably in it. Show DraftKings or the consensus line instead — that is what
+sharp tools display anyway.
+
+### Step 2 — Basic player trend page (MEDIUM)
+`player_game_logs` already stores per-game ab/h/hr/rbi/k/tb/sb + opponent/venue/
+pitcher_hand, and `player_prop_history` stores line-vs-actual. That is the exact
+data behind RotoBot's per-game bars. Build a /player/<name> route rendering the
+last N games as hit/miss bars against the prop line, plus L5/L10/L20 toggle.
+DEPENDENCY: verify player_game_logs is actually accumulating rows — its scraper
+had the transaction-abort bug fixed 2026-07-21; confirm it fills cleanly before
+building charts on top of it.
+
+### Step 3 — Full RotoBot parity (LARGE, decide before committing)
+Percentile rankings (89th-pct SLG etc.) need league-wide distributions computed
+across all players. The polished interactive feel is a React SPA; the current
+site is server-rendered HTML. This tier is closer to a frontend rewrite than a
+feature — weeks, and an architecture decision. Do only if the interactive
+frontend is worth committing to.
+
+---
+
 ## Active Work Queue
 1. **Resolve the 51.8% vs 46.0% split** between live-saved and backfilled picks
    (see Calibration Findings). Gates all model work.
