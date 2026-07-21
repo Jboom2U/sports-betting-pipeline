@@ -189,6 +189,14 @@ def prep_picks(picks, kalshi_data: dict = None):
             home_team = gd.get("home_team", "")
             key = tuple(sorted([away_team, home_team]))
             kd  = kalshi_data.get(key)
+            # load_kalshi_for_date() defaults missing/unparseable probs to exactly
+            # 0.5/0.5 as a "no data" sentinel. A 0.5/0.5 is NOT a market opinion —
+            # treating it as real made every card whose Kalshi data was missing or
+            # stale (e.g. after games start, or unpriced future markets) show
+            # "Kalshi 50% Market Disagrees" against the model. Skip the sentinel.
+            if kd and abs(float(kd.get("kalshi_away_prob", 0.5)) - 0.5) < 1e-6 \
+                   and abs(float(kd.get("kalshi_home_prob", 0.5)) - 0.5) < 1e-6:
+                kd = None
             if kd:
                 # Determine Kalshi prob for the PICKED team
                 if ptype in ("ML", "RL"):
