@@ -16,6 +16,7 @@ Expected runs uses: team RPG * pitcher suppression * park factor * weather adj.
 
 import csv
 import os
+import json
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -273,7 +274,6 @@ class MLBModel:
         raw_dir   = os.path.join(BASE_DIR, "data", "raw")
         lineup_file = os.path.join(raw_dir, f"mlb_lineups_{today_str}.json")
         if os.path.exists(lineup_file):
-            import json
             with open(lineup_file, encoding="utf-8") as f:
                 lineup_data = json.load(f)
             for game in lineup_data:
@@ -286,9 +286,8 @@ class MLBModel:
         # Bullpen fatigue (reliever workload over last 3 days)
         fatigue_file = os.path.join(raw_dir, f"mlb_bullpen_fatigue_{today_str}.json")
         if os.path.exists(fatigue_file):
-            import json as _json
             with open(fatigue_file, encoding="utf-8") as f:
-                self.bullpen_fatigue = _json.load(f)
+                self.bullpen_fatigue = json.load(f)
             log.info(f"Bullpen fatigue loaded: {len(self.bullpen_fatigue)} teams")
 
         # Pitcher Statcast stuff metrics (xwOBA against, whiff%, velocity)
