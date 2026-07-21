@@ -1015,6 +1015,54 @@ tr:nth-child(even){{background:#161b22}}</style></head>
         return Response(f"<pre>Error: {e}</pre>", mimetype="text/html")
 
 
+@app.route("/admin/regrade")
+def regrade():
+    """
+    Re-run the grader for one date, then re-push grades to the DB.
+
+    Distinct from /admin/grade-backfill, which imports already-graded results
+    out of the R2 analysis JSONs. If that JSON was itself produced by a short
+    grading run, re-importing it just reproduces the same short result. This
+    route regrades from source: run_analysis.run() now picks whichever of the
+    picks CSV or the DB holds more picks, so a truncated CSV no longer wins.
+
+    Usage: /admin/regrade?date=2026-07-20
+    Costs no Odds API quota — grading pulls results from MLB/ESPN only.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/regrade")
+
+    date_str = request.args.get("date")
+    if not date_str or len(date_str) != 10:
+        return Response(
+            "<h2>Missing date</h2><p>Usage: "
+            "<code>/admin/regrade?date=YYYY-MM-DD</code></p>",
+            mimetype="text/html"), 400
+
+    import threading
+
+    def _run():
+        try:
+            from run_analysis import run as grade_run
+            result = grade_run(date_str)
+            n = len(result.get("graded_picks", [])) if isinstance(result, dict) else 0
+            log.info(f"regrade {date_str}: {n} picks graded")
+        except Exception as e:
+            import traceback
+            log.warning(f"regrade {date_str} failed: {traceback.format_exc()}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return Response(
+        f"<h2>Regrading {date_str}</h2>"
+        f"<p>Pulling picks from whichever source has more (CSV vs DB), "
+        f"refetching results, and pushing grades. Give it ~60 seconds.</p>"
+        f"<p>Then check <a href='/db-diag'>/db-diag</a> — the count for "
+        f"{date_str} should rise.</p>"
+        f"<p>Watch the Railway logs for <code>Grading source:</code> to see "
+        f"which source won.</p>",
+        mimetype="text/html")
+
+
 @app.route("/admin/grade-backfill")
 def grade_backfill():
     """Run grader for any pick dates that have no graded results."""
