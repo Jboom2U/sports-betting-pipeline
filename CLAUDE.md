@@ -379,6 +379,39 @@ signals combine into a probability, not a weighting problem.
 - CLAUDE.md route list and env vars drifted ~27 commits behind before 2026-07-20;
   `/force-refresh` documented below does not exist (actual route is `/refresh`).
 
+## 🔬 SIGNAL AUDIT — /admin/signal-audit (built 2026-07-20)
+
+Scores today's slate and reports, per model input, whether it actually VARIES
+across games. CONSTANT means every game got the same value, so the signal cannot
+differentiate picks no matter its weight. This is the tool that found the dead
+subsystems below — use it before ever touching model weights.
+
+**Tonight's progression: 25 → 31 → 20 → 18 of 79 dead.**
+(The rise to 31 was deploys wiping `data/raw/` before the R2 sync fix landed.)
+
+### Now live for the first time
+- **Bullpen fatigue** — tiers now TIRED/SPENT/NORMAL, `bp_pitches_1d` 24-203.
+  Documented as a -5% to +20% swing on bullpen ERA; it had never once fired.
+- **Umpire** — 15 distinct names, `ump_factor` -0.212 to 0.008, `ump_rpg` 8.47-9.02.
+
+### Still dead (18)
+- **Platoon splits (4) — UNRESOLVED, highest-value remaining.** The master CSV is
+  now populated (374 kB in R2, 3,492 rows) and the "vs Left" vs "vs. Left" label
+  mismatch is fixed via `_canon_split()`, yet all four fields still return None.
+  Both sides run through `normalize_player()` (`" ".join(...).title()`) so names
+  *should* match, and `get_pitcher()` on the same name works. Next step: dump
+  `self.pitcher_platoon` keys next to `away_sp_name` for one game and compare.
+- **Polymarket (4)** — all probs None, signal NO_DATA. Separate from Kalshi.
+- **Kalshi combined (2)** — needs both Kalshi and Polymarket; blocked on the above.
+- **Lineups (3)** — recoverable any time via `/force-lineups` (free, no Odds API).
+- **Rest days (2)** — `away_rest`/`home_rest` always 0, forcing `rest_ml_adj` to 0.
+- **total_signal / total_adj** — `total_adj` is a flat -0.01 on every game, so
+  totals get zero differentiation from adjustments. Combined with the 0.74 cap at
+  `mlb_model.py:972`, this is why TOTAL at 70-75 wins 49% on n=204.
+- `bp_found`, `lineup_confirmed` — CONSTANT-but-healthy, ignore.
+
+---
+
 ## Fixed 2026-07-20
 - **DB connection pool leak** (root cause of ~2 months of silent data loss):
   `run_picks_html.py` called `get_conn()` then `conn.close()`, never returning the
@@ -398,6 +431,26 @@ signals combine into a probability, not a weighting problem.
   the contract covers the home side. Note: market signal stays NEUTRAL for all
   historical picks — CONFIRM/DIVERGE needs both Kalshi and Polymarket probs, and
   Kalshi has been returning 0 matches, so that dimension was dead the whole time.
+- **UTC vs ET date resolution (major).** Railway runs Python in UTC, so a bare
+  `datetime.now()` rolls to tomorrow at 8pm ET. From 8pm ET to midnight the model
+  looked for *tomorrow's* dated files and silently lost umpires, lineups and
+  bullpen fatigue every single evening. Caught live: an audit at 7:5x showed
+  `lineup_confirmed=True`, at 8:0x it showed False. Fixed with `_today_et()` in
+  `mlb_model.py`, `run_picks_html.py`, `mlb_props_model.py` (6+2+2 call sites).
+  `run_pipeline.py` still has naive calls but runs at 6am ET, same UTC date.
+- **raw/ JSONs never synced to R2.** `SYNC_PATTERNS` omitted `mlb_umpires_*`,
+  `mlb_bullpen_fatigue_*` and `mlb_lineups_*`, so Railway's ephemeral FS destroyed
+  them on every restart. Each deploy made the model progressively blinder.
+- **CSV sync race.** Railway's healthcheck hits `/` the instant Flask binds,
+  triggering a dashboard regen while `download_all()` was still writing. The model
+  loaded a half-empty `data/clean/` and scored on defaults, logging only
+  "File not found". Now gated on a `_csv_ready` Event.
+- **`json` imported inside a conditional block** in `MLBModel.load()` — the umpire
+  block used it but only the lineup block imported it, so fixing the ET date
+  surfaced an UnboundLocalError. Hoisted to module scope.
+- **`/admin/refresh-signals` added** — regenerates umpire, bullpen-fatigue and
+  pitcher/platoon data and uploads to R2. Zero Odds API usage (verified: no
+  reference to ODDS_API_KEY in any of the three scrapers).
 - **Gamelog transaction abort** — an empty `game_date` raised a date syntax error
   that poisoned the transaction, so every subsequent row failed with "current
   transaction is aborted" and logged hundreds of duplicate lines. Now skips empty
