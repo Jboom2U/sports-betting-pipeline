@@ -403,6 +403,41 @@ were also measured blind. Re-derive the threshold from post-fix calibration once
 
 ---
 
+## 🔴 POLYMARKET ROOT CAUSE FOUND 2026-07-21 (fix not yet written)
+
+`fetch_mlb_markets()` in `scrapers/mlb_polymarket_scraper.py:115` queries
+`GET /markets?tag_slug=mlb`. **The `/markets` endpoint silently ignores
+`tag_slug`.** Verified live 2026-07-21: that exact call returns
+"New Rihanna Album before GTA VI?", "Will Jesus Christ return before GTA VI?",
+"Trump out as President before GTA VI?" — zero baseball.
+
+`GET /events?tag_slug=mlb` DOES filter correctly (returns "MLB World Series
+Champion 2026", "New MLB CBA by Dec. 1?").
+
+Consequence: the scraper paginates Polymarket's entire ~10k market catalog every
+run, matches nothing, and returns early at the `if not games:` guard on line 514
+WITHOUT writing `data/clean/mlb_polymarket_master.csv`. `load_polymarket_for_date()`
+then finds no file and returns `{}` with no log line — a fully silent failure.
+This is why `/admin/signal-audit` shows poly_away_prob / poly_home_prob /
+poly_market_gap MISSING and poly_market_signal NO_DATA.
+
+**The documented "422 at offset 10100 is expected — stop silently" note was
+describing this bug as normal behavior.** It is not normal; it is the scraper
+walking the whole catalog.
+
+**Fix:** rewrite `fetch_mlb_markets()` to hit `/events?tag_slug=mlb&closed=false`
+and extract per-game markets from each event's nested `markets` array. Per-game
+event slugs look like `mlb-<away>-<home>-<date>`. Then re-verify
+`extract_game_probabilities()` against the real shape before trusting it.
+
+**Knock-on:** Kalshi's `combined_away_prob`/`combined_home_prob` and the entire
+CONFIRM/DIVERGE market signal need BOTH Kalshi and Polymarket probabilities
+(`get_market_divergence(poly_away_prob, kalshi_away_prob)` at
+`mlb_polymarket_scraper.py:476`). So Polymarket must be fixed before the Kalshi
+ticker fix from 2026-07-20 can produce any market signal at all.
+
+---
+
 ## Active Work Queue
 1. **Resolve the 51.8% vs 46.0% split** between live-saved and backfilled picks
    (see Calibration Findings). Gates all model work.

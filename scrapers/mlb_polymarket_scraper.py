@@ -29,6 +29,16 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _today_et() -> str:
+    """Today's date in ET. Railway runs Python in UTC, so a bare
+    datetime.now() rolls to tomorrow at 8pm ET and we would build slugs for
+    the wrong day."""
+    return datetime.now(_ET).strftime("%Y-%m-%d")
 
 import requests
 
@@ -112,158 +122,179 @@ def _match_team(text: str) -> str:
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
-def fetch_mlb_markets() -> list:
-    """
-    Pull all active MLB game-winner markets from Polymarket's Gamma API.
-    Returns list of raw market dicts.
-    """
-    all_markets = []
-    seen_ids    = set()
+# Polymarket per-game event slugs look like: mlb-<away>-<home>-<YYYY-MM-DD>
+# e.g. mlb-min-cle-2026-07-21, mlb-sd-atl-2026-07-21
+#
+# Discovery does NOT work: /markets ignores tag_slug entirely (it returns
+# "Will Jesus Christ return before GTA VI?" for tag_slug=mlb), and while
+# /events?tag_slug=mlb honours the filter, it only surfaces World Series
+# futures — today's game events carry the mlb tag but never appear in the
+# listing. Verified live 2026-07-21. So we build slugs from our own schedule
+# instead of trying to discover them. Deterministic, ~15 requests/day.
+#
+# Codes confirmed against live slugs: ari (NOT az), sd, sf, laa, lad, stl,
+# tex, tor, mia, cle, col, hou, min, atl. Ambiguous ones list alternates and
+# are probed in order; the first hit is cached for the rest of the run.
+POLY_ABBR = {
+    "Arizona Diamondbacks":  ["ari", "az"],
+    "Atlanta Braves":        ["atl"],
+    "Baltimore Orioles":     ["bal"],
+    "Boston Red Sox":        ["bos"],
+    "Chicago Cubs":          ["chc"],
+    "Chicago White Sox":     ["cws", "chw"],
+    "Cincinnati Reds":       ["cin"],
+    "Cleveland Guardians":   ["cle"],
+    "Colorado Rockies":      ["col"],
+    "Detroit Tigers":        ["det"],
+    "Houston Astros":        ["hou"],
+    "Kansas City Royals":    ["kc", "kcr"],
+    "Los Angeles Angels":    ["laa"],
+    "Los Angeles Dodgers":   ["lad"],
+    "Miami Marlins":         ["mia"],
+    "Milwaukee Brewers":     ["mil"],
+    "Minnesota Twins":       ["min"],
+    "New York Mets":         ["nym"],
+    "New York Yankees":      ["nyy"],
+    "Athletics":             ["ath", "oak", "sac"],
+    "Oakland Athletics":     ["ath", "oak", "sac"],
+    "Philadelphia Phillies": ["phi"],
+    "Pittsburgh Pirates":    ["pit"],
+    "San Diego Padres":      ["sd", "sdp"],
+    "San Francisco Giants":  ["sf", "sfg"],
+    "Seattle Mariners":      ["sea"],
+    "St. Louis Cardinals":   ["stl"],
+    "Tampa Bay Rays":        ["tb", "tbr"],
+    "Texas Rangers":         ["tex"],
+    "Toronto Blue Jays":     ["tor"],
+    "Washington Nationals":  ["wsh", "was"],
+}
 
-    # Primary: tag-filtered MLB markets
-    for tag in ("mlb", "baseball"):
-        url    = f"{GAMMA_BASE}/markets"
-        offset = 0
-        limit  = 100
+_ABBR_CACHE = {}   # team name -> abbrev that actually resolved
 
-        while True:
-            params = {
-                "tag_slug": tag,
-                "active":   "true",
-                "closed":   "false",
-                "limit":    limit,
-                "offset":   offset,
-            }
-            try:
-                resp = requests.get(url, params=params, headers=HEADERS, timeout=15)
-                resp.raise_for_status()
-                page = resp.json()
-            except Exception as e:
-                # 422 = Polymarket's hard pagination cap — stop gracefully, not an error
-                import requests as _req
-                if isinstance(e, _req.HTTPError) and e.response is not None and e.response.status_code == 422:
+
+def _schedule_for(date: str) -> list:
+    """Read (away_team, home_team) pairs for a date from the schedule master."""
+    path = os.path.join(CLEAN_DIR, "mlb_schedule_master.csv")
+    if not os.path.exists(path):
+        log.warning("Polymarket: schedule master missing — cannot build slugs")
+        return []
+    games, seen = [], set()
+    with open(path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if row.get("game_date") != date:
+                continue
+            away = (row.get("away_team") or "").strip()
+            home = (row.get("home_team") or "").strip()
+            if not away or not home:
+                continue
+            key = (away, home)
+            if key in seen:
+                continue
+            seen.add(key)
+            games.append(key)
+    return games
+
+
+def _fetch_event(slug: str):
+    """GET one event by slug. Returns the event dict or None."""
+    try:
+        resp = requests.get(f"{GAMMA_BASE}/events", params={"slug": slug},
+                            headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.debug(f"Polymarket event fetch failed ({slug}): {e}")
+        return None
+    if isinstance(data, list) and data:
+        return data[0]
+    return None
+
+
+def fetch_mlb_markets(target_date: str = None) -> list:
+    """
+    Fetch today's per-game MLB moneyline markets from Polymarket.
+
+    Builds slugs from our own schedule rather than relying on Polymarket's
+    tag/date filters, which do not surface game events (see note above).
+    Returns a list of market dicts, each annotated with the schedule's
+    away_team/home_team so parsing never has to guess.
+    """
+    date  = target_date or _today_et()
+    games = _schedule_for(date)
+    if not games:
+        log.warning(f"Polymarket: no scheduled games for {date}")
+        return []
+
+    out = []
+    for away, home in games:
+        away_codes = _ABBR_CACHE.get(away) and [_ABBR_CACHE[away]] or POLY_ABBR.get(away, [])
+        home_codes = _ABBR_CACHE.get(home) and [_ABBR_CACHE[home]] or POLY_ABBR.get(home, [])
+        if not away_codes or not home_codes:
+            log.debug(f"Polymarket: no abbreviation for {away} @ {home}")
+            continue
+
+        event = None
+        for ac in away_codes:
+            for hc in home_codes:
+                slug  = f"mlb-{ac}-{hc}-{date}"
+                event = _fetch_event(slug)
+                if event:
+                    _ABBR_CACHE[away] = ac
+                    _ABBR_CACHE[home] = hc
                     break
-                log.warning(f"Polymarket fetch failed (tag={tag}, offset={offset}): {e}")
+            if event:
                 break
 
-            if not page:
-                break
+        if not event:
+            log.debug(f"Polymarket: no event found for {away} @ {home} on {date}")
+            continue
 
-            for m in page:
-                mid = m.get("id") or m.get("conditionId", "")
-                if mid and mid not in seen_ids:
-                    seen_ids.add(mid)
-                    all_markets.append(m)
+        # Pull the moneyline market out of the event's nested markets array.
+        for mk in (event.get("markets") or []):
+            if (mk.get("sportsMarketType") or "").lower() != "moneyline":
+                continue
+            mk = dict(mk)
+            mk["_away_team"] = away
+            mk["_home_team"] = home
+            out.append(mk)
+            break
 
-            if len(page) < limit:
-                break
-            offset += limit
-
-    log.info(f"Polymarket: fetched {len(all_markets)} raw markets")
-    return all_markets
+    log.info(f"Polymarket: {len(out)}/{len(games)} game markets fetched for {date}")
+    return out
 
 
 # ── Parse ─────────────────────────────────────────────────────────────────────
 
-def _parse_prices(market: dict):
-    """
-    Extract (away_prob, home_prob) from a Polymarket market dict.
-    Handles both binary Yes/No and two-outcome team markets.
-    Returns None if unparseable.
-    """
-    raw_outcomes = market.get("outcomes", "[]")
-    raw_prices   = market.get("outcomePrices", "[]")
-
-    # Polymarket returns these as JSON strings
-    if isinstance(raw_outcomes, str):
-        try:
-            outcomes = json.loads(raw_outcomes)
-        except Exception:
-            outcomes = []
-    else:
-        outcomes = raw_outcomes
-
-    if isinstance(raw_prices, str):
-        try:
-            prices = [float(p) for p in json.loads(raw_prices)]
-        except Exception:
-            prices = []
-    else:
-        try:
-            prices = [float(p) for p in raw_prices]
-        except Exception:
-            prices = []
-
-    if not outcomes or not prices or len(outcomes) != len(prices):
-        return None
-
-    # Binary market: outcomes = ["Yes", "No"]
-    if len(outcomes) == 2 and outcomes[0].lower() in ("yes", "no"):
-        yes_idx = 0 if outcomes[0].lower() == "yes" else 1
-        no_idx  = 1 - yes_idx
-        return prices[yes_idx], prices[no_idx]   # (away=YES side, home=NO side)
-
-    # Two-team market: outcomes = ["Team A", "Team B"]
-    if len(outcomes) == 2:
-        return prices[0], prices[1]
-
-    return None
-
-
-VS_PATTERNS = [
-    r'(.+?)\s+(?:vs\.?|v\.?|@|at)\s+(.+?)(?:\s*[-—\?]|$)',
-    r'(?:Will\s+)?(.+?)\s+(?:beat|defeat)\s+(.+?)(?:\s*\?|$)',
-    r'(.+?)\s+(?:win|wins)\s+(?:vs\.?|against)\s+(.+?)(?:\s*\?|$)',
-]
-
-
 def parse_market(market: dict):
     """
-    Parse a Polymarket market into (away_team, home_team, away_prob, home_prob).
-    Returns None if not a recognizable MLB game market.
+    Parse one Polymarket moneyline market into a game probability dict.
+
+    outcomes / outcomePrices arrive as JSON-encoded strings holding FULL team
+    names, e.g. "[\"San Diego Padres\", \"Atlanta Braves\"]" and
+    "[\"0.435\", \"0.565\"]". Match on name rather than position so a
+    reordered payload cannot silently invert the probabilities.
     """
-    question = market.get("question", "") or market.get("title", "")
-
-    # Must contain MLB team names
-    q_lower = question.lower()
-    if not any(alias in q_lower for alias in TEAM_ALIASES):
+    away = market.get("_away_team", "")
+    home = market.get("_home_team", "")
+    if not away or not home:
         return None
 
-    # Try to extract two teams
-    team_a, team_b = None, None
-    for pat in VS_PATTERNS:
-        m = re.search(pat, question, re.IGNORECASE)
-        if m:
-            team_a = _match_team(m.group(1))
-            team_b = _match_team(m.group(2))
-            break
-
-    # Also try parsing from outcomes if question parse failed
-    if not team_a:
-        raw_outcomes = market.get("outcomes", "[]")
-        if isinstance(raw_outcomes, str):
-            try:
-                outcomes = json.loads(raw_outcomes)
-            except Exception:
-                outcomes = []
-        else:
-            outcomes = raw_outcomes
-        if len(outcomes) == 2:
-            a = _match_team(outcomes[0])
-            b = _match_team(outcomes[1])
-            if any(alias in outcomes[0].lower() for alias in TEAM_ALIASES):
-                team_a, team_b = a, b
-
-    if not team_a or not team_b:
+    try:
+        outcomes = json.loads(market.get("outcomes") or "[]")
+        prices   = [float(x) for x in json.loads(market.get("outcomePrices") or "[]")]
+    except Exception as e:
+        log.debug(f"Polymarket: unparseable outcomes for {away}@{home}: {e}")
+        return None
+    if len(outcomes) != 2 or len(prices) != 2:
         return None
 
-    prices = _parse_prices(market)
-    if prices is None:
+    lookup = {str(o).strip().lower(): p for o, p in zip(outcomes, prices)}
+    away_prob = lookup.get(away.strip().lower())
+    home_prob = lookup.get(home.strip().lower())
+    if away_prob is None or home_prob is None:
+        log.debug(f"Polymarket: outcome names {outcomes} do not match {away}/{home}")
         return None
 
-    away_prob, home_prob = prices
-
-    # Sanity check — probs should sum to ~1 and be in (0,1)
     if not (0.01 < away_prob < 0.99 and 0.01 < home_prob < 0.99):
         return None
     total = away_prob + home_prob
@@ -272,14 +303,15 @@ def parse_market(market: dict):
         home_prob = round(home_prob / total, 3)
 
     return {
-        "away_team":       team_a,
-        "home_team":       team_b,
+        "away_team":       away,
+        "home_team":       home,
         "poly_market_id":  market.get("id") or market.get("conditionId", ""),
         "poly_away_prob":  away_prob,
         "poly_home_prob":  home_prob,
         "poly_volume":     float(market.get("volume", 0) or 0),
-        "market_question": question,
+        "market_question": market.get("question", ""),
     }
+
 
 
 def extract_game_probabilities(markets: list) -> list:
@@ -502,10 +534,10 @@ def get_market_divergence(poly_away_prob: float, kalshi_away_prob: float) -> dic
 # ── Main entry ────────────────────────────────────────────────────────────────
 
 def run(target_date: str = None) -> str:
-    date          = target_date or datetime.now().strftime("%Y-%m-%d")
-    snapshot_time = datetime.now().strftime("%H:%M:%S")
+    date          = target_date or _today_et()
+    snapshot_time = datetime.now(_ET).strftime("%H:%M:%S")
 
-    raw_markets = fetch_mlb_markets()
+    raw_markets = fetch_mlb_markets(date)
     if not raw_markets:
         return f"No Polymarket MLB markets found for {date}"
 
