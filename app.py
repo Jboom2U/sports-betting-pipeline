@@ -1490,6 +1490,100 @@ def refresh_signals():
         mimetype="text/html")
 
 
+@app.route("/admin/platoon-debug")
+def platoon_debug():
+    """
+    Why do the four platoon fields return None when the master CSV has rows?
+
+    Dumps, side by side:
+      - how many pitchers loaded into self.pitcher_platoon
+      - a sample of those dict keys (the names as stored)
+      - today's starting pitcher names as the schedule provides them
+      - the exact lookup result per starter
+
+    Read-only. Answers the name-matching question directly instead of inferring.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/platoon-debug")
+
+    import html as _html
+    date_str = request.args.get("date") or datetime.now(ET).strftime("%Y-%m-%d")
+
+    try:
+        from model.mlb_model import MLBModel
+        model = MLBModel()
+        model.load()
+    except Exception:
+        import traceback
+        return Response(f"<pre>{_html.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
+
+    pp = model.pitcher_platoon
+    keys = list(pp.keys())
+
+    # raw CSV inspection — does the file even have rows, and what is in `split`?
+    import csv as _csv, os as _os
+    csv_path = _os.path.join(BASE_DIR, "data", "clean", "mlb_pitcher_platoon_master.csv")
+    csv_rows, csv_splits, csv_names, csv_seasons = 0, {}, [], {}
+    if _os.path.exists(csv_path):
+        with open(csv_path, encoding="utf-8") as f:
+            for r in _csv.DictReader(f):
+                csv_rows += 1
+                s = (r.get("split") or "").strip()
+                csv_splits[s] = csv_splits.get(s, 0) + 1
+                se = (r.get("season") or "").strip()
+                csv_seasons[se] = csv_seasons.get(se, 0) + 1
+                if len(csv_names) < 8:
+                    csv_names.append(r.get("player_name", ""))
+
+    games = [g for g in model.schedule if g.get("game_date") == date_str]
+    rows_html = []
+    for g in games[:15]:
+        for side in ("away", "home"):
+            name = (g.get(f"{side}_probable_pitcher") or "").strip()
+            if not name:
+                continue
+            in_dict = name in pp
+            l = model.get_platoon(name, "vs. Left")
+            r = model.get_platoon(name, "vs. Right")
+            seasons = sorted(pp.get(name, {}).keys()) if in_dict else []
+            splits  = sorted(pp[name][seasons[-1]].keys()) if seasons else []
+            rows_html.append(
+                f"<tr><td>{_html.escape(name)}</td>"
+                f"<td class='{'ok' if in_dict else 'bad'}'>{in_dict}</td>"
+                f"<td>{seasons}</td><td>{splits}</td>"
+                f"<td class='{'ok' if l else 'bad'}'>{'era=' + str(l.get('era')) if l else 'EMPTY'}</td>"
+                f"<td class='{'ok' if r else 'bad'}'>{'era=' + str(r.get('era')) if r else 'EMPTY'}</td></tr>")
+
+    html = f"""<!doctype html><html><head><meta charset="utf-8"><title>Platoon Debug</title>
+<style>body{{background:#0d1117;color:#c9d1d9;font-family:ui-monospace,monospace;
+padding:22px;max-width:1150px;margin:0 auto;font-size:13px}}
+h2,h3{{color:#58a6ff;font-family:system-ui}} td,th{{padding:5px 9px;
+border-bottom:1px solid #21262d;text-align:left}} table{{border-collapse:collapse;width:100%}}
+.ok{{color:#3fb950}} .bad{{color:#f85149}} .box{{background:#161b22;padding:12px 16px;
+border-radius:8px;margin:10px 0}}</style></head><body>
+<h2>Platoon Debug — {date_str}</h2>
+
+<div class="box">
+<b>CSV on disk:</b> {'FOUND' if csv_rows else 'MISSING OR EMPTY'} &middot;
+{csv_rows} data rows<br>
+<b>split values:</b> {csv_splits}<br>
+<b>seasons:</b> {csv_seasons}<br>
+<b>first names in CSV:</b> {[_html.escape(str(n)) for n in csv_names]}
+</div>
+
+<div class="box">
+<b>model.pitcher_platoon:</b> {len(keys)} pitchers loaded<br>
+<b>sample keys:</b> {[_html.escape(str(k)) for k in keys[:8]]}
+</div>
+
+<h3>Today's starters vs the loaded dict</h3>
+<table><tr><th>schedule name</th><th>in dict?</th><th>seasons</th><th>split keys</th>
+<th>vs. Left</th><th>vs. Right</th></tr>{''.join(rows_html) or '<tr><td colspan=6>no games</td></tr>'}</table>
+<p><a href="/admin">&larr; Admin</a></p></body></html>"""
+    return Response(html, mimetype="text/html")
+
+
 @app.route("/admin/signal-audit")
 def signal_audit():
     """
