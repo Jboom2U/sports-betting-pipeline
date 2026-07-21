@@ -79,6 +79,21 @@ def sf(val, default=None):
 # ─────────────────────────────────────────────────────────────────────────────
 # MODEL
 # ─────────────────────────────────────────────────────────────────────────────
+def _canon_split(s: str) -> str:
+    """
+    Canonicalize a platoon split label.
+
+    Upstream formats seen: "vs Left", "vs. Left", "vs LHB". Returns "L" or "R",
+    or "" if the label names neither side.
+    """
+    t = (s or "").lower()
+    if "left" in t or "lhb" in t or t.strip() in ("vl", "vs l"):
+        return "L"
+    if "right" in t or "rhb" in t or t.strip() in ("vr", "vs r"):
+        return "R"
+    return ""
+
+
 class MLBModel:
     """
     Loads all clean master data once, then scores any game on demand.
@@ -158,11 +173,15 @@ class MLBModel:
             if name and season:
                 self.team_pitching.setdefault(name, {})[season] = row
 
-        # Pitcher platoon splits: name -> season -> {vs. Left / vs. Right -> row}
+        # Pitcher platoon splits: name -> season -> {canonical split -> row}
+        # The MLB API returns description "vs Left" / "vs Right" (no period) but
+        # score_game() asks for "vs. Left" / "vs. Right". The exact-string .get()
+        # never matched, so all four platoon fields came back empty on every game.
+        # Canonicalize on both sides instead of depending on the upstream format.
         for row in read_csv(os.path.join(CLEAN_DIR, "mlb_pitcher_platoon_master.csv")):
             name   = row.get("player_name", "").strip()
             season = row.get("season", "")
-            split  = row.get("split", "")
+            split  = _canon_split(row.get("split", ""))
             if name and season and split:
                 self.pitcher_platoon.setdefault(name, {}).setdefault(season, {})[split] = row
 
@@ -385,12 +404,12 @@ class MLBModel:
     def get_platoon(self, name: str, vs: str) -> dict:
         """
         Get pitcher stats vs left or right handed batters.
-        vs: 'vs. Left' or 'vs. Right'
+        vs: accepts 'vs. Left', 'vs Left', 'vs LHB' etc — canonicalized.
         """
         if not name or name not in self.pitcher_platoon:
             return {}
         season = sorted(self.pitcher_platoon[name].keys())[-1]
-        return self.pitcher_platoon[name][season].get(vs, {})
+        return self.pitcher_platoon[name][season].get(_canon_split(vs), {})
 
     # ── Recent Starts Summary ─────────────────────────────────────────────────
     def get_recent_form_pitcher(self, name: str, n: int = 3) -> dict:
