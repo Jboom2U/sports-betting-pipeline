@@ -18,6 +18,18 @@ import csv
 import os
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# Baseball days are ET days. The Railway container runs Python in UTC, so a bare
+# datetime.now() rolls over to tomorrow at 8pm ET (00:00 UTC) and the model then
+# looks for tomorrow's dated files -- silently losing umpires, lineups and
+# bullpen fatigue every evening. Always resolve "today" in ET.
+ET = ZoneInfo("America/New_York")
+
+
+def _today_et() -> str:
+    """Today's date in ET, as YYYY-MM-DD."""
+    return datetime.now(ET).strftime("%Y-%m-%d")
 
 try:
     from db.model_config import load_config as _load_model_config, DEFAULTS as _MC_DEFAULTS
@@ -201,7 +213,7 @@ class MLBModel:
                 self.park_factors[venue] = row
 
         # Weather: game_id -> row (today's file if available)
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = _today_et()
         raw_dir = os.path.join(BASE_DIR, "data", "raw")
         weather_file = os.path.join(raw_dir, f"mlb_weather_{today}.csv")
         if not os.path.exists(weather_file):
@@ -219,7 +231,7 @@ class MLBModel:
         # Odds snapshots and line movement
         odds_master = os.path.join(CLEAN_DIR, "mlb_odds_master.csv")
         if os.path.exists(odds_master):
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = _today_et()
             latest_snap = {}
             for row in read_csv(odds_master):
                 if row.get("game_date") != today:
@@ -257,7 +269,7 @@ class MLBModel:
             log.info(f"Bullpen data loaded: {len(self.bullpen)} teams")
 
         # Confirmed lineups for today
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = _today_et()
         raw_dir   = os.path.join(BASE_DIR, "data", "raw")
         lineup_file = os.path.join(raw_dir, f"mlb_lineups_{today_str}.json")
         if os.path.exists(lineup_file):
@@ -301,7 +313,7 @@ class MLBModel:
         # Polymarket implied probabilities
         try:
             from scrapers.mlb_polymarket_scraper import load_polymarket_for_date
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = _today_et()
             self.polymarket = load_polymarket_for_date(today)
             log.info(f"Polymarket loaded: {len(self.polymarket)} games")
         except Exception as e:
@@ -1278,7 +1290,7 @@ class MLBModel:
     def get_today_scores(self, target_date: str = None) -> list:
         """Return completed game scores for target_date for the ticker."""
         if target_date is None:
-            target_date = datetime.now().strftime("%Y-%m-%d")
+            target_date = _today_et()
         return [r for r in self.scores
                 if r.get("game_date") == target_date
                 and r.get("status", "").lower() == "final"]
@@ -1294,7 +1306,7 @@ class MLBModel:
             self.load()
 
         if target_date is None:
-            target_date = datetime.now().strftime("%Y-%m-%d")
+            target_date = _today_et()
 
         all_today = [g for g in self.schedule if g.get("game_date") == target_date]
         games     = [g for g in all_today if not self._game_is_over(g)]

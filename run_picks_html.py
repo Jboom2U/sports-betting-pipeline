@@ -10,6 +10,18 @@ Usage:
 
 import sys, os, json, logging, argparse, webbrowser, requests
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# Baseball days are ET days. Railway runs Python in UTC, so a bare
+# datetime.now() rolls to tomorrow at 8pm ET and the pick path then looks for
+# tomorrow's dated files. Always resolve "today" in ET.
+_ET_TZ = ZoneInfo("America/New_York")
+
+
+def _today_et() -> str:
+    """Today's date in ET, as YYYY-MM-DD."""
+    return datetime.now(_ET_TZ).strftime("%Y-%m-%d")
+
 
 sys.path.insert(0, os.path.dirname(__file__))
 logging.basicConfig(level=logging.INFO,
@@ -4184,7 +4196,7 @@ setTimeout(() => {
 # ─────────────────────────────────────────────────────────────────────────────
 def main(date=None, no_open=False):
     # argparse is handled in __main__ block only — never called from here.
-    target = date or datetime.now().strftime("%Y-%m-%d")
+    target = date or _today_et()
 
     # NOTE: Odds snapshot is handled by app.py _run_odds_snapshot() before
     # this function is called — do NOT call run_odds() here or it runs twice,
@@ -4199,7 +4211,7 @@ def main(date=None, no_open=False):
 
     # score_today filters to upcoming games only — we also need all games for the schedule tab
     all_schedule = [g for g in model.schedule if g.get("game_date") == (
-        date or datetime.now().strftime("%Y-%m-%d")
+        date or _today_et()
     )]
 
     # Deduplicate all_schedule — schedule CSV can accumulate duplicate rows across pipeline runs

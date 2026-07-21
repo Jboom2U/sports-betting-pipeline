@@ -21,6 +21,18 @@ Tier thresholds vary by prop type — see constants below.
 
 import os, json, math, logging, csv
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# Baseball days are ET days. Railway runs Python in UTC, so a bare
+# datetime.now() rolls to tomorrow at 8pm ET and the pick path then looks for
+# tomorrow's dated files. Always resolve "today" in ET.
+_ET_TZ = ZoneInfo("America/New_York")
+
+
+def _today_et() -> str:
+    """Today's date in ET, as YYYY-MM-DD."""
+    return datetime.now(_ET_TZ).strftime("%Y-%m-%d")
+
 
 log = logging.getLogger(__name__)
 
@@ -699,7 +711,7 @@ def score_all_props(target_date: str = None) -> list[dict]:
       game, away_team, home_team, prop_type, line, player_name,
       batting_order, proj, confidence, tier, reasoning
     """
-    today    = target_date or datetime.now().strftime("%Y-%m-%d")
+    today    = target_date or _today_et()
     raw_path = os.path.join(DATA_DIR, "raw", f"mlb_hitter_stats_{today}.json")
 
     if not os.path.exists(raw_path):
@@ -1046,7 +1058,7 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
     contains unconfirmed games.  Confirmed props always take priority — callers
     should only surface projected props for teams with no confirmed props today.
     """
-    today = target_date or datetime.now().strftime("%Y-%m-%d")
+    today = target_date or _today_et()
 
     if not projected_lineups:
         return []
