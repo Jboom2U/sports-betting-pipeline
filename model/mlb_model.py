@@ -601,9 +601,20 @@ class MLBModel:
         elif home_rest >= 2 and away_rest == 0:
             if ml_side == "home": ml_adj += +0.01
 
-        # Totals: fatigue reduces run production slightly
-        if away_rest == 0 or home_rest == 0:
-            total_adj = -0.01  # slight UNDER lean when either team is tired
+        # Totals: no rest-based adjustment.
+        #
+        # This used to apply -0.01 whenever `away_rest == 0 or home_rest == 0`.
+        # But rest == 0 means "played yesterday", which is the NORMAL state in
+        # a daily-play sport, not fatigue — so the condition was true for
+        # essentially every game and stamped an identical -0.01 on every total.
+        # /admin/signal-audit flagged total_adj as CONSTANT -0.01 across all 15
+        # games on 2026-07-20 for exactly this reason. A uniform offset cannot
+        # differentiate picks; it just shifts the base, which is now handled
+        # properly in total_conf_base.
+        #
+        # Deliberately NOT redirected at bullpen fatigue: that already adjusts
+        # bp_era by -5% to +20% upstream, so using it here would double-count —
+        # and a spent bullpen implies MORE runs, so the sign would be wrong too.
 
         return ml_adj, total_adj
 
@@ -999,7 +1010,26 @@ class MLBModel:
 
         diff = exp_total - line
         total_pick      = "OVER" if diff > 0 else "UNDER"
-        total_conf_base = min(0.74, 0.50 + abs(diff) / 7.0)
+        # Totals confidence — recalibrated 2026-07-21.
+        #
+        # Was: min(0.74, 0.50 + abs(diff) / 7.0)
+        #
+        # Two problems with that. The 0.74 cap bound at only 1.68 runs of edge,
+        # so games with 1.7 and 2.9 run edges produced the IDENTICAL number —
+        # on 2026-07-20 six different totals all displayed 73%, destroying any
+        # ranking between them. And the slope overstated badly: the 70-75 band
+        # predicted 72.9% while actually winning 49.0% on n=204 (see the
+        # calibration findings in CLAUDE.md).
+        #
+        # The gentler slope keeps confidence rising until ~2.9 runs so ordering
+        # survives the realistic range, and tops out at 0.68 instead of 0.74 so
+        # totals stop being labelled LOCK on the strength of a coin flip.
+        #
+        # PROVISIONAL. Both constants were chosen against PRE-fix data, when
+        # umpire and bullpen fatigue (which both feed run expectancy) were dead.
+        # Re-derive from post-2026-07-21 calibration once ~300 graded post-fix
+        # TOTAL picks exist. Totals may genuinely improve now.
+        total_conf_base = min(0.68, 0.50 + abs(diff) / 16.0)
         ml_adj, total_adj = self.line_movement_confidence_adj(
             away, home, ml_team, total_pick
         )
