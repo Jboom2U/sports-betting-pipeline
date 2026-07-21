@@ -1364,6 +1364,84 @@ to act on. Pushes excluded from win rate.</span>
     return Response(html, mimetype="text/html")
 
 
+@app.route("/admin/refresh-signals")
+def refresh_signals():
+    """
+    Regenerate the three signal sources that were dead, without running the full
+    pipeline (so zero Odds API usage).
+
+      - mlb_umpires_<today>.json        (umpire scraper)
+      - mlb_bullpen_fatigue_<today>.json (fatigue scraper)
+      - mlb_pitcher_platoon_master.csv  (pitcher scraper + normalizer)
+
+    Then uploads to R2 so a restart cannot lose them again, and rebuilds the
+    dashboard so today's picks reflect the restored signals.
+
+    None of these scrapers touch the Odds API. Verified: zero references to
+    ODDS_API_KEY or the-odds-api in any of the three.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/refresh-signals")
+
+    import threading
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+
+    def _run():
+        results = []
+
+        try:
+            from scrapers.mlb_umpire_scraper import run as _umps
+            n = _umps(today)
+            results.append(f"umpires: {len(n) if hasattr(n, '__len__') else n}")
+        except Exception as e:
+            results.append(f"umpires FAILED: {e}")
+
+        try:
+            from scrapers.mlb_bullpen_fatigue_scraper import run as _fatigue
+            n = _fatigue(today)
+            results.append(f"bullpen_fatigue: {len(n) if hasattr(n, '__len__') else n}")
+        except Exception as e:
+            results.append(f"bullpen_fatigue FAILED: {e}")
+
+        try:
+            from scrapers.mlb_pitcher_scraper import run as _pitchers
+            r = _pitchers()
+            results.append(f"pitcher_scrape: {r}")
+        except Exception as e:
+            results.append(f"pitcher_scrape FAILED: {e}")
+
+        try:
+            from normalize.mlb_pitcher_normalize import run as _pnorm
+            r = _pnorm()
+            results.append(f"pitcher_normalize: {r}")
+        except Exception as e:
+            results.append(f"pitcher_normalize FAILED: {e}")
+
+        try:
+            from db.csv_sync import upload_all as _up
+            results.append(f"uploaded: {_up()} file(s)")
+        except Exception as e:
+            results.append(f"upload FAILED: {e}")
+
+        log.info(f"refresh-signals done: {results}")
+
+        # Rebuild so today's cards reflect the restored signals.
+        with _cache_lock:
+            _cache["generated_at"] = 0
+            _cache["generating"]   = False
+        _regenerate_in_background()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return Response(
+        "<h2>Signal refresh started</h2>"
+        "<p>Running umpire, bullpen-fatigue and pitcher/platoon scrapers, then "
+        "uploading to R2 and rebuilding the dashboard. Zero Odds API usage.</p>"
+        "<p>Give it 2-4 minutes, then check "
+        "<a href='/admin/signal-audit'>/admin/signal-audit</a> — the "
+        "CONSTANT/MISSING count should drop.</p>",
+        mimetype="text/html")
+
+
 @app.route("/admin/signal-audit")
 def signal_audit():
     """
