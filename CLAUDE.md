@@ -146,9 +146,9 @@ Runs daily at 6am ET via app.py scheduler. Key steps:
 3. mlb_odds_scraper → live odds + sharp action (Odds API)
 4. mlb_weather_scraper, mlb_umpire_scraper, mlb_bullpen_fatigue_scraper
 5. mlb_pitcher_scraper + statcast scrapers (BOM strip required on Savant CSVs)
-6. mlb_polymarket_scraper (Polymarket paginates to ~10100 markets; 422 at offset 10100 is expected — stop silently)
+6. mlb_polymarket_scraper (FIXED 2026-07-21: builds per-game slugs mlb-<away>-<home>-<date> from schedule; /markets ignores tag_slug so old catalog-walk found 0 games. The '422 at offset 10100 is expected' note described the BUG, not normal behavior.)
 7. mlb_bullpen_scraper, mlb_lineup_scraper, mlb_hitter_scraper
-8. mlb_kalshi_scraper (fetches KXMLB series; matching still inconsistent — 0 parseable markets is common)
+8. mlb_kalshi_scraper (FIXED 2026-07-20: parses the ticker KXMLBGAME-... not the ambiguous title. Verified 17 game markets parsed on 2026-07-21.)
 9. run_analysis → grade yesterday's picks → push to DB
 10. mlb_model + save_picks → score games → save to DB
 11. mark_pipeline_complete + csv_upload_all
@@ -469,6 +469,31 @@ ticker fix from 2026-07-20 can produce any market signal at all.
   by date, so a future game can collide with today's. Ticker carries the date.
 - CLAUDE.md route list and env vars drifted ~27 commits behind before 2026-07-20;
   `/force-refresh` documented below does not exist (actual route is `/refresh`).
+
+## ✅ SIGNAL AUDIT: 5/79 dead as of 2026-07-21 4:40pm ET (was 25)
+
+The 5 remaining are all CONSTANT-but-not-broken: `away_bp_found`/`home_bp_found`
+(data found = healthy) and the rest-days trio `away_rest`/`home_rest`/`rest_ml_adj`
+(0 = "played yesterday", the normal state in daily-play baseball, not a failure).
+Functionally there are no dead inputs left.
+
+**Verified live on the 4:40pm adaptive refresh (first clean run after all fixes):**
+- Polymarket: **15/15** game markets fetched, zero abbreviation misses. The 6am
+  run (pre-deploy) logged `parsed 0`; the 4:40 run logged `parsed 15` — proves the
+  slug-builder rewrite is what fixed it.
+- Kalshi: `Fetched 70 markets` → `Parsed 17 unique game markets`.
+- **`poly_market_signal` = DIVERGE/NEUTRAL for the first time ever.** CONFIRM/DIVERGE
+  needs BOTH feeds; it was NO_DATA since inception. Now producing real output.
+- Umpire (11 distinct), bullpen fatigue, lineups, platoon, combined_away/home_prob
+  all OK.
+- total_signal fix (run-unit thresholds) deployed; will show DRIFT/STEAM on the
+  next refresh where a total moved 0.5+ runs.
+
+Log-viewer note: Railway's filtered log window doesn't reliably tail to "now".
+`filter=Polymarket` topped out at Jul 20; `filter=game markets` surfaced today's
+20:40 UTC lines. Use a content filter that matches the exact log string.
+
+---
 
 ## 🔬 SIGNAL AUDIT — /admin/signal-audit (built 2026-07-20)
 
