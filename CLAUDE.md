@@ -284,7 +284,35 @@ Expected behavior — Polymarket hard caps at 10,000 markets. The 422 is caught 
 - TOSSUP picks now graded in DB (push_grades_to_db uses full graded list) — sharp table shows results for all tiers
 - TOSSUP picks included in graded_display — yesterday panel shows all graded games (15+ picks per day)
 
+## ⚠️ DATA BOUNDARY: 2026-07-21 — pre-fix vs post-fix picks
+
+**Every pick generated before 2026-07-21 was produced by a partially blind model.**
+Umpire blank, bullpen fatigue never firing, platoon splits dead, Kalshi dead, and
+eight master CSVs vanishing from `data/clean/` on every container restart.
+
+The 1,459 graded picks in the calibration findings below are ALL pre-fix. They
+measure how the model performed while starved, not how it performs now.
+
+**Do not pool pre- and post-2026-07-21 picks in one calibration run.** Doing so
+averages a crippled model with a repaired one and will produce a conclusion that
+is wrong about both. When there are enough post-fix graded picks (target ~300, so
+roughly 3-4 weeks), run calibration filtered to `pick_date >= '2026-07-21'` and
+compare against the pre-fix table below.
+
+Specifically unresolved by the pre-fix data: whether TOTAL picks have edge. Their
+pre-fix win rate is flat noise (44.8%-55.4%, no trend across bands), but bullpen
+fatigue and umpire RPG both feed run expectancy and neither was firing. Totals may
+genuinely improve. Do not permanently suppress totals based on pre-fix data alone.
+
+What the pre-fix data DOES establish, because it held even while the model was
+blind: **ML at 75%+ won 67.5% (n=40) and 63.8% (n=47).** That edge existed under
+degraded inputs, so it is the safest thing to lean on while post-fix data
+accumulates.
+
+---
+
 ## 📊 CALIBRATION FINDINGS — 2026-07-20 (read before tuning anything)
+**⚠️ ALL PRE-FIX. See the data boundary section above before acting on these.**
 
 First real calibration run, on 1,459 graded picks covering ~May 15 to Jul 19,
 after backfilling the picks table from R2. See `/admin/calibration`.
@@ -344,6 +372,34 @@ Do not tune signal weights in `/admin/model-config`. Weight tuning assumes the
 model ranks correctly and needs rebalancing. The data says the confidence output
 is near-uninformative across its main range — a structural problem in how
 signals combine into a probability, not a weighting problem.
+
+---
+
+## 🎯 SPEC: "High Confidence" tab (requested 2026-07-21, not yet built)
+
+Justin wants a tab surfacing only picks in the band with demonstrated edge, while
+keeping every other pick visible for optional riskier plays. Nothing is hidden or
+suppressed — this is prioritization, not filtering.
+
+**Inclusion rule (pre-fix data, revisit after the 2026-07-21 boundary):**
+`pick_type == "ML" AND conf >= 0.75`. That band won 67.5% (n=40) and 63.8% (n=47)
+even while the model was starved, which is why it is the safe default. Do NOT
+extend it to TOTAL or RL on pre-fix evidence; both were flat-to-negative, but they
+were also measured blind. Re-derive the threshold from post-fix calibration once
+~300 post-2026-07-21 graded picks exist.
+
+**Implementation notes:**
+- Nav buttons live at `run_picks_html.py:1656` (`section-nav-btn`, `data-panel`).
+  Panels are `<div class="section-panel" id="panel-...">`.
+- Blocker: pick cards are built as one large inline template literal inside
+  `renderPicks()` (starts ~line 2055, grid `#picksGrid`). There is no reusable
+  card function. **Step 1 is extracting that markup into `buildPickCard(p, idx)`**
+  so both `#picksGrid` and the new `#highConfGrid` can call it. Do this as its own
+  commit and verify the existing Game Picks tab still renders before adding the tab.
+- run_picks_html.py is 221 KB — Edit truncates it. Use the Python-via-bash splice
+  pattern and `python3 -m py_compile` after every change.
+- Show the band's historical record on the panel (e.g. "ML 75%+: 87 picks, 65.5%
+  since May 15") so the tab carries its own justification.
 
 ---
 

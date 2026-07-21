@@ -1180,6 +1180,16 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .badge-RL   {background:rgba(171,71,188,.15);color:#ce93d8;border:1px solid rgba(171,71,188,.3)}
 .badge-TOTAL{background:rgba(0,230,118,.15);color:#00e676;border:1px solid rgba(0,230,118,.3)}
 .badge-PROP {background:rgba(255,183,77,.15);color:#ffb74d;border:1px solid rgba(255,183,77,.3)}
+.hc-badge{
+  background:linear-gradient(135deg,rgba(255,107,0,.18),rgba(255,183,77,.14));
+  color:#ff9d3c;border:1px solid rgba(255,157,60,.45);
+  padding:2px 8px;border-radius:999px;font-size:.66rem;font-weight:800;
+  letter-spacing:.4px;white-space:nowrap;
+}
+.pick-card.pick-highconf{
+  border-color:rgba(255,157,60,.55);
+  box-shadow:0 0 0 1px rgba(255,157,60,.25), 0 4px 18px rgba(255,107,0,.10);
+}
 .tier-badge{
   font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:4px;
 }
@@ -1639,6 +1649,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <div class="filter-group">
     <span class="filter-label">Confidence</span>
     <button class="filter-btn active" data-group="tier" data-val="all">All</button>
+    <button class="filter-btn" data-group="tier" data-val="HIGHCONF">🔥 High Confidence</button>
     <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock — Best Bets</button>
     <button class="filter-btn" data-group="tier" data-val="STRONG">⭐⭐ Strong</button>
     <button class="filter-btn" data-group="tier" data-val="LEAN">⭐ Lean — Watch Only</button>
@@ -2052,6 +2063,15 @@ function refreshPropButtons(){
   });
 }
 
+// High-confidence band: the ONLY segment with measured edge over two months.
+// ML at 75%+ won 67.5% (n=40) and 63.8% (n=47) vs a 52.38% break-even, and it
+// held even while the model was missing umpire/fatigue/platoon data. Everything
+// else (all TOTAL, all RL, ML under 75%) landed 44-55% — indistinguishable from
+// a coin flip. Threshold should be re-derived from post-2026-07-21 calibration.
+function _isHighConf(p){
+  return p && p.type === "ML" && Number(p.conf) >= 75;
+}
+
 function renderPicks(){
   pickData = [];  // reset registry for fresh + button indices
   const grid = document.getElementById("picksGrid");
@@ -2074,7 +2094,8 @@ function renderPicks(){
   _sorted.forEach(p=>{
     // TBD starter: \u26a0 badge already warns users -- picks remain visible in their model tier
     const show = (filterType==="all" || p.type===filterType)
-              && (filterTier==="all" || p.tier===filterTier)
+              && (filterTier==="all"
+                  || (filterTier==="HIGHCONF" ? _isHighConf(p) : p.tier===filterTier))
               && (!filterTeam || p.away.toLowerCase().includes(filterTeam)
                              || p.home.toLowerCase().includes(filterTeam)
                              || p.team.toLowerCase().includes(filterTeam));
@@ -2217,9 +2238,10 @@ function renderPicks(){
     pickData.push(p);
     const _legIdx = pickData.length - 1;
     _tg.innerHTML += `
-      <div class="pick-card tier-${p.tier}${_isFinal(_findScore(p))?' pick-done':''}" data-type="${p.type}" data-tier="${p.tier}">
+      <div class="pick-card tier-${p.tier}${_isFinal(_findScore(p))?' pick-done':''}${_isHighConf(p)?' pick-highconf':''}" data-type="${p.type}" data-tier="${p.tier}" data-highconf="${_isHighConf(p)?'1':'0'}">
         <div class="pick-top">
           <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
+          ${_isHighConf(p)?`<span class="hc-badge" title="ML at 75%+ — the only band with demonstrated edge (67.5% on n=40, 63.8% on n=47 since May 15)">🔥 HIGH CONFIDENCE</span>`:""}
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}${p.tier==="LEAN"?" — thin edge":""}</span>
         </div>
         <div class="pick-label">${p.label}</div>
@@ -3371,7 +3393,7 @@ document.querySelectorAll(".filter-btn[data-group]").forEach(btn=>{
     document.querySelectorAll(`.filter-btn[data-group="${group}"]`).forEach(b=>{
       b.classList.remove("active","active-gold","active-blue");
     });
-    if(val==="LOCK") btn.classList.add("active-gold");
+    if(val==="HIGHCONF" || val==="LOCK") btn.classList.add("active-gold");
     else if(val==="STRONG") btn.classList.add("active-blue");
     else btn.classList.add("active");
     if(group==="type") filterType = val;
