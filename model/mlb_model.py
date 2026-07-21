@@ -1166,10 +1166,14 @@ class MLBModel:
             "home_sp_gs":     home_sp_recent.get("avg_gs"),
 
             # Platoon splits (ERA vs LHB / RHB)
-            "away_era_vs_lhb": sf(away_vs_lhb.get("era")),
-            "away_era_vs_rhb": sf(away_vs_rhb.get("era")),
-            "home_era_vs_lhb": sf(home_vs_lhb.get("era")),
-            "home_era_vs_rhb": sf(home_vs_rhb.get("era")),
+            # MLB's statSplits pitching payload contains no `era` (and no
+            # earnedRuns to derive one), so every platoon row has era="".
+            # FIP is computed locally by the scraper from hr/bb/k/ip and is
+            # populated, so use it as the fallback rather than reporting None.
+            "away_era_vs_lhb": sf(away_vs_lhb.get("era") or away_vs_lhb.get("fip")),
+            "away_era_vs_rhb": sf(away_vs_rhb.get("era") or away_vs_rhb.get("fip")),
+            "home_era_vs_lhb": sf(home_vs_lhb.get("era") or home_vs_lhb.get("fip")),
+            "home_era_vs_rhb": sf(home_vs_rhb.get("era") or home_vs_rhb.get("fip")),
 
             # Umpire
             "hp_ump":         ump_name,

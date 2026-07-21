@@ -21,7 +21,7 @@ os.makedirs(RAW_DIR, exist_ok=True)
 MLB_API      = "https://statsapi.mlb.com/api/v1"
 HEADERS      = {"User-Agent": "mlb-betting-pipeline/1.0"}
 FIP_CONSTANT = 3.10   # League-average FIP constant (approximation)
-SEASONS      = [2023, 2024, 2025]
+SEASONS      = [2023, 2024, 2025, 2026]
 
 STAT_FIELDNAMES = [
     "season", "player_id", "player_name", "team_id", "team_name",
