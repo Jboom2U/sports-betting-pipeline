@@ -1640,6 +1640,40 @@ border-radius:8px;margin:10px 0}}</style></head><body>
     return Response(html, mimetype="text/html")
 
 
+@app.route("/admin/pinnacle-k-test")
+def pinnacle_k_test():
+    """Verify fetch_strikeout_lines() parses real pitcher K lines + prices from
+    Pinnacle (live, on Railway). Read-only. Gate before wiring into scoring."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/pinnacle-k-test")
+    import html as _h
+    try:
+        from scrapers.mlb_pinnacle_scraper import fetch_strikeout_lines
+        lines = fetch_strikeout_lines()
+    except Exception as e:
+        import traceback
+        return Response(f"<pre>{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
+    rows = "".join(
+        f"<tr><td>{_h.escape(p)}</td><td>{d.get('line')}</td>"
+        f"<td>{d.get('over_price')}</td><td>{d.get('under_price')}</td></tr>"
+        for p, d in sorted(lines.items()))
+    ok = all(d.get("line") is not None and d.get("over_price") is not None
+             and d.get("under_price") is not None for d in lines.values()) and bool(lines)
+    verdict = ("✅ Parser works — line + both prices present" if ok
+               else "⚠️ Missing line or prices on some rows — inspect below")
+    html = f"""<!doctype html><html><head><meta charset=utf-8><title>Pinnacle K test</title>
+<style>body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:720px;margin:0 auto}}
+h2{{color:#58a6ff}} td,th{{padding:5px 12px;border-bottom:1px solid #21262d;font-size:13px;text-align:left}}
+.v{{background:#161b22;padding:12px 16px;border-radius:8px;font-weight:700;margin:10px 0}}</style></head><body>
+<h2>Pinnacle strikeout lines — parser check</h2>
+<div class="v">{verdict}</div>
+<p><b>{len(lines)}</b> pitcher K lines parsed.</p>
+<table><tr><th>Pitcher</th><th>Line</th><th>Over</th><th>Under</th></tr>{rows}</table>
+<p><a href="/admin">&larr; Admin</a></p></body></html>"""
+    return Response(html, mimetype="text/html")
+
+
 @app.route("/admin/pinnacle-test")
 def pinnacle_test():
     """

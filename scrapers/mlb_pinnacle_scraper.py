@@ -251,6 +251,97 @@ def _parse_matchups(raw: list) -> dict:
     return index
 
 
+def _pitcher_from_desc(desc: str) -> str:
+    """'Bryce Elder (Total Strikeouts)(must start)' -> 'Bryce Elder'."""
+    if not desc:
+        return ""
+    return desc.split("(")[0].strip()
+
+
+def fetch_strikeout_lines() -> dict:
+    """
+    Pull REAL pitcher strikeout O/U lines from Pinnacle's free guest API.
+
+    Pinnacle exposes pitcher K props as special matchups: type=="special",
+    units=="Strikeouts", special.description="<Pitcher> (Total Strikeouts)...".
+    The line + Over/Under prices live in /markets/straight keyed by matchupId.
+
+    Returns { pitcher_name: {line, over_price, under_price, over_pid, under_pid} }.
+    Only pitchers Pinnacle actually lists appear — the rest legitimately have no
+    market line (do NOT invent one; that was the old 0.8x-projection bug).
+    """
+    matchups = fetch_matchups()
+
+    # 1. collect strikeout specials: matchupId -> {pitcher, over_pid, under_pid}
+    specials = {}
+    for m in matchups:
+        if not isinstance(m, dict) or m.get("units") != "Strikeouts":
+            continue
+        mid = m.get("id")
+        pitcher = _pitcher_from_desc((m.get("special") or {}).get("description", ""))
+        if mid is None or not pitcher:
+            continue
+        over_pid = under_pid = None
+        for part in m.get("participants", []):
+            nm = (part.get("name") or "").lower()
+            if nm == "over":
+                over_pid = part.get("id")
+            elif nm == "under":
+                under_pid = part.get("id")
+        specials[mid] = {"pitcher": pitcher, "over_pid": over_pid, "under_pid": under_pid}
+
+    if not specials:
+        log.info("[Pinnacle] no strikeout specials in matchups feed")
+        return {}
+
+    # 2. pull markets and index the relevant ones by matchupId
+    markets = fetch_markets()
+    mk_by_mid = {}
+    for mk in markets:
+        mid = mk.get("matchupId") or mk.get("matchup_id")
+        if mid in specials:
+            mk_by_mid.setdefault(mid, []).append(mk)
+
+    def _price_and_point(prices, pid):
+        for pr in prices or []:
+            if pr.get("participantId") == pid or pr.get("participant_id") == pid:
+                price = pr.get("price", pr.get("value"))
+                pt    = pr.get("points", pr.get("point", pr.get("handicap")))
+                try: price = int(round(float(price)))
+                except (TypeError, ValueError): price = None
+                try: pt = float(pt)
+                except (TypeError, ValueError): pt = None
+                return price, pt
+        return None, None
+
+    out = {}
+    for mid, info in specials.items():
+        # totals/ou market for this special
+        ou = None
+        for mk in mk_by_mid.get(mid, []):
+            key = mk.get("key", "")
+            if "ou" in key or "total" in key.lower():
+                ou = mk.get("prices", [])
+                break
+        if ou is None:
+            # some specials carry prices on the first/only market
+            mks = mk_by_mid.get(mid, [])
+            ou = mks[0].get("prices", []) if mks else []
+        over_price, over_pt   = _price_and_point(ou, info["over_pid"])
+        under_price, under_pt = _price_and_point(ou, info["under_pid"])
+        line = over_pt if over_pt is not None else under_pt
+        if line is None:
+            continue   # no usable line — skip (do NOT invent)
+        out[info["pitcher"]] = {
+            "line":        line,
+            "over_price":  over_price,
+            "under_price": under_price,
+        }
+
+    log.info(f"[Pinnacle] parsed {len(out)} pitcher strikeout lines")
+    return out
+
+
 def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str) -> list:
     """
     Merge markets with matchup metadata and return a list of snapshot rows,
