@@ -1531,6 +1531,17 @@ def refresh_signals():
         except Exception as e:
             results.append(f"team_normalize FAILED: {e}")
 
+        # Rebuild the pitcher STATS master with the current season (SEASONS now
+        # includes 2026). The scraper writes raw mlb_pitcher_stats_2026.csv above,
+        # but only the TEAM normalize was wired here — so 2026 pitchers (call-ups
+        # like Jake Bennett) never reached the master and got NO K projection.
+        try:
+            from normalize.mlb_historical_normalize import normalize_pitcher_stats as _psnorm
+            ps = _psnorm()
+            results.append(f"pitcher_stats_normalize: +{ps} rows")
+        except Exception as e:
+            results.append(f"pitcher_stats_normalize FAILED: {e}")
+
         try:
             from db.csv_sync import upload_all as _up
             results.append(f"uploaded: {_up()} file(s)")
