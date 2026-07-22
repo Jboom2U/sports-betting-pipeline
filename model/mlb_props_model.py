@@ -630,7 +630,7 @@ def _norm_cdf(x: float) -> float:
 
 # Flip to True only AFTER side-aware prop grading exists (side column +
 # db/picks_store.py hit-rate queries keyed on picked side, not 'OVER').
-ALLOW_UNDER_K = False
+ALLOW_UNDER_K = True   # enabled 2026-07-22: side-aware grading landed (pick_side column + side-aware hit queries)
 
 
 def score_k_prop(pitcher_name: str, pitcher_stats: dict,
@@ -723,7 +723,7 @@ def score_k_prop(pitcher_name: str, pitcher_stats: dict,
     return {
         "prop_type":   "K",
         "line":        line,
-        "side":        side,
+        "pick_side":   side,            # OVER / UNDER (bet direction)
         "label":       f"{side} {line}",
         "price":       price,
         "ev":          ev,

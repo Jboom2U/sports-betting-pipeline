@@ -415,8 +415,9 @@ def get_monthly_accuracy() -> list:
 # ── Prop history ──────────────────────────────────────────────────────────────
 
 def save_prop_pick(game_date, player_name, team, away_team, home_team,
-                   prop_type, line, model_conf):
-    """Insert a prop pick row (ungraded). Ignores duplicates."""
+                   prop_type, line, model_conf, pick_side="OVER"):
+    """Insert a prop pick row (ungraded). Ignores duplicates.
+    pick_side = OVER/UNDER (the direction bet); defaults OVER (batter props)."""
     with db_conn() as conn:
         if conn is None:
             log.debug("No DB — prop pick not saved.")
@@ -427,12 +428,13 @@ def save_prop_pick(game_date, player_name, team, away_team, home_team,
                 """
                 INSERT INTO player_prop_history
                     (game_date, player_name, team, away_team, home_team,
-                     prop_type, line, model_conf)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                     prop_type, line, model_conf, pick_side)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (game_date, player_name, prop_type, line) DO NOTHING
                 """,
                 (game_date, player_name, team, away_team, home_team,
-                 prop_type, float(line), round(float(model_conf), 3))
+                 prop_type, float(line), round(float(model_conf), 3),
+                 (pick_side or "OVER").upper())
             )
         except Exception as e:
             log.warning(f"save_prop_pick failed: {e}")
@@ -490,9 +492,9 @@ def get_prop_accuracy(days: int = 30) -> list:
                 SELECT
                     prop_type,
                     COUNT(*) FILTER (WHERE result IN ('OVER','UNDER','PUSH')) AS total,
-                    COUNT(*) FILTER (WHERE result = 'OVER')  AS hits,
+                    COUNT(*) FILTER (WHERE result = COALESCE(pick_side, 'OVER'))  AS hits,
                     ROUND(
-                        COUNT(*) FILTER (WHERE result = 'OVER')::numeric /
+                        COUNT(*) FILTER (WHERE result = COALESCE(pick_side, 'OVER'))::numeric /
                         NULLIF(COUNT(*) FILTER (WHERE result IN ('OVER','UNDER','PUSH')), 0),
                         3
                     ) AS hit_rate,
@@ -532,9 +534,9 @@ def get_player_prop_accuracy(days: int = 30, min_picks: int = 3) -> list:
                     player_name,
                     prop_type,
                     COUNT(*) AS total,
-                    COUNT(*) FILTER (WHERE result = 'OVER') AS hits,
+                    COUNT(*) FILTER (WHERE result = COALESCE(pick_side, 'OVER')) AS hits,
                     ROUND(
-                        COUNT(*) FILTER (WHERE result = 'OVER')::numeric /
+                        COUNT(*) FILTER (WHERE result = COALESCE(pick_side, 'OVER'))::numeric /
                         NULLIF(COUNT(*), 0),
                         3
                     ) AS hit_rate,
@@ -572,7 +574,7 @@ def get_player_trailing_hit_rate(player_name: str, prop_type: str,
                 """
                 SELECT
                     COUNT(*) AS total,
-                    COUNT(*) FILTER (WHERE result = 'OVER') AS hits
+                    COUNT(*) FILTER (WHERE result = COALESCE(pick_side, 'OVER')) AS hits
                 FROM player_prop_history
                 WHERE player_name = %s
                   AND prop_type   = %s

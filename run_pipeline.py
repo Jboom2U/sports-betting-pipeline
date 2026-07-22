@@ -291,6 +291,7 @@ def main(date=None):
                 prop_type  = pp.get("prop_type", ""),
                 line       = pp.get("line", 0),
                 model_conf = pp.get("confidence", 0),
+                pick_side  = pp.get("pick_side", "OVER"),  # K props can be UNDER
             )
             saved_props += 1
         log.info(f"DB: {saved_props} prop picks saved for {today_str2}.")

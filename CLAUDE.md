@@ -551,17 +551,22 @@ not the old fictional 0.8x-projection line. Free (Pinnacle guest API), sharp boo
 - Verify routes: `/admin/pinnacle-test` (feed live?), `/admin/pinnacle-k-test`
   (parser + prices).
 
-### ⏭️ UNDER direction is GATED OFF — next session
-`ALLOW_UNDER_K = False` in `mlb_props_model.py`. The model computes the UNDER side
-but it is suppressed because grading can't handle it yet. To enable UNDER props
-(the "hidden gem" case Justin wants), do ALL of:
-1. `player_prop_history`: add a `side` column (schema.py migration).
-2. `save_prop_pick` + its caller (`run_pipeline.py:285`): store the picked side.
-3. Three hit-rate queries in `db/picks_store.py` (lines ~493, ~535, ~575) that
-   hardcode `result = 'OVER'` as a hit: change to hit = (result == picked side).
-4. `grade_prop_pick` still stores the OUTCOME direction (OVER/UNDER/PUSH) — that
-   is correct, leave it. Win/loss = outcome == side.
-Then flip `ALLOW_UNDER_K = True`. Do NOT flip it before 1-3 or unders grade wrong.
+### ✅ UNDER direction ENABLED 2026-07-22 (side-aware grading landed)
+`ALLOW_UNDER_K = True`. Full side-aware prop grading is in:
+- `player_prop_history.pick_side` column (OVER/UNDER, default 'OVER') — added in
+  both the CREATE TABLE and an idempotent `ADD COLUMN IF NOT EXISTS` migration in
+  `schema.py create_all()`. Existing rows default 'OVER' (all were over-picks).
+- `save_prop_pick(pick_side=...)` stores it; caller `run_pipeline.py` passes
+  `pp.get("pick_side","OVER")`. Batter props have no pick_side => default OVER.
+- `grade_prop_pick` still stores the OUTCOME direction in `result`
+  (OVER/UNDER/PUSH) — correct, unchanged. WIN = (result == pick_side).
+- All hit-rate queries in `db/picks_store.py` and the yesterday-props panel in
+  `run_picks_html.py` now count `result = COALESCE(pick_side,'OVER')` as a hit.
+- NAMING: the prop dict's `side` means away/home/pitcher (participant); the bet
+  direction is `pick_side` (OVER/UNDER). Do NOT conflate them — score_k_prop
+  returns `pick_side`, the wrapper keeps `side`="pitcher".
+- Fixed along the way: the yesterday-props panel counted result=='WIN' which
+  NEVER matched (result is OVER/UNDER/PUSH) — was always 0-0; now side-aware.
 
 ### Coverage note
 Only pitchers Pinnacle lists (~8/slate) get a K prop now, vs ~13 fictional ones

@@ -4581,15 +4581,19 @@ def main(date=None, no_open=False):
                     # panel has never populated. result is 'WIN'/'LOSS'/'PUSH',
                     # so it must be compared, not treated as a boolean.
                     _cur2.execute(
-                        "SELECT player_name, prop_type, result FROM player_prop_history "
+                        "SELECT player_name, prop_type, result, "
+                        "COALESCE(pick_side,'OVER') FROM player_prop_history "
                         "WHERE game_date = %s AND result IS NOT NULL "
-                        "ORDER BY CASE result WHEN 'WIN' THEN 0 ELSE 1 END",
+                        "ORDER BY player_name",
                         (_yday_str,)
                     )
                     _prop_rows = _cur2.fetchall()
-                _pw = sum(1 for r in _prop_rows if r[2] == "WIN")
-                _pl = sum(1 for r in _prop_rows if r[2] == "LOSS")
-                _top = [{"player": r[0], "prop_type": r[1], "hit": r[2] == "WIN"}
+                # WIN = outcome direction (r[2]=OVER/UNDER/PUSH) matches the
+                # picked side (r[3]). PUSH is neither win nor loss.
+                def _phit(r): return r[2] == r[3]
+                _pw = sum(1 for r in _prop_rows if _phit(r))
+                _pl = sum(1 for r in _prop_rows if r[2] != r[3] and r[2] != "PUSH")
+                _top = [{"player": r[0], "prop_type": r[1], "hit": _phit(r)}
                         for r in _prop_rows[:6]]
                 yesterday_data["props_yesterday"] = {"wins": _pw, "losses": _pl, "top": _top}
     except Exception as _pe:

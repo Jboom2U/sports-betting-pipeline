@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS player_prop_history (
     line            NUMERIC(4,1) NOT NULL,
     actual_value    NUMERIC(5,1),
     result          TEXT,
+    pick_side       TEXT DEFAULT 'OVER',   -- direction bet: OVER / UNDER
     model_conf      NUMERIC(5,3),
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     graded_at       TIMESTAMPTZ,
@@ -194,6 +195,11 @@ def create_all():
             cur.execute(_PLAYER_GAME_LOGS)
             for idx in _INDEXES:
                 cur.execute(idx)
+            # Migration: pick_side = the DIRECTION bet (OVER/UNDER). Existing rows
+            # are all historical OVER props, so default 'OVER' keeps them correct.
+            cur.execute(
+                "ALTER TABLE player_prop_history "
+                "ADD COLUMN IF NOT EXISTS pick_side TEXT DEFAULT 'OVER'")
             log.info("DB schema verified / created.")
         except Exception as e:
             log.warning(f"Schema creation failed (non-fatal): {e}")
