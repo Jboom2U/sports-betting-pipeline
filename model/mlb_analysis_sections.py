@@ -166,13 +166,18 @@ def build_monte_carlo(all_picks):
         model_p  = p.get("confidence", p.get("conf", 0))
         team     = p.get("team", p.get("label", ""))
         game_lbl = p.get("game", "")
-        away     = p.get("away", "")
         tier     = p.get("tier", "")
+        # Odds and the away-team name live on game_data (the scored-game dict),
+        # NOT on the top-level pick. Reading p.get("ml_away_odds") always
+        # returned None, which is why the Market Implied column showed "N/A"
+        # and every EV tag said "No Market" since the tab was built.
+        gd       = p.get("game_data", {}) or {}
+        away     = gd.get("away_team", p.get("away", ""))
         is_away  = bool(
             away and team
             and (away.lower() in team.lower() or team.lower() in away.lower())
         )
-        pick_odds  = p.get("ml_away_odds") if is_away else p.get("ml_home_odds")
+        pick_odds  = gd.get("ml_away_odds") if is_away else gd.get("ml_home_odds")
         market_imp = american_to_implied(pick_odds)
 
         hits    = sum(1 for _ in range(1000) if random.random() < model_p)

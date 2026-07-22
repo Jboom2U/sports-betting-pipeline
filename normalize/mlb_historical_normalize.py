@@ -17,7 +17,7 @@ RAW_DIR   = os.path.join(BASE_DIR, "data", "raw")
 CLEAN_DIR = os.path.join(BASE_DIR, "data", "clean")
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
-SEASONS = [2023, 2024, 2025]
+SEASONS = [2023, 2024, 2025, 2026]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

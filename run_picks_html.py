@@ -1791,6 +1791,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <div id="todayInProgressBanner" style="display:none;background:#1c2128;border:1px solid #30363d;border-left:3px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:12px;color:#8b949e;font-size:.85rem">
       Today's games are in progress &mdash; showing <strong style="color:#f59e0b">tomorrow's picks</strong> below.
     </div>
+    <div id="hcTrackRecord" style="margin:0 0 14px;display:none;gap:10px;flex-wrap:wrap"></div>
     <div class="picks-grid" id="picksGrid"></div>
 
     <!-- Sharp Money Panel — only shown when movement data exists -->
@@ -2165,6 +2166,30 @@ function refreshPropButtons(){
 // else (all TOTAL, all RL, ML under 75%) landed 44-55% — indistinguishable from
 // a coin flip. Threshold should be re-derived from post-2026-07-21 calibration.
 const HIGH_CONF = __HIGHCONF__;   // {rule:{ML:75}, record:{ML:"ML 75%+: 87 picks, 65.5%"}}
+
+// Show the badge tiers' live graded record so the "best pick" claim is verifiable.
+// Records are derived server-side from the model's own graded history.
+(function renderHCTrackRecord(){
+  try{
+    const box = document.getElementById("hcTrackRecord");
+    if(!box || !HIGH_CONF) return;
+    const chips = [];
+    const elite = HIGH_CONF.record ? Object.values(HIGH_CONF.record) : [];
+    const wide  = HIGH_CONF.record_wide ? Object.values(HIGH_CONF.record_wide) : [];
+    elite.forEach(r => chips.push(
+      `<span style="background:linear-gradient(135deg,rgba(255,107,0,.18),rgba(255,183,77,.14));`+
+      `color:#ff9d3c;border:1px solid rgba(255,157,60,.45);padding:4px 12px;border-radius:999px;`+
+      `font-size:.8rem;font-weight:700">🔥 ${r}</span>`));
+    wide.forEach(r => chips.push(
+      `<span style="background:rgba(63,185,80,.12);color:#3fb950;border:1px solid rgba(63,185,80,.4);`+
+      `padding:4px 12px;border-radius:999px;font-size:.8rem;font-weight:700">📈 ${r}</span>`));
+    if(chips.length){
+      box.innerHTML = `<span style="color:#8b949e;font-size:.78rem;align-self:center">Badge track record `+
+        `(graded):</span>` + chips.join("");
+      box.style.display = "flex";
+    }
+  }catch(e){}
+})();
 
 function _isHighConf(p){
   if(!p || !HIGH_CONF || !HIGH_CONF.rule) return false;
@@ -3719,17 +3744,21 @@ async function forceLineupsRefresh(){
   try{
     const res = await fetch("/force-lineups");
     if(res.ok){
+      let note = "";
+      try { const j = await res.json(); note = j.message || ""; } catch(e){}
       let secs = 90;
       if(status){
         status.style.color = "#4fc3f7";
-        status.textContent = `Updating in ${secs}s…`;
+        // Show what actually changed (from the server), then count down to reload.
+        const base = note ? note.replace(/\s*Dashboard refreshing…\s*$/, "") : "Refreshing";
+        status.textContent = `${base} — reloading in ${secs}s…`;
         const timer = setInterval(() => {
           secs--;
           if(secs <= 0){
             clearInterval(timer);
             location.reload(true);
           } else {
-            status.textContent = `Updating in ${secs}s…`;
+            status.textContent = `${base} — reloading in ${secs}s…`;
           }
         }, 1000);
       } else {
@@ -4027,11 +4056,13 @@ function renderDailySummary(){
 
   const TIER_COLOR = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a",TOSSUP:"#a09ae0"};
 
-  // Match a pick to a score entry
+  // Match a pick to a score entry — use the LIVE feed, not static DATA_SCORES,
+  // so games flow in as they finish during the evening. _liveScores() returns
+  // window._liveGames (updated by the ticker) and falls back to DATA_SCORES.
   function findScore(pick){
-    return (DATA_SCORES||[]).find(s =>
-      (s.away===pick.away && s.home===pick.home) ||
-      (s.away===pick.home && s.home===pick.away)
+    return _liveScores().find(s =>
+      (_scoreAway(s)===pick.away && _scoreHome(s)===pick.home) ||
+      (_scoreAway(s)===pick.home && _scoreHome(s)===pick.away)
     );
   }
 

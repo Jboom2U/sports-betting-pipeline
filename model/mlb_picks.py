@@ -82,8 +82,23 @@ def generate_picks(scored_games: list, cfg: dict = None) -> list:
     for g in scored_games:
         game_label = f"{g['away_team']} @ {g['home_team']}"
 
+        # ── TBD starter suppression ─────────────────────────────────────────
+        # Run projections (totals, run line) lean heavily on the starting
+        # pitcher. When a starter is unannounced ("TBD"), those numbers are
+        # guesses off a league-average filler, so we do NOT publish TOTAL or RL
+        # for that game. Moneyline is more robust (team quality carries it), so
+        # it still publishes but is knocked down one tier — and capped below
+        # LOCK — when BOTH starters are TBD, since that is the least certain case.
+        _away_tbd = (g.get("away_sp", "TBD") or "TBD").strip().upper() == "TBD"
+        _home_tbd = (g.get("home_sp", "TBD") or "TBD").strip().upper() == "TBD"
+        _either_tbd = _away_tbd or _home_tbd
+        _both_tbd   = _away_tbd and _home_tbd
+
         # ── Moneyline ──────────────────────────────────────────────────────
         ml_conf = g["ml_conf"]
+        if _both_tbd:
+            # Cap below LOCK and drop a tier — never a LOCK on two unknown SPs.
+            ml_conf = min(ml_conf, LOCK_THRESH - 0.001)
         if ml_conf >= TOSSUP_THRESH:
             # opp_team: whichever team is NOT the ml_team
             ml_team = g["ml_team"]
@@ -107,7 +122,7 @@ def generate_picks(scored_games: list, cfg: dict = None) -> list:
 
         # ── Totals ─────────────────────────────────────────────────────────
         tot_conf = g["total_conf"]
-        if tot_conf >= TOSSUP_THRESH:
+        if tot_conf >= TOSSUP_THRESH and not _either_tbd:
             total_pick = g["total_pick"]
             opp_side = "UNDER" if total_pick == "OVER" else "OVER"
             picks.append({
@@ -129,7 +144,7 @@ def generate_picks(scored_games: list, cfg: dict = None) -> list:
 
         # ── Run Line ───────────────────────────────────────────────────────
         rl_conf = g["rl_conf"]
-        if rl_conf >= TOSSUP_THRESH and g["rl_team"]:
+        if rl_conf >= TOSSUP_THRESH and g["rl_team"] and not _either_tbd:
             rl_team = g["rl_team"]
             opp_team = g["home_team"] if rl_team == g["away_team"] else g["away_team"]
             picks.append({

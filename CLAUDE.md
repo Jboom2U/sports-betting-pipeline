@@ -623,6 +623,40 @@ subsystems below — use it before ever touching model weights.
 
 ---
 
+## Fixed 2026-07-22 (single bundle)
+- **2026 team hitting data.** `SEASONS` in `mlb_team_scraper.py` and
+  `mlb_historical_normalize.py` now include 2026. Wired the team scrape + team
+  normalize into `/admin/refresh-signals` (the scraper was never in the daily
+  pipeline, which is why the master was frozen at 2023-2025). Dedup is by
+  (team_id, season) so re-running is safe. RUN /admin/refresh-signals after
+  deploy to populate 2026, then confirm K prop opponent factors vary.
+- **TBD starter suppression (was documented but NOT implemented).** In
+  `mlb_picks.py`: either SP TBD -> suppress TOTAL and RL entirely; both SP TBD ->
+  ML capped below LOCK and dropped a tier. Note: "Lineup Not Set" (batting order)
+  is a DIFFERENT flag from "Starter Unknown" (pitcher TBD) — a game can have
+  confirmed lineups but a TBD starter.
+- **Monte Carlo market column.** `build_monte_carlo` now reads odds + away team
+  from `p["game_data"]` (it was reading `p.get("ml_away_odds")` off the top-level
+  pick, always None -> "No Market" on every row since built).
+- **Daily Summary.** `renderDailySummary` now matches picks against the LIVE
+  score feed (`_liveScores()`) instead of static baked-in DATA_SCORES, so games
+  flow in as they finish. DATA_PICKS always holds today (score_today pivot=False);
+  the tomorrow-switch is only a client-side grid toggle.
+- **Fire/Profitable track-record banner.** Shows the badge tiers' derived graded
+  record (e.g. "🔥 ML 75%+: 87 picks, 65.5%") above the picks grid. Records were
+  already computed in compute_high_conf_rule(); this just surfaces them. NOTE: the
+  🔥/📈 picks ARE graded — they are plain ML picks in the picks table; the badge
+  is a display flag, not a separate pick type.
+
+### Deferred decision (not a bug): true closing line
+Odds pull only at 6am + once ~2h before earliest first pitch. There are NO
+in-game odds pulls, so sharp action / line movement is ALREADY frozen pre-game —
+nothing to "freeze." The only refinement: the afternoon snapshot is 2h out, not
+at first pitch, so it is a "2-hours-out" line, not the true close. Capturing the
+actual close = one extra Odds API pull near game time (quota cost). Justin's call.
+
+---
+
 ## Fixed 2026-07-20
 - **DB connection pool leak** (root cause of ~2 months of silent data loss):
   `run_picks_html.py` called `get_conn()` then `conn.close()`, never returning the

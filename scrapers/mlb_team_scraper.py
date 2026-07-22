@@ -19,7 +19,7 @@ os.makedirs(RAW_DIR, exist_ok=True)
 
 MLB_API = "https://statsapi.mlb.com/api/v1"
 HEADERS = {"User-Agent": "mlb-betting-pipeline/1.0"}
-SEASONS = [2023, 2024, 2025]
+SEASONS = [2023, 2024, 2025, 2026]
 
 HITTING_FIELDNAMES = [
     "season", "team_id", "team_name", "games_played",

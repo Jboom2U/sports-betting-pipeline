@@ -578,33 +578,71 @@ def force_statcast():
 
 @app.route("/force-lineups")
 def force_lineups():
-    """Force a fresh lineup + hitter scrape, then rebuild dashboard. No Odds API calls."""
+    """
+    Manual refresh of BOTH batting lineups AND probable starting pitchers, then
+    rebuild the dashboard. No Odds API calls (MLB schedule + lineup endpoints only).
+
+    Batting order and starting pitcher come from DIFFERENT sources: the lineup
+    scraper only updates the 1-9 order, while starters live in the schedule's
+    probable_pitcher fields. The old button refreshed only the former, so a
+    starter announced after 6am stayed "TBD" until the 4:40 afternoon refresh.
+    This does both, synchronously, and reports what actually changed.
+    """
+    lineups_scraped = confirmed = starters_updated = 0
+
+    # 1. Batting lineups (sync so we can report counts)
+    try:
+        from scrapers.mlb_lineup_scraper import run as run_lu
+        result = run_lu() or []
+        lineups_scraped = len(result)
+        confirmed = sum(1 for g in result if isinstance(g, dict) and g.get("lineup_confirmed"))
+        log.info(f"Force-lineups: {lineups_scraped} games scraped, {confirmed} confirmed")
+    except Exception as e:
+        log.warning(f"Force-lineups lineup fetch failed: {e}")
+
+    # 2. Probable starting pitchers — the piece the button used to miss.
+    #    upsert_schedule_pitchers returns the count of games whose starter
+    #    changed/filled, which is exactly the "did any TBD resolve" signal.
+    try:
+        from scrapers.mlb_scraper import fetch_schedule
+        from normalize.mlb_normalize import upsert_schedule_pitchers
+        fresh_sched = fetch_schedule(days_ahead=1)
+        starters_updated = upsert_schedule_pitchers(fresh_sched)
+        log.info(f"Force-lineups: {starters_updated} starter(s) updated")
+    except Exception as e:
+        log.warning(f"Force-lineups starter refresh failed: {e}")
+
+    # 3. Hitter stats + R2 upload + dashboard rebuild — async (slow, not needed
+    #    for the response summary).
     def _worker():
-        try:
-            from scrapers.mlb_lineup_scraper import run as run_lu
-            result = run_lu()
-            log.info(f"Force-lineups: {len(result)} games scraped")
-        except Exception as e:
-            log.warning(f"Force-lineups lineup fetch failed: {e}")
         try:
             from scrapers.mlb_hitter_scraper import run as run_hs
             run_hs()
-            log.info("Force-lineups: hitter stats refreshed")
         except Exception as e:
             log.warning(f"Force-lineups hitter scraper failed: {e}")
         try:
             from db.csv_sync import upload_all, storage_available
             if storage_available():
-                n = upload_all()
-                log.info(f"Force-lineups: {n} CSV(s) uploaded to R2")
+                upload_all()
         except Exception as e:
             log.warning(f"Force-lineups R2 upload failed: {e}")
         with _cache_lock:
             _cache["generated_at"] = 0
         _regenerate_in_background()
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-    return {"status": "ok", "message": "Lineup refresh started — dashboard will update in ~90 seconds."}
+    threading.Thread(target=_worker, daemon=True).start()
+
+    # Human-readable note for the toast.
+    bits = []
+    if confirmed:        bits.append(f"{confirmed} lineup(s) confirmed")
+    if starters_updated: bits.append(f"{starters_updated} starter(s) updated")
+    if bits:
+        msg = "Updated: " + ", ".join(bits) + ". Dashboard refreshing…"
+    else:
+        msg = "No new lineups or starters posted yet. Dashboard refreshing…"
+
+    return {"status": "ok", "lineups_scraped": lineups_scraped,
+            "confirmed": confirmed, "starters_updated": starters_updated,
+            "message": msg}
 
 
 _ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "")
@@ -1464,6 +1502,24 @@ def refresh_signals():
             results.append(f"pitcher_normalize: {r}")
         except Exception as e:
             results.append(f"pitcher_normalize FAILED: {e}")
+
+        # Team hitting/pitching — pulls current season (SEASONS now includes 2026).
+        # Master was frozen at 2023-2025 because this scraper is not in the daily
+        # pipeline; without it K props score on stale opponent K-rates.
+        try:
+            from scrapers.mlb_team_scraper import run as _teams
+            tr = _teams()
+            results.append(f"team_scrape: {tr}")
+        except Exception as e:
+            results.append(f"team_scrape FAILED: {e}")
+
+        try:
+            from normalize.mlb_historical_normalize import normalize_team_stats as _tnorm
+            th = _tnorm("hitting")
+            tp = _tnorm("pitching")
+            results.append(f"team_normalize: hitting +{th}, pitching +{tp}")
+        except Exception as e:
+            results.append(f"team_normalize FAILED: {e}")
 
         try:
             from db.csv_sync import upload_all as _up
