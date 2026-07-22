@@ -654,6 +654,14 @@ def score_k_prop(pitcher_name: str, pitcher_stats: dict,
     if k9 < 1.0:
         return None   # no data
 
+    # Opener / short-outing guard. A Pinnacle K line at/below 2.5 means the book
+    # expects a ~1-2 inning outing (opener or bulk reliever), but this model
+    # projects a FULL start (innings_expected=5.5). That mismatch produced fake
+    # locks like "Braydon Fisher Over 0.5, proj 4.83 (94%)". Real starters sit at
+    # 3.5+; below that the starter projection is invalid, so skip.
+    if line <= 2.5:
+        return None
+
     # Opponent team K rate adjustment vs league average (≈22%)
     league_k_rate  = 0.220
     opp_k_factor   = opp_team_k_rate / league_k_rate if opp_team_k_rate > 0 else 1.0
@@ -726,6 +734,8 @@ def score_k_prop(pitcher_name: str, pitcher_stats: dict,
         "pick_side":   side,            # OVER / UNDER (bet direction)
         "label":       f"{side} {line}",
         "price":       price,
+        "over_price":  over_price,
+        "under_price": under_price,
         "ev":          ev,
         "player_name": pitcher_name,
         "proj":        round(proj_k, 2),

@@ -651,6 +651,11 @@ def prep_props(props: list) -> list:
             "unconfirmed":  unconfirmed,
             "tbd_sp":       tbd_sp,
             "projected":    p.get("projected", False),
+            # Real sportsbook (Pinnacle) line prices for K props, shown on card.
+            "pick_side":    p.get("pick_side"),
+            "over_price":   p.get("over_price"),
+            "under_price":  p.get("under_price"),
+            "ev":           p.get("ev"),
         })
     return out
 
@@ -1543,6 +1548,12 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   background:rgba(255,255,255,.04);border-radius:6px;padding:6px 10px}
 .prop-line-label{font-size:.72rem;color:var(--sub);font-weight:600}
 .prop-line-val{font-size:.92rem;font-weight:700;color:var(--text)}
+.prop-book-row{display:flex;justify-content:space-between;align-items:center;margin:8px 0;
+  padding-top:8px;border-top:1px solid rgba(255,255,255,.06)}
+.prop-book-vals{display:flex;gap:6px}
+.prop-book-chip{font-size:.74rem;font-weight:700;padding:2px 8px;border-radius:8px;
+  background:rgba(255,255,255,.05);color:var(--sub);border:1px solid rgba(255,255,255,.08)}
+.prop-book-chip.chip-pick{background:rgba(63,185,80,.15);color:#3fb950;border-color:rgba(63,185,80,.35)}
 .prop-proj-val{font-size:.8rem;font-weight:600;color:var(--green)}
 .prop-reasoning{
   font-size:.73rem;color:var(--sub);line-height:1.5;
@@ -3507,6 +3518,14 @@ function renderProps(){
         </div>
         ${propFavHtml}
         ${propWarnHtml}
+        ${(p.over_price!=null||p.under_price!=null) ? `
+        <div class="prop-book-row">
+          <span class="prop-line-label">SPORTSBOOK (Pinnacle)</span>
+          <span class="prop-book-vals">
+            <span class="prop-book-chip ${p.pick_side==='OVER'?'chip-pick':''}">O ${p.line} ${fmtOdds(p.over_price)}</span>
+            <span class="prop-book-chip ${p.pick_side==='UNDER'?'chip-pick':''}">U ${p.line} ${fmtOdds(p.under_price)}</span>
+          </span>
+        </div>` : ""}
         <div class="prop-reasoning">${p.reasoning}</div>
       </div>`;
   });
