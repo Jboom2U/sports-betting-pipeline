@@ -1640,6 +1640,58 @@ border-radius:8px;margin:10px 0}}</style></head><body>
     return Response(html, mimetype="text/html")
 
 
+@app.route("/admin/pinnacle-test")
+def pinnacle_test():
+    """
+    One-off: does Pinnacle's guest API return CURRENT games + strikeout props
+    when called WITH the scraper's real headers (Origin/Referer)? Sandbox fetches
+    can't send those headers and got a stale May cache, so this must run on
+    Railway to be trusted. Read-only, no writes, no Odds API.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/pinnacle-test")
+    import html as _h
+    from collections import Counter
+    try:
+        from scrapers.mlb_pinnacle_scraper import fetch_matchups
+        m = fetch_matchups() or []
+    except Exception as e:
+        import traceback
+        return Response(f"<pre>{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
+
+    dates = Counter()
+    k_specials = []
+    for x in m:
+        if not isinstance(x, dict):
+            continue
+        st = str(x.get("startTime", ""))[:10]
+        if st:
+            dates[st] += 1
+        if x.get("units") == "Strikeouts":
+            desc = (x.get("special") or {}).get("description", "")
+            k_specials.append((st, desc))
+
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    rows = "".join(f"<tr><td>{d}</td><td>{n}</td></tr>" for d, n in sorted(dates.items()))
+    ks   = "".join(f"<tr><td>{_h.escape(st)}</td><td>{_h.escape(dc)}</td></tr>"
+                   for st, dc in k_specials[:40])
+    verdict = ("✅ LIVE — today is present" if today in dates
+               else "⚠️ STALE — today NOT in the feed (dates: "
+                    + ", ".join(sorted(dates)) + ")")
+    html = f"""<!doctype html><html><head><meta charset=utf-8><title>Pinnacle test</title>
+<style>body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:820px;margin:0 auto}}
+h2{{color:#58a6ff}} td{{padding:5px 10px;border-bottom:1px solid #21262d;font-size:13px}}
+.v{{background:#161b22;padding:12px 16px;border-radius:8px;font-weight:700;margin:10px 0}}</style></head><body>
+<h2>Pinnacle guest API — live check ({today} ET)</h2>
+<div class="v">{verdict}</div>
+<p><b>{len(m)}</b> matchups, <b>{len(k_specials)}</b> strikeout specials.</p>
+<h3>Matchups by start date</h3><table>{rows}</table>
+<h3>Strikeout specials (first 40)</h3><table><tr><th>date</th><th>pitcher</th></tr>{ks}</table>
+<p><a href="/admin">&larr; Admin</a></p></body></html>"""
+    return Response(html, mimetype="text/html")
+
+
 @app.route("/admin/signal-audit")
 def signal_audit():
     """

@@ -533,6 +533,52 @@ frontend is worth committing to.
 
 ---
 
+## 🔴 MAJOR: K prop model uses a FICTIONAL line, over-only (found 2026-07-22)
+
+`score_all_props` sets the strikeout line to `_line = round(_exp * 0.80 * 2)/2`
+(`mlb_props_model.py:1041,1290`) — i.e. 80% of the model's OWN projection — and
+`score_k_prop` only computes P(over). Consequences:
+
+1. It is NOT comparing to a real sportsbook line. It invents an easy line below
+   its projection and bets over, so almost every pitcher WITH data looks like a
+   favorable OVER. The graded "record" measures beating 0.8x the model's own
+   projection, NOT beating a book.
+2. UNDER plays are invisible. A soft-tosser vs a low-K team is a strong UNDER and
+   the model never surfaces it (low over-prob -> SKIP -> None).
+3. "No pitcher prop for some games" has two indistinguishable causes:
+   - `k9 < 1.0` (line 647): pitcher not in `mlb_pitcher_stats_master.csv` — a
+     rookie/callup or a name-match miss between schedule and stats master.
+   - `tier == SKIP` (line 671): below display threshold (rare given the self-set
+     line). Both render as silence, so the user cannot tell "looked and passed"
+     from "never looked."
+
+### The fix (dedicated props-model session, not a quick patch)
+- **USE PINNACLE, NOT THE ODDS API (discovered 2026-07-22).** The existing
+  `scrapers/mlb_pinnacle_scraper.py` hits Pinnacle's FREE unauthenticated guest
+  API (`guest.api.arcadia.pinnacle.com/0.1/leagues/246/matchups?brandId=0`) and
+  that feed ALREADY contains pitcher strikeout props as `type=="special"`,
+  `units=="Strikeouts"` matchups, e.g.
+  `special.description = "Bryce Elder (Total Strikeouts)(must start)"` with
+  Over/Under participants. The line + prices are in the `/markets/straight`
+  endpoint the scraper already fetches, keyed by matchupId. So real K lines cost
+  ZERO Odds API quota, and Pinnacle is the SHARPEST book = best CLV reference.
+  Extend the scraper to parse the strikeout specials; match "Bryce Elder" to the
+  schedule's probable pitcher (name-match, same class as Kalshi/platoon).
+  VERIFY the specials are current for the day's starters before wiring in — the
+  sample pulled had a stale May start time.
+  (Odds API cost was verified as a fallback only: pitcher_strikeouts = 1 credit
+  PER GAME on the per-event endpoint, ~15/day ~450/month — fits the 500 cap only
+  if pulled once/day + cached. Batter props ~1350/month, do NOT fit. Prefer
+  Pinnacle; keep Odds API as the documented fallback.)
+- Score BOTH over and under against the real line so UNDER gems surface.
+- Match starters by player_id, not name, so callups stop falling through.
+- Build a PROJECTIONS VIEW: every starter, real line, model projection, edge in
+  both directions, unfiltered, with missing-data flagged (not hidden). This is
+  the surface that turns "hidden gems Justin finds manually" into model output
+  and exposes coverage gaps at a glance. Ties into the player-stats/RotoBot track.
+
+---
+
 ## Active Work Queue
 1. **Resolve the 51.8% vs 46.0% split** between live-saved and backfilled picks
    (see Calibration Findings). Gates all model work.
