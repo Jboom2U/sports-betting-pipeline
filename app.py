@@ -612,6 +612,15 @@ def force_lineups():
     except Exception as e:
         log.warning(f"Force-lineups starter refresh failed: {e}")
 
+    # 2b. Real pitcher K lines from Pinnacle (free) — starters known, specials posted.
+    k_lines = 0
+    try:
+        from scrapers.mlb_pinnacle_scraper import save_strikeout_lines
+        k_lines = save_strikeout_lines()
+        log.info(f"Force-lineups: {k_lines} Pinnacle K line(s)")
+    except Exception as e:
+        log.warning(f"Force-lineups K line pull failed: {e}")
+
     # 3. Hitter stats + R2 upload + dashboard rebuild — async (slow, not needed
     #    for the response summary).
     def _worker():
@@ -635,6 +644,7 @@ def force_lineups():
     bits = []
     if confirmed:        bits.append(f"{confirmed} lineup(s) confirmed")
     if starters_updated: bits.append(f"{starters_updated} starter(s) updated")
+    if k_lines:          bits.append(f"{k_lines} K line(s)")
     if bits:
         msg = "Updated: " + ", ".join(bits) + ". Dashboard refreshing…"
     else:
@@ -2905,6 +2915,14 @@ def _run_afternoon_refresh():
         fresh_sched = fetch_schedule(days_ahead=1)   # today + tomorrow
         n_sp = upsert_schedule_pitchers(fresh_sched)
         log.info(f"Afternoon probable pitchers refreshed: {n_sp} game(s) updated/inserted")
+        # Real pitcher strikeout lines from Pinnacle (free, sharp) — starters are
+        # announced by now so the specials are posted.
+        try:
+            from scrapers.mlb_pinnacle_scraper import save_strikeout_lines
+            n_k = save_strikeout_lines()
+            log.info(f"Afternoon Pinnacle K lines: {n_k} pitchers")
+        except Exception as _ke:
+            log.warning(f"Afternoon Pinnacle K lines failed (non-fatal): {_ke}")
     except Exception as e:
         log.warning(f"Afternoon pitcher refresh failed (non-fatal): {e}")
 

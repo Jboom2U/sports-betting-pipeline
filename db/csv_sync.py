@@ -54,7 +54,8 @@ SYNC_PATTERNS = [
                             # refresh re-scrapes them.
                             "mlb_umpires_*.json",
                             "mlb_bullpen_fatigue_*.json",
-                            "mlb_lineups_*.json"]),
+                            "mlb_lineups_*.json",
+                            "mlb_pinnacle_k_lines_*.json"]),  # real K lines
 ]
 
 

@@ -17,6 +17,7 @@ Market key mapping:
 """
 
 import csv
+import json
 import logging
 import os
 import time
@@ -340,6 +341,31 @@ def fetch_strikeout_lines() -> dict:
 
     log.info(f"[Pinnacle] parsed {len(out)} pitcher strikeout lines")
     return out
+
+
+def save_strikeout_lines(date: str = None) -> int:
+    """Fetch + persist today's pitcher K lines to raw/mlb_pinnacle_k_lines_<date>.json.
+    Free (Pinnacle guest API). Returns number of pitchers saved."""
+    from datetime import datetime as _dt
+    date = date or _dt.now(ET).strftime("%Y-%m-%d")
+    lines = fetch_strikeout_lines()
+    path = RAW_DIR / f"mlb_pinnacle_k_lines_{date}.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(lines, f, indent=2)
+    log.info(f"[Pinnacle] saved {len(lines)} K lines -> {path.name}")
+    return len(lines)
+
+
+def load_strikeout_lines(date: str) -> dict:
+    """Load persisted pitcher K lines for a date. Returns {} if absent."""
+    path = RAW_DIR / f"mlb_pinnacle_k_lines_{date}.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str) -> list:

@@ -533,7 +533,46 @@ frontend is worth committing to.
 
 ---
 
-## 🔴 MAJOR: K prop model uses a FICTIONAL line, over-only (found 2026-07-22)
+## ✅ K PROP REBUILT on real Pinnacle lines 2026-07-22 (over-only; UNDER pending)
+
+**SHIPPED:** K props now score against Pinnacle's REAL strikeout line + prices,
+not the old fictional 0.8x-projection line. Free (Pinnacle guest API), sharp book.
+- `scrapers/mlb_pinnacle_scraper.py`: `fetch_strikeout_lines()` parses the
+  `units=="Strikeouts"` specials (pitcher from `special.description`, line+prices
+  from `/markets/straight`); `save_strikeout_lines(date)` ->
+  `raw/mlb_pinnacle_k_lines_<date>.json`; `load_strikeout_lines(date)`.
+  VERIFIED live 2026-07-22 via `/admin/pinnacle-k-test`: 8 pitchers, real lines
+  (Ober 4.5, Singer 5.5, Cecconi 3.5...) with both prices.
+- `model/mlb_props_model.py`: loads `pinnacle_k` by normalized pitcher name; both
+  K call sites use the real line + over/under prices; NO line => NO bet (skip, do
+  not invent). `score_k_prop` computes BOTH directions + EV vs the real price.
+- Pulled in the afternoon refresh AND the Refresh Lineups button (free). File
+  synced to R2 (`mlb_pinnacle_k_lines_*.json` in SYNC_PATTERNS).
+- Verify routes: `/admin/pinnacle-test` (feed live?), `/admin/pinnacle-k-test`
+  (parser + prices).
+
+### ⏭️ UNDER direction is GATED OFF — next session
+`ALLOW_UNDER_K = False` in `mlb_props_model.py`. The model computes the UNDER side
+but it is suppressed because grading can't handle it yet. To enable UNDER props
+(the "hidden gem" case Justin wants), do ALL of:
+1. `player_prop_history`: add a `side` column (schema.py migration).
+2. `save_prop_pick` + its caller (`run_pipeline.py:285`): store the picked side.
+3. Three hit-rate queries in `db/picks_store.py` (lines ~493, ~535, ~575) that
+   hardcode `result = 'OVER'` as a hit: change to hit = (result == picked side).
+4. `grade_prop_pick` still stores the OUTCOME direction (OVER/UNDER/PUSH) — that
+   is correct, leave it. Win/loss = outcome == side.
+Then flip `ALLOW_UNDER_K = True`. Do NOT flip it before 1-3 or unders grade wrong.
+
+### Coverage note
+Only pitchers Pinnacle lists (~8/slate) get a K prop now, vs ~13 fictional ones
+before. Correct tradeoff. The PROJECTIONS VIEW (every starter's model number +
+real line where it exists + edge both ways, unfiltered, missing flagged) is the
+follow-up that surfaces the rest and turns "gems Justin finds manually" into
+model output. Ties to the player-stats/RotoBot track.
+
+---
+
+## 🗑️ (superseded) original finding: K prop fictional line
 
 `score_all_props` sets the strikeout line to `_line = round(_exp * 0.80 * 2)/2`
 (`mlb_props_model.py:1041,1290`) — i.e. 80% of the model's OWN projection — and

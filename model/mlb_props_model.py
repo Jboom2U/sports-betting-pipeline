@@ -628,11 +628,18 @@ def _norm_cdf(x: float) -> float:
     return 0.5 * (1 + math.erf(x / math.sqrt(2)))
 
 
+# Flip to True only AFTER side-aware prop grading exists (side column +
+# db/picks_store.py hit-rate queries keyed on picked side, not 'OVER').
+ALLOW_UNDER_K = False
+
+
 def score_k_prop(pitcher_name: str, pitcher_stats: dict,
                  opp_team_k_rate: float,
                  innings_expected: float = 5.5,
                  line: float = 5.5,
-                 weather: dict = None) -> dict | None:
+                 weather: dict = None,
+                 over_price: int = None,
+                 under_price: int = None) -> dict | None:
     """
     Score a pitcher strikeout over/under prop.
 
@@ -667,11 +674,37 @@ def score_k_prop(pitcher_name: str, pitcher_stats: dict,
     z    = (line + 0.5 - proj_k) / std_dev
     prob = 1.0 - _norm_cdf(z)   # P(K > line)
 
-    tier = _tier(prob)
+    # Score BOTH directions against the REAL line (0.5 lines => no push, so
+    # P(under) = 1 - P(over)). Bet the side the projection favors; that is the
+    # honest read now that `line` is Pinnacle's actual number, not 0.8x proj.
+    p_over  = prob
+    p_under = 1.0 - p_over
+    if proj_k >= line:
+        side, conf, price = "OVER", p_over, over_price
+    else:
+        side, conf, price = "UNDER", p_under, under_price
+
+    # OVER-ONLY GATE (temporary). The line is now Pinnacle's real number and both
+    # directions ARE computed, but player_prop_history has no `side` column and
+    # the hit-rate queries in db/picks_store.py hardcode result='OVER'=hit. So an
+    # UNDER pick would grade wrong. Ship real-line OVERS now (they grade correctly);
+    # flip ALLOW_UNDER once side-aware grading lands (schema + 3 SQL rewrites).
+    if side == "UNDER" and not ALLOW_UNDER_K:
+        return None
+
+    tier = _tier(conf)
     if tier == "SKIP":
         return None
 
-    # Reasoning
+    # Expected value vs the real American price, when we have it.
+    ev = None
+    if price is not None:
+        try:
+            payout = (price / 100.0) if price > 0 else (100.0 / abs(price))
+            ev = round(conf * payout - (1 - conf), 4)   # per 1u risked
+        except (TypeError, ZeroDivisionError):
+            ev = None
+
     parts = []
     if k9 >= 10.5:
         parts.append(f"elite swing-miss stuff ({k9:.1f} K/9)")
@@ -683,18 +716,22 @@ def score_k_prop(pitcher_name: str, pitcher_stats: dict,
         parts.append(f"opponent strikes out a lot ({opp_team_k_rate:.1%})")
     elif opp_k_factor <= 0.90:
         parts.append(f"opponent makes contact ({opp_team_k_rate:.1%} K rate)")
-    parts.append(f"proj {proj_k:.1f} Ks in {innings_expected} inn vs line {line}")
-
-    reasoning = " | ".join(parts)
+    parts.append(f"proj {proj_k:.1f} Ks vs Pinnacle line {line} -> {side}")
+    if ev is not None:
+        parts.append(f"EV {ev:+.2f}u at {price:+d}")
 
     return {
         "prop_type":   "K",
         "line":        line,
+        "side":        side,
+        "label":       f"{side} {line}",
+        "price":       price,
+        "ev":          ev,
         "player_name": pitcher_name,
         "proj":        round(proj_k, 2),
-        "confidence":  round(prob, 4),
+        "confidence":  round(conf, 4),
         "tier":        tier,
-        "reasoning":   reasoning,
+        "reasoning":   " | ".join(parts),
     }
 
 
@@ -823,6 +860,20 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     except (ValueError, ZeroDivisionError):
                         team_k_rate.setdefault(tname, 0.220)
             break   # use first file found
+
+    # ── Real pitcher K lines from Pinnacle (free, sharp). Keyed by normalized
+    #    pitcher name. Absent pitcher => no market line => no K bet (do NOT
+    #    invent one; that was the 0.8x-projection bug). ────────────────────────
+    def _knorm(n: str) -> str:
+        return " ".join((n or "").strip().split()).lower()
+    pinnacle_k: dict[str, dict] = {}
+    try:
+        from scrapers.mlb_pinnacle_scraper import load_strikeout_lines
+        for _pname, _d in (load_strikeout_lines(today) or {}).items():
+            pinnacle_k[_knorm(_pname)] = _d
+    except Exception as _e:
+        log.warning(f"Pinnacle K lines load failed (non-fatal): {_e}")
+    log.info(f"Pinnacle K lines loaded: {len(pinnacle_k)} pitchers")
 
     # ── Weather ───────────────────────────────────────────────────────────────
     weather_data: dict[int, dict] = {}
@@ -1034,18 +1085,19 @@ def score_all_props(target_date: str = None) -> list[dict]:
             if not _sp_row:
                 continue
             _opp_kr = team_k_rate.get(_opp_team, 0.220)
-            _k9  = float(_sp_row.get("k9", _sp_row.get("k_per_9", 0)) or 0)
-            _exp = (_k9 / 9.0) * 5.5
-            # Sportsbook K lines are typically ~80% of the statistical projection
-            # (books set lines below projection to balance action; OVER has real edge)
-            _line = round(_exp * 0.80 * 2) / 2
+            # REAL Pinnacle line + prices. No line => no market => no bet.
+            _pk = pinnacle_k.get(_knorm(_sp_name))
+            if not _pk:
+                continue
             _k_prop = score_k_prop(
                 pitcher_name=_sp_name,
                 pitcher_stats=_sp_row,
                 opp_team_k_rate=_opp_kr,
                 innings_expected=5.5,
-                line=_line,
+                line=float(_pk.get("line")),
                 weather=_weather,
+                over_price=_pk.get("over_price"),
+                under_price=_pk.get("under_price"),
             )
             if _k_prop:
                 all_props.append({
@@ -1284,17 +1336,19 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
             if not sp_row:
                 continue
             opp_kr = team_k_rate.get(opp_team, 0.220)
-            k9  = float(sp_row.get("k9", sp_row.get("k_per_9", 0)) or 0)
-            exp = (k9 / 9.0) * 5.5
-            # Sportsbook K lines are typically ~80% of the statistical projection
-            line = round(exp * 0.80 * 2) / 2
+            # REAL Pinnacle line + prices. No line => no market => no bet.
+            pk = pinnacle_k.get(_knorm(sp_name))
+            if not pk:
+                continue
             k_prop = score_k_prop(
                 pitcher_name=sp_name,
                 pitcher_stats=sp_row,
                 opp_team_k_rate=opp_kr,
                 innings_expected=5.5,
-                line=line,
+                line=float(pk.get("line")),
                 weather=weather_data.get(game_id),
+                over_price=pk.get("over_price"),
+                under_price=pk.get("under_price"),
             )
             if k_prop:
                 k_prop["projected"] = True
