@@ -739,6 +739,24 @@ def score_k_prop(pitcher_name: str, pitcher_stats: dict,
 # MAIN SCORER — combines everything for a date
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _knorm(n: str) -> str:
+    """Normalize a pitcher name for matching Pinnacle <-> schedule."""
+    return " ".join((n or "").strip().split()).lower()
+
+
+def _load_pinnacle_k(date: str) -> dict:
+    """Load persisted Pinnacle K lines keyed by normalized pitcher name. {} if none."""
+    out = {}
+    try:
+        from scrapers.mlb_pinnacle_scraper import load_strikeout_lines
+        for _pname, _d in (load_strikeout_lines(date) or {}).items():
+            out[_knorm(_pname)] = _d
+    except Exception as _e:
+        log.warning(f"Pinnacle K lines load failed (non-fatal): {_e}")
+    log.info(f"Pinnacle K lines loaded: {len(out)} pitchers")
+    return out
+
+
 def score_all_props(target_date: str = None) -> list[dict]:
     """
     Load today's hitter stats + lineup data + pitcher stats,
@@ -864,16 +882,7 @@ def score_all_props(target_date: str = None) -> list[dict]:
     # ── Real pitcher K lines from Pinnacle (free, sharp). Keyed by normalized
     #    pitcher name. Absent pitcher => no market line => no K bet (do NOT
     #    invent one; that was the 0.8x-projection bug). ────────────────────────
-    def _knorm(n: str) -> str:
-        return " ".join((n or "").strip().split()).lower()
-    pinnacle_k: dict[str, dict] = {}
-    try:
-        from scrapers.mlb_pinnacle_scraper import load_strikeout_lines
-        for _pname, _d in (load_strikeout_lines(today) or {}).items():
-            pinnacle_k[_knorm(_pname)] = _d
-    except Exception as _e:
-        log.warning(f"Pinnacle K lines load failed (non-fatal): {_e}")
-    log.info(f"Pinnacle K lines loaded: {len(pinnacle_k)} pitchers")
+    pinnacle_k = _load_pinnacle_k(today)
 
     # ── Weather ───────────────────────────────────────────────────────────────
     weather_data: dict[int, dict] = {}
@@ -1138,6 +1147,7 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
     should only surface projected props for teams with no confirmed props today.
     """
     today = target_date or _today_et()
+    pinnacle_k = _load_pinnacle_k(today)
 
     if not projected_lineups:
         return []
