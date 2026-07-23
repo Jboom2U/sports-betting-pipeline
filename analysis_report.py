@@ -1,0 +1,220 @@
+"""
+analysis_report.py
+Nightly / on-demand performance analysis. Pulls graded data from Postgres,
+computes the day's results plus multi-week TRENDS the eye would miss, then asks
+Claude to write a narrative: how the day went, what underperformed, concrete
+model-tweak ideas, and standout patterns.
+
+Entry point: build_report(date=None) -> {"date","data","narrative","generated_at"}
+All queries are read-only. Column names verified against db/schema.py.
+"""
+import os
+import json
+import logging
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+log = logging.getLogger(__name__)
+ET = ZoneInfo("America/New_York")
+
+BREAK_EVEN = 52.38   # -110 juice
+
+
+def _yesterday_et() -> str:
+    return (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def _rows(cur, sql, params=()):
+    cur.execute(sql, params)
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def build_data_pack(date: str) -> dict:
+    """Gather the day's results + multi-week trends into a structured dict."""
+    from db.connection import db_conn
+    pack = {"date": date, "error": None}
+
+    with db_conn() as conn:
+        if conn is None:
+            pack["error"] = "No DB connection"
+            return pack
+        cur = conn.cursor()
+
+        # ── The day: overall, by tier, by type ──────────────────────────────
+        pack["day_by_tier"] = _rows(cur, """
+            SELECT tier,
+                   COUNT(*) FILTER (WHERE actual_result='WIN')  AS w,
+                   COUNT(*) FILTER (WHERE actual_result='LOSS') AS l,
+                   COUNT(*) FILTER (WHERE actual_result='PUSH') AS p,
+                   ROUND(AVG(conf)::numeric,3) AS avg_conf
+            FROM picks
+            WHERE pick_date=%s AND actual_result IN ('WIN','LOSS','PUSH')
+            GROUP BY tier ORDER BY tier
+        """, (date,))
+        pack["day_by_type"] = _rows(cur, """
+            SELECT pick_type,
+                   COUNT(*) FILTER (WHERE actual_result='WIN')  AS w,
+                   COUNT(*) FILTER (WHERE actual_result='LOSS') AS l,
+                   COUNT(*) FILTER (WHERE actual_result='PUSH') AS p
+            FROM picks
+            WHERE pick_date=%s AND actual_result IN ('WIN','LOSS','PUSH')
+            GROUP BY pick_type ORDER BY pick_type
+        """, (date,))
+        # the day's actual pick list (for context)
+        pack["day_picks"] = _rows(cur, """
+            SELECT pick_type, tier, label, team, conf, actual_result
+            FROM picks
+            WHERE pick_date=%s AND actual_result IN ('WIN','LOSS','PUSH')
+            ORDER BY conf DESC
+        """, (date,))
+
+        # ── The day: props (side-aware) ─────────────────────────────────────
+        pack["day_props"] = _rows(cur, """
+            SELECT prop_type,
+                   COUNT(*) FILTER (WHERE result = COALESCE(pick_side,'OVER')) AS hits,
+                   COUNT(*) FILTER (WHERE result IN ('OVER','UNDER','PUSH'))    AS total
+            FROM player_prop_history
+            WHERE game_date=%s AND result IS NOT NULL
+            GROUP BY prop_type ORDER BY prop_type
+        """, (date,))
+
+        # ── Trends: last 21 days ────────────────────────────────────────────
+        cutoff = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=21)).strftime("%Y-%m-%d")
+
+        pack["trend_by_conf_band"] = _rows(cur, """
+            SELECT width_bucket(conf, 0.50, 0.85, 7) AS band,
+                   MIN(conf) AS lo, MAX(conf) AS hi,
+                   COUNT(*) FILTER (WHERE actual_result='WIN')  AS w,
+                   COUNT(*) FILTER (WHERE actual_result='LOSS') AS l
+            FROM picks
+            WHERE pick_date >= %s AND actual_result IN ('WIN','LOSS')
+            GROUP BY band ORDER BY band
+        """, (cutoff,))
+
+        pack["trend_by_tier"] = _rows(cur, """
+            SELECT tier, pick_type,
+                   COUNT(*) FILTER (WHERE actual_result='WIN')  AS w,
+                   COUNT(*) FILTER (WHERE actual_result='LOSS') AS l
+            FROM picks
+            WHERE pick_date >= %s AND actual_result IN ('WIN','LOSS')
+            GROUP BY tier, pick_type ORDER BY tier, pick_type
+        """, (cutoff,))
+
+        pack["trend_market_signal"] = _rows(cur, """
+            SELECT COALESCE(market_signal,'NONE') AS market_signal,
+                   COUNT(*) FILTER (WHERE actual_result='WIN')  AS w,
+                   COUNT(*) FILTER (WHERE actual_result='LOSS') AS l
+            FROM picks
+            WHERE pick_date >= %s AND actual_result IN ('WIN','LOSS')
+            GROUP BY COALESCE(market_signal,'NONE') ORDER BY market_signal
+        """, (cutoff,))
+
+        # props trend by type + side
+        pack["trend_props"] = _rows(cur, """
+            SELECT prop_type, COALESCE(pick_side,'OVER') AS side,
+                   COUNT(*) FILTER (WHERE result = COALESCE(pick_side,'OVER')) AS hits,
+                   COUNT(*) FILTER (WHERE result IN ('OVER','UNDER','PUSH'))    AS total
+            FROM player_prop_history
+            WHERE game_date >= %s AND result IS NOT NULL
+            GROUP BY prop_type, COALESCE(pick_side,'OVER')
+            HAVING COUNT(*) FILTER (WHERE result IN ('OVER','UNDER','PUSH')) >= 5
+            ORDER BY prop_type, side
+        """, (cutoff,))
+
+    return pack
+
+
+def _fmt_pack(pack: dict) -> str:
+    """Compact human/LLM-readable rendering of the data pack."""
+    def wl(w, l):
+        n = (w or 0) + (l or 0)
+        return f"{w}-{l} ({(w/n*100):.1f}%)" if n else "0-0 (—)"
+    out = [f"DATE: {pack['date']}", ""]
+
+    out.append("=== THE DAY ===")
+    out.append("By tier:")
+    for r in pack.get("day_by_tier", []):
+        out.append(f"  {r['tier']}: {wl(r['w'], r['l'])}  push {r['p']}  avg_conf {r['avg_conf']}")
+    out.append("By type:")
+    for r in pack.get("day_by_type", []):
+        out.append(f"  {r['pick_type']}: {wl(r['w'], r['l'])}  push {r['p']}")
+    out.append("Props (side-aware):")
+    for r in pack.get("day_props", []):
+        out.append(f"  {r['prop_type']}: {r['hits']}/{r['total']}")
+
+    out.append("")
+    out.append("=== TRENDS (last 21 days) ===")
+    out.append("ML/RL/TOTAL by confidence band:")
+    for r in pack.get("trend_by_conf_band", []):
+        out.append(f"  {float(r['lo'])*100:.0f}-{float(r['hi'])*100:.0f}%: {wl(r['w'], r['l'])}")
+    out.append("By tier x type:")
+    for r in pack.get("trend_by_tier", []):
+        out.append(f"  {r['tier']} {r['pick_type']}: {wl(r['w'], r['l'])}")
+    out.append("By market signal (Kalshi/Poly):")
+    for r in pack.get("trend_market_signal", []):
+        out.append(f"  {r['market_signal']}: {wl(r['w'], r['l'])}")
+    out.append("Props by type+side:")
+    for r in pack.get("trend_props", []):
+        out.append(f"  {r['prop_type']} {r['side']}: {r['hits']}/{r['total']}")
+    return "\n".join(out)
+
+
+_SYSTEM = """You are the analyst for a data-driven MLB betting model (Statalizers).
+You are writing a candid evening performance review for the model's owner, Justin.
+Break-even against -110 juice is 52.38%. Be direct and quantitative. Do NOT invent
+numbers — use only the data provided. Structure your answer with these sections:
+
+1. HOW THE DAY WENT — a short, honest paragraph on the day's record.
+2. WHAT UNDERPERFORMED — call out the specific tiers/types/props that lost, with numbers.
+3. TRENDS WORTH KNOWING — the highest-signal patterns in the 21-day data that Justin
+   would not notice himself. Only cite a pattern if it has a usable sample (n>=20 for
+   game picks, n>=10 for props) and is clearly above or below break-even. Flag thin
+   samples explicitly. Prefer actionable, specific patterns.
+4. IDEAS TO IMPROVE — concrete next steps: model tweaks, data/resources to add, or
+   which bet types to lean on or suppress. Tie each idea to a number in the data.
+
+Keep it tight. No hedging filler. If a section has no signal, say so in one line."""
+
+
+def build_report(date: str = None) -> dict:
+    """Build the data pack and ask Claude for the narrative analysis."""
+    date = date or _yesterday_et()
+    pack = build_data_pack(date)
+    generated = datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")
+
+    if pack.get("error"):
+        return {"date": date, "data": pack, "narrative":
+                f"Could not build report: {pack['error']}", "generated_at": generated}
+
+    data_text = _fmt_pack(pack)
+    narrative = _call_claude_report(data_text)
+    return {"date": date, "data": pack, "data_text": data_text,
+            "narrative": narrative, "generated_at": generated}
+
+
+def _call_claude_report(data_text: str) -> str:
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return ("[ANTHROPIC_API_KEY not set — showing raw numbers only]\n\n" + data_text)
+    import urllib.request
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 1400,
+        "system": _SYSTEM,
+        "messages": [{"role": "user",
+                      "content": "Here is the data. Write the review.\n\n" + data_text}],
+    }
+    try:
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=json.dumps(payload).encode(),
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read())
+        return body["content"][0]["text"].strip()
+    except Exception as e:
+        log.warning(f"analysis report Claude call failed: {e}")
+        return f"[Claude call failed: {e}]\n\n{data_text}"

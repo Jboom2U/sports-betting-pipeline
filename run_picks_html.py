@@ -667,6 +667,7 @@ def prep_parlays(parlays):
             "n_legs":   p["n_legs"],
             "combined": round(p["combined"] * 100, 1),
             "payout":   p["payout"],
+            "book_odds": p.get("book_odds"),
             "legs": [
                 {"label": l["label"], "conf": round(l["conf"] * 100, 1),
                  "tier": l["tier"], "game": l["game"]}
@@ -685,6 +686,7 @@ def prep_thematic_parlays(parlays):
             "n_legs":      p["n_legs"],
             "combined":    round(p["combined"] * 100, 1),
             "payout":      p["payout"],
+            "book_odds":    p.get("book_odds"),
             "legs": [
                 {"label": l["label"], "conf": round(l["conf"] * 100, 1),
                  "tier": l["tier"], "game": l["game"]}
@@ -1924,6 +1926,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
 // ── Embedded Data ────────────────────────────────────────────────────────────
 const DATA_DATE      = "__DATE__";
 const DATA_PICKS     = __PICKS__;
+const DATA_TODAY_PICKS = __TODAY_PICKS__;   // full today slate for Daily Summary
 const DATA_GAMES     = __GAMES__;
 const DATA_TEAM_SCHED = __TEAM_SCHED__;
 const DATA_P2        = __P2__;
@@ -2488,9 +2491,13 @@ function renderSurfacedProps(){
   section.style.display = "block";
   grid.innerHTML = "";
   topProps.forEach(p => {
-    const label     = propLabel(p.prop_type, p.line);
-    const overUnder = p.proj >= p.line ? "OVER" : "UNDER";
+    const overUnder = p.pick_side || (p.proj >= p.line ? "OVER" : "UNDER");
+    const label     = propLabel(p.prop_type, p.line, overUnder);
     const projColor = overUnder === "OVER" ? "var(--green)" : "var(--blue)";
+    const _bp       = overUnder === "UNDER" ? p.under_price : p.over_price;
+    const bookRow   = (p.line != null && _bp != null)
+      ? `<div class="prop-line-row"><span class="prop-line-label">📕 SPORTSBOOK (Pinnacle)</span><span class="prop-line-val">${label} &nbsp;${_bp>0?"+":""}${_bp}</span></div>`
+      : "";
     const barPct    = Math.min(100, Math.max(0, (p.conf - 50) * 2));
     const projBanner = p.projected
       ? `<div style="background:rgba(255,183,77,.1);border-bottom:1px solid rgba(255,183,77,.2);padding:3px 10px;font-size:.68rem;color:#ffb74d;letter-spacing:.04em">📋 Lineup not confirmed yet</div>`
@@ -2510,8 +2517,9 @@ function renderSurfacedProps(){
           </div>
           <span class="conf-pct pct-${p.tier}">${p.conf}%</span>
         </div>
+        ${bookRow}
         <div style="font-size:.76rem;color:var(--sub);margin-top:6px">
-          Projected: <span style="color:${projColor};font-weight:600">${p.proj} ${overUnder}</span>
+          Model projection: <span style="color:${projColor};font-weight:600">${p.proj} (${overUnder})</span>
         </div>
         <div class="pick-reasoning">${p.reasoning||""}</div>
       </div>`;
@@ -2534,7 +2542,7 @@ function buildInlineProps(away, home){
   // Sort by conf descending, show top 8
   const sorted = [...gameProps].sort((a,b) => (b.conf||0)-(a.conf||0)).slice(0,8);
   return sorted.map(p => {
-    const betDesc = propLabel(p.prop_type, p.line);   // e.g. "Hits Over 0.5"
+    const betDesc = propLabel(p.prop_type, p.line, p.pick_side);   // side-aware (K can be Under)
     const tierCls = `inline-prop-tier-${p.tier||"LEAN"}`;
     const propId = `prop::${p.away}::${p.home}::${p.player_name}::${p.prop_type}::${p.line}`;
     const propLabel2 = `${p.player_name||"?"} ${betDesc}`;
@@ -2822,19 +2830,30 @@ function renderThematic(){
           <div class="leg-game">${l.game}</div>
         </div>
       </div>`).join("");
-    const BREAKEVEN = {"+260": 27.8, "+595": 14.4};
-    const be   = BREAKEVEN[par.payout] || 20;
-    const edge = (par.combined - be).toFixed(1);
+    const o    = parlayOdds(par);
+    const edge = (par.combined - o.be).toFixed(1);
+    const oddsLbl = o.real ? "combined odds" : "est. payout";
     grid.innerHTML += `
       <div class="parlay-card thematic-parlay-card">
-        <div class="thematic-thesis-badge">${icon} ${par.thesis}</div>
+        <div class="parlay-header">
+          <span class="thematic-thesis-badge">${icon} ${par.thesis}</span>
+          <span class="parlay-payout">${o.oddsStr} · ${oddsLbl}</span>
+        </div>
         <div class="thematic-desc">${par.thesis_desc}</div>
         <div class="parlay-conf" style="margin-top:10px">${par.combined}%<span>combined confidence</span></div>
         <div class="parlay-ev">+${edge}% edge vs break-even</div>
-        <div class="parlay-breakeven">Break-even at ${par.payout} payout: ${be}% — you're at ${par.combined}%</div>
+        <div class="parlay-breakeven">Break-even at ${o.oddsStr}: ${o.be}% — you're at ${par.combined}%</div>
         <div class="parlay-legs" style="margin-top:12px">${legsHtml}</div>
       </div>`;
   });
+}
+
+// ── Parlay odds helper: prefer REAL combined book odds, fall back to generic payout
+function parlayOdds(par){
+  const s = par.book_odds || par.payout || "+200";
+  const n = parseInt(s, 10);
+  const dec = s.trim()[0] === "-" ? 1 + 100/Math.abs(n) : 1 + n/100;
+  return { oddsStr: s, dec: dec, be: +(100/dec).toFixed(1), real: !!par.book_odds };
 }
 
 // ── Render Parlays ────────────────────────────────────────────────────────────
@@ -2860,16 +2879,17 @@ function renderParlays(){
       </div>`).join("");
 
     // Edge vs break-even — makes clear why a "low" combined % is still a great bet
-    const be    = BREAKEVEN[par.payout] || (100 / (par.n_legs * 3.6));
-    const edge  = (par.combined - be).toFixed(1);
+    const o     = parlayOdds(par);
+    const edge  = (par.combined - o.be).toFixed(1);
+    const oddsLbl = o.real ? "combined odds" : "est. payout";
     const evHtml = `<div class="parlay-ev">+${edge}% edge vs break-even</div>
-      <div class="parlay-breakeven">Break-even at ${par.payout} payout: ${be}% — you're at ${par.combined}%</div>`;
+      <div class="parlay-breakeven">Break-even at ${o.oddsStr}: ${o.be}% — you're at ${par.combined}%</div>`;
 
     grid.innerHTML += `
       <div class="parlay-card">
         <div class="parlay-header">
           <span class="parlay-tag">Parlay ${i+1} &bull; ${par.n_legs} Legs</span>
-          <span class="parlay-payout">${par.payout}</span>
+          <span class="parlay-payout">${o.oddsStr} · ${oddsLbl}</span>
         </div>
         <div class="parlay-conf">${par.combined}%<span>combined confidence</span></div>
         ${evHtml}
@@ -3424,15 +3444,16 @@ function propIcon(t){
   const icons = {HR:"⚡",HITS:"🎯",TB:"💥",RBI:"🏅",R:"🏃",SB:"💨",K:"🔥"};
   return icons[t] || "📊";
 }
-function propLabel(t,line){
-  if(t==="HR")   return `HR Over ${line}`;
-  if(t==="HITS") return `Hits Over ${line}`;
-  if(t==="TB")   return `Total Bases Over ${line}`;
-  if(t==="RBI")  return `RBIs Over ${line}`;
-  if(t==="R")    return `Runs Scored Over ${line}`;
-  if(t==="SB")   return `Stolen Bases Over ${line}`;
-  if(t==="K")    return `Ks Over ${line}`;
-  return `Over ${line}`;
+function propLabel(t,line,side){
+  const d = (side==="UNDER") ? "Under" : "Over";
+  if(t==="HR")   return `HR ${d} ${line}`;
+  if(t==="HITS") return `Hits ${d} ${line}`;
+  if(t==="TB")   return `Total Bases ${d} ${line}`;
+  if(t==="RBI")  return `RBIs ${d} ${line}`;
+  if(t==="R")    return `Runs Scored ${d} ${line}`;
+  if(t==="SB")   return `Stolen Bases ${d} ${line}`;
+  if(t==="K")    return `Ks ${d} ${line}`;
+  return `${d} ${line}`;
 }
 
 function renderProps(){
@@ -4125,7 +4146,7 @@ function renderDailySummary(){
 
   // ── Collect completed picks only ──────────────────────────────────────────
   const completed = [];
-  (DATA_PICKS||[]).forEach(p => {
+  (DATA_TODAY_PICKS||DATA_PICKS||[]).forEach(p => {
     const sc  = findScore(p);
     const res = pickResult(p, sc);
     if(res) completed.push({pick:p, score:sc, result:res});
@@ -4480,6 +4501,21 @@ def main(date=None, no_open=False):
 
     # Now generate picks from the fully filtered game list
     picks     = generate_picks(scored)
+
+    # Daily Summary needs TODAY's picks all evening. The main grid (scored) pivots
+    # to tomorrow once today's games start, which empties the summary. all_schedule
+    # already holds today's FULL slate (incl. started/finished); score it so the
+    # summary can match completed games against live scores regardless of pivot.
+    _today_str = date or _today_et()
+    if actual_date == _today_str:
+        today_picks_all = picks
+    else:
+        _today_scored = []
+        for _g in all_schedule:
+            try: _today_scored.append(model.score_game(_g))
+            except Exception: pass
+        today_picks_all = generate_picks(_today_scored)
+
     parlays_2        = build_parlays(picks, legs=2, max_parlays=5)
     parlays_3        = build_parlays(picks, legs=3, max_parlays=5)
     thematic_parlays = build_thematic_parlays(picks)
@@ -4629,6 +4665,7 @@ def main(date=None, no_open=False):
     # Serialize all data for HTML template injection
     high_conf_json  = json.dumps(compute_high_conf_rule())
     picks_json      = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
+    today_picks_json = json.dumps(prep_picks(today_picks_all, kalshi_data={}))
     games_json      = json.dumps(prep_games(scored))
     p2_json         = json.dumps(prep_parlays(parlays_2))
     p3_json         = json.dumps(prep_parlays(parlays_3))
@@ -4644,6 +4681,7 @@ def main(date=None, no_open=False):
     html = (HTML
             .replace("__DATE__",         actual_date)
             .replace("__HIGHCONF__",     high_conf_json)
+            .replace("__TODAY_PICKS__",  today_picks_json)
             .replace("__PICKS__",        picks_json)
             .replace("__GAMES__",        games_json)
             .replace("__P2__",           p2_json)

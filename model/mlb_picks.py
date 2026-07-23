@@ -188,11 +188,36 @@ def build_parlays(picks: list, legs: int = 2, max_parlays: int = 3) -> list:
         for p in combo:
             combined *= p["conf"]
 
+        # Real combined book odds from each leg's actual price (ML legs carry
+        # ml_away/ml_home on game_data). If any leg has no retrievable price
+        # (totals/RL prices aren't stored), leave book_odds None and fall back
+        # to the generic payout in the display.
+        dec = 1.0
+        have_all = True
+        for p in combo:
+            gd = p.get("game_data", {}) or {}
+            am = None
+            if p.get("type") == "ML":
+                away = gd.get("away_team", "")
+                pk   = (p.get("team") or "").lower()
+                am = gd.get("ml_away_odds") if (away and (away.lower() in pk or pk in away.lower())) \
+                     else gd.get("ml_home_odds")
+            if am in (None, "", 0):
+                have_all = False
+                break
+            am = float(am)
+            dec *= (1 + am/100.0) if am > 0 else (1 + 100.0/abs(am))
+        book_odds = None
+        if have_all and dec > 1.0:
+            net = dec - 1.0
+            book_odds = f"+{round(net*100)}" if net >= 1 else f"-{round(100/net)}"
+
         parlays.append({
             "legs":        list(combo),
             "n_legs":      legs,
             "combined":    round(combined, 4),
             "payout":      PARLAY_PAYOUTS.get(legs, f"+{legs*200}"),
+            "book_odds":   book_odds,   # real combined American odds (ML), else None
             "summary":     " + ".join(p["label"] for p in combo),
             "min_leg":     min(p["conf"] for p in combo),
         })

@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS picks (
     conf            REAL        NOT NULL,
     tier            TEXT        NOT NULL,   -- LOCK | STRONG | LEAN
     reasoning       TEXT,
+    market_signal   TEXT,                   -- CONFIRM | DIVERGE | NEUTRAL (Kalshi/Poly)
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Backtesting fields — filled by the grading step after game results are in
@@ -200,6 +201,10 @@ def create_all():
             cur.execute(
                 "ALTER TABLE player_prop_history "
                 "ADD COLUMN IF NOT EXISTS pick_side TEXT DEFAULT 'OVER'")
+            # market_signal existed in production but was never in schema.py —
+            # add it so a fresh create_all() DB matches production.
+            cur.execute(
+                "ALTER TABLE picks ADD COLUMN IF NOT EXISTS market_signal TEXT")
             log.info("DB schema verified / created.")
         except Exception as e:
             log.warning(f"Schema creation failed (non-fatal): {e}")

@@ -1747,6 +1747,66 @@ h2{{color:#58a6ff}} td{{padding:5px 10px;border-bottom:1px solid #21262d;font-si
     return Response(html, mimetype="text/html")
 
 
+@app.route("/admin/analysis")
+def admin_analysis():
+    """On-demand nightly analysis. ?date=YYYY-MM-DD (default yesterday).
+    ?download=1 returns the report as a downloadable .md file."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/analysis")
+    import html as _h
+    from datetime import datetime as _dt, timedelta as _td
+    date_str = request.args.get("date") or (
+        (datetime.now(ET) - _td(days=1)).strftime("%Y-%m-%d"))
+    try:
+        from analysis_report import build_report
+        rep = build_report(date_str)
+    except Exception as e:
+        import traceback
+        return Response(f"<pre>{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
+
+    narrative = rep.get("narrative", "")
+    data_text = rep.get("data_text", "")
+    gen       = rep.get("generated_at", "")
+
+    if request.args.get("download"):
+        md = (f"# Statalizers Analysis — {date_str}\n_Generated {gen}_\n\n"
+              f"{narrative}\n\n---\n\n## Raw data\n```\n{data_text}\n```\n")
+        return Response(md, mimetype="text/markdown",
+                        headers={"Content-Disposition":
+                                 f'attachment; filename="statalizers_analysis_{date_str}.md"'})
+
+    # simple markdown-ish -> HTML (headings + line breaks)
+    import re as _re
+    body = _h.escape(narrative)
+    body = _re.sub(r'(?m)^(\d+\.\s+[A-Z][^\n]*)$',
+                   r'<h3 style="color:#58a6ff;margin:18px 0 6px">\1</h3>', body)
+    body = body.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    html = f"""<!doctype html><html><head><meta charset=utf-8><title>Analysis {date_str}</title>
+<style>body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:24px;
+max-width:820px;margin:0 auto;line-height:1.55}}h2{{color:#58a6ff}}
+a,button{{font-family:inherit}} .bar{{display:flex;gap:10px;align-items:center;margin:8px 0 18px}}
+.btn{{background:#238636;color:#fff;border:none;padding:8px 16px;border-radius:8px;
+font-weight:700;cursor:pointer;text-decoration:none;font-size:.9rem}}
+.date{{background:#161b22;border:1px solid #30363d;color:#c9d1d9;border-radius:8px;padding:7px 10px}}
+pre{{background:#161b22;padding:14px;border-radius:8px;overflow:auto;font-size:12px;color:#8b949e}}
+p{{margin:6px 0}}</style></head><body>
+<h2>Statalizers Analysis — {date_str}</h2>
+<div style="color:#6e7681;font-size:.82rem">Generated {gen}</div>
+<form class="bar" method="get" action="/admin/analysis">
+  <input class="date" type="date" name="date" value="{date_str}">
+  <button class="btn" type="submit">Run</button>
+  <a class="btn" style="background:#1f6feb"
+     href="/admin/analysis?date={date_str}&download=1">⬇ Download .md</a>
+</form>
+<p>{body}</p>
+<details style="margin-top:24px"><summary style="cursor:pointer;color:#8b949e">Raw data</summary>
+<pre>{_h.escape(data_text)}</pre></details>
+<p style="margin-top:20px"><a href="/admin" style="color:#58a6ff">&larr; Admin</a></p>
+</body></html>"""
+    return Response(html, mimetype="text/html")
+
+
 @app.route("/admin/signal-audit")
 def signal_audit():
     """
@@ -2339,7 +2399,7 @@ def performance_html():
     try:
         from db.picks_store import get_prop_accuracy, get_player_prop_accuracy
         prop_rows        = get_prop_accuracy(days=days) or []
-        player_prop_rows = get_player_prop_accuracy(days=days) or []
+        player_prop_rows = get_player_prop_accuracy(days=days, min_picks=3) or []
     except Exception:
         prop_rows        = []
         player_prop_rows = []
@@ -2396,7 +2456,7 @@ def performance_html():
             f'<td style="color:#8b949e">{_ac:.1f}%</td></tr>'
         )
     _player_body = ''.join(_player_rows) or (
-        '<tr><td colspan="5" style="color:#8b949e;padding:14px">Need 5+ picks per player to show.</td></tr>'
+        '<tr><td colspan="5" style="color:#8b949e;padding:14px">Need 3+ picks per player to show.</td></tr>'
     )
 
     _props_section_html = (
@@ -2425,7 +2485,7 @@ def performance_html():
         '<div class="secondary-toggle" '
         'onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');'
         'this.querySelector(\'.arr\').textContent=b.classList.contains(\'open\')?\'&#9660;\':\'&#9654;\'">'
-        '<span class="arr">&#9654;</span> Top Players (5+ picks)</div>'
+        '<span class="arr">&#9654;</span> Top Players (3+ picks)</div>'
         '<div class="secondary-body"><div class="table-card"><table>'
         '<thead><tr><th>Player</th><th>Prop</th><th>Picks</th>'
         '<th>Hit Rate</th><th>Avg Conf</th></tr></thead>'
