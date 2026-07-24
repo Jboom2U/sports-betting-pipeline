@@ -248,6 +248,15 @@ def main(date=None):
     except Exception as e:
         log.warning(f"Analysis grader failed (non-fatal): {e}")
 
+    # ── Step 7b: Email the nightly analysis report (yesterday, now graded) ────
+    # Non-fatal; silently no-ops if ALERT_EMAIL_* / ANTHROPIC_API_KEY unset.
+    try:
+        from analysis_report import email_report
+        if email_report():
+            log.info("Nightly analysis report emailed.")
+    except Exception as e:
+        log.warning(f"Analysis email failed (non-fatal): {e}")
+
     # ── Step 8: Score today's games and save picks to DB ─────────────────────
     # We score here (after all scrapers have run) so picks saved to DB reflect
     # the freshest data. run_picks_html.py will score again when building HTML —

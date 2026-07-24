@@ -193,6 +193,43 @@ def build_report(date: str = None) -> dict:
             "narrative": narrative, "generated_at": generated}
 
 
+def render_html(rep: dict) -> str:
+    """Render a report dict into a standalone HTML email/page body."""
+    import html as _h
+    import re as _re
+    date = rep.get("date", "")
+    gen  = rep.get("generated_at", "")
+    body = _h.escape(rep.get("narrative", ""))
+    # numbered section headers -> styled h3
+    body = _re.sub(r'(?m)^(\d+\.\s+[A-Z][^\n]*)$',
+                   r'</p><h3 style="color:#58a6ff;margin:20px 0 6px">\1</h3><p>', body)
+    body = body.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    data = _h.escape(rep.get("data_text", ""))
+    return f"""<div style="background:#0d1117;color:#c9d1d9;font-family:system-ui,Segoe UI,Arial;
+padding:24px;max-width:820px;margin:0 auto;line-height:1.55">
+<h2 style="color:#58a6ff;margin:0 0 2px">Statalizers Analysis — {date}</h2>
+<div style="color:#6e7681;font-size:.82rem;margin-bottom:16px">Generated {gen}</div>
+<p>{body}</p>
+<details style="margin-top:24px"><summary style="cursor:pointer;color:#8b949e">Raw data</summary>
+<pre style="background:#161b22;padding:14px;border-radius:8px;overflow:auto;font-size:12px;color:#8b949e">{data}</pre></details>
+<p style="margin-top:20px;color:#6e7681;font-size:.8rem">— Statalizers · statalizers.com/admin/analysis</p>
+</div>"""
+
+
+def email_report(date: str = None) -> bool:
+    """Build the report for `date` (default yesterday) and email it.
+    Returns True if the email was sent."""
+    rep = build_report(date)
+    html = render_html(rep)
+    text = f"Statalizers Analysis — {rep.get('date')}\n\n{rep.get('narrative','')}"
+    try:
+        from alerts import send_html_email
+        return send_html_email(f"Analysis — {rep.get('date')}", html, text)
+    except Exception as e:
+        log.warning(f"email_report failed: {e}")
+        return False
+
+
 def _call_claude_report(data_text: str) -> str:
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:

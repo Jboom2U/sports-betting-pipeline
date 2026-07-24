@@ -1769,6 +1769,17 @@ def admin_analysis():
     data_text = rep.get("data_text", "")
     gen       = rep.get("generated_at", "")
 
+    if request.args.get("email"):
+        from analysis_report import email_report
+        sent = email_report(date_str)
+        msg = ("✅ Report emailed." if sent else
+               "⚠️ Email not sent — check ALERT_EMAIL_* env vars in Railway.")
+        return Response(
+            f"<body style='background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:40px'>"
+            f"<p>{msg}</p><p><a href='/admin/analysis?date={date_str}' "
+            f"style='color:#58a6ff'>&larr; Back to report</a></p></body>",
+            mimetype="text/html")
+
     if request.args.get("download"):
         md = (f"# Statalizers Analysis — {date_str}\n_Generated {gen}_\n\n"
               f"{narrative}\n\n---\n\n## Raw data\n```\n{data_text}\n```\n")
@@ -1798,6 +1809,8 @@ p{{margin:6px 0}}</style></head><body>
   <button class="btn" type="submit">Run</button>
   <a class="btn" style="background:#1f6feb"
      href="/admin/analysis?date={date_str}&download=1">⬇ Download .md</a>
+  <a class="btn" style="background:#8957e5"
+     href="/admin/analysis?date={date_str}&email=1">✉ Email me</a>
 </form>
 <p>{body}</p>
 <details style="margin-top:24px"><summary style="cursor:pointer;color:#8b949e">Raw data</summary>

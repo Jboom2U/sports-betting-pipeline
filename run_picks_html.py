@@ -3700,7 +3700,11 @@ function renderTicker(){
           let label       = isLive ? `${half.slice(0,3)} ${inning}` : "Final";
           if (!isLive && inning > 9) label = `F/${inning}`;
           games.push({
-            away_city:  cityName(away.team.name),
+            away_name:  away.team.name,           // full name, for pick matching
+            home_name:  home.team.name,
+            away:       away.team.name,           // alias used by pickResult
+            home:       home.team.name,
+            away_city:  cityName(away.team.name), // short name, for the ticker
             home_city:  cityName(home.team.name),
             away_score: away.score ?? 0,
             home_score: home.score ?? 0,
@@ -3719,9 +3723,11 @@ function renderTicker(){
   async function refreshTicker() {
     const games = await fetchLiveScores();
     if (games !== null) {
+      window._liveGames = games;                 // feed _liveScores() / Daily Summary
       track.innerHTML = buildTickerHTML(games);
       const duration = Math.max(20, games.length * 5);
       track.style.animationDuration = duration + "s";
+      try { if (typeof renderDailySummary === "function") renderDailySummary(); } catch(e){}
     }
   }
 
@@ -4082,7 +4088,9 @@ function _pickResult(pick, score){
   }
   if(pick.type==="TOTAL"){
     const total = awayScore + homeScore;
-    const line  = parseFloat(pick.label||"0") || 8.5;
+    // Bet line lives in the label ("OVER 8.5"), NOT the model projection.
+    const line  = parseFloat((String(pick.label).match(/[\d.]+/)||[])[0]);
+    if(!line) return null;
     if(total===line) return "push";
     const overPick = (pick.label||"").toLowerCase().includes("over");
     return (overPick && total>line)||(!overPick && total<line) ? "win" : "loss";
@@ -4128,8 +4136,10 @@ function renderDailySummary(){
     }
     if(pick.type==="TOTAL"){
       const total = awayScore + homeScore;
-      const line  = parseFloat(pick.exp_total||0);
+      // Grade against the actual bet line in the label, not the model projection.
+      const line  = parseFloat((String(pick.label).match(/[\d.]+/)||[])[0]);
       if(!line) return null;
+      if(total===line) return "push";
       const pickOver = (pick.label||"").toUpperCase().includes("OVER");
       return (pickOver&&total>line)||(!pickOver&&total<line) ? "win" : "loss";
     }

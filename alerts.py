@@ -46,6 +46,40 @@ def _cooldown_ok(subject: str) -> bool:
     return True
 
 
+def send_html_email(subject: str, html_body: str, text_body: str = "") -> bool:
+    """
+    Send a multipart HTML email (no cooldown) — for scheduled digests like the
+    nightly analysis report. Uses the same ALERT_EMAIL_* Gmail credentials.
+
+    Returns True if sent, False if skipped (creds missing) or failed.
+    """
+    from email.mime.multipart import MIMEMultipart
+
+    to_addr   = os.environ.get("ALERT_EMAIL_TO", "").strip()
+    from_addr = os.environ.get("ALERT_EMAIL_FROM", "").strip()
+    password  = os.environ.get("ALERT_EMAIL_PASS", "").strip()
+    if not all([to_addr, from_addr, password]):
+        log.debug("HTML email skipped — ALERT_EMAIL_* env vars not configured.")
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"[Statalizers] {subject}"
+    msg["From"]    = from_addr
+    msg["To"]      = to_addr
+    msg.attach(MIMEText(text_body or "See HTML version.", "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
+            server.login(from_addr, password)
+            server.sendmail(from_addr, [to_addr], msg.as_string())
+        log.info(f"HTML email sent: {subject}")
+        return True
+    except Exception as e:
+        log.warning(f"HTML email send failed (non-fatal): {e}")
+        return False
+
+
 def send_alert(subject: str, body: str = "", exc: Exception = None) -> bool:
     """
     Send an email alert.
