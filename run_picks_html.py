@@ -1284,6 +1284,25 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   border-top:1px solid rgba(0,230,118,.2);
 }
 .pick-card-props-panel.open{display:block}
+.analysis-toggle{color:var(--gold)}
+.analysis-toggle:hover{color:var(--green)}
+.analysis-body{font-size:.82rem;line-height:1.6;color:var(--text);
+  background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px}
+.analysis-body b{color:var(--text);font-weight:700}
+.bb-wrap{background:linear-gradient(180deg,rgba(255,193,7,.06),rgba(255,193,7,.01));
+  border:1px solid rgba(255,193,7,.3);border-radius:12px;padding:14px 16px;margin:0 0 16px}
+.bb-head{font-size:1.02rem;font-weight:800;color:var(--gold);margin-bottom:10px}
+.bb-sub{font-size:.68rem;font-weight:500;color:var(--sub);margin-left:6px;letter-spacing:.02em}
+.bb-empty{font-size:.82rem;color:var(--sub);line-height:1.5}
+.bb-row{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--border)}
+.bb-row:first-of-type{border-top:none}
+.bb-main{display:flex;align-items:center;gap:10px}
+.bb-team{font-weight:700;color:var(--text);font-size:.92rem}
+.bb-price{font-weight:800;color:#90caf9;font-size:.82rem;background:rgba(66,165,245,.12);
+  border:1px solid rgba(66,165,245,.3);border-radius:6px;padding:1px 8px}
+.bb-meta{display:flex;align-items:center;gap:12px;font-size:.74rem;color:var(--sub);flex-wrap:wrap}
+.bb-ev{color:var(--green);font-weight:700}
+.bb-win{font-weight:600}
 .inline-prop{
   display:flex;justify-content:space-between;align-items:center;
   padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);
@@ -1852,6 +1871,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
       Today's games are in progress &mdash; showing <strong style="color:#f59e0b">tomorrow's picks</strong> below.
     </div>
     <div id="hcTrackRecord" style="margin:0 0 14px;display:none;gap:10px;flex-wrap:wrap"></div>
+    <div id="bestBets"></div>
     <div class="picks-grid" id="picksGrid"></div>
 
     <!-- Sharp Money Panel — only shown when movement data exists -->
@@ -2129,6 +2149,132 @@ function valueHtml(p){
     <span class="value-ev" style="color:${col}">EV ${evStr}</span>
     <span class="value-meta">Model ${p.conf}% vs Market ${mktStr}</span>
     ${chalk}
+  </div>`;
+}
+
+// Per-card plain-English honest read. Encodes the framework so you don't have
+// to: market breakeven vs price, model-vs-market gap credibility, calibration
+// band, chalk warning, and a bottom-line verdict. Pure function of the pick's
+// own numbers — no API, instant.
+function buildAnalysis(p){
+  const fmtP = x => (x==null ? "—" : Math.round(x*100)+"%");
+  const price = p.pick_price;
+  const priceStr = (price==null) ? "" : (price>0?"+":"")+Math.round(price);
+
+  // No price -> can't judge value (TOSSUP / unpriced)
+  if(price==null || !p.value_tag){
+    return `<div class="analysis-body">The model sees this as close to a coin flip and
+      there's no clean market price attached, so there's no value edge to lean on.
+      Not a spot the numbers argue for.</div>`;
+  }
+
+  const model = p.conf;                              // 0-100
+  const market = (p.market_prob==null) ? null : p.market_prob*100;
+  const ev = (p.value_ev==null) ? null : p.value_ev*100;
+  const be = price<0 ? Math.abs(price)/(Math.abs(price)+100)*100
+                     : 100/(price+100)*100;
+  const gap = (market==null) ? null : (model - market);
+  const S = [];
+
+  // 1) market read + breakeven
+  if(market!=null){
+    S.push(`The market prices this around <b>${Math.round(market)}%</b>. At ${priceStr} you need <b>${be.toFixed(1)}%</b> just to break even.`);
+    if(market < be)
+      S.push(`By the market's own read that's a losing number — the entire edge here is your model's <b>${Math.round(model)}%</b>.`);
+    else
+      S.push(`The market already clears that, and your model is a bit higher at <b>${Math.round(model)}%</b>.`);
+  }
+
+  // 2) gap credibility
+  if(gap!=null){
+    if(gap >= 15) S.push(`Your model sits <b>${Math.round(gap)} points</b> above the market. A gap that wide is usually the model running hot, not a real edge — be suspicious.`);
+    else if(gap >= 8) S.push(`Your model is <b>${Math.round(gap)} points</b> above the market: a moderate edge worth a look, not a lock.`);
+    else if(gap >= 0) S.push(`Your model is only a few points above the market, which is a believable, honest edge.`);
+    else S.push(`Your model is actually <b>below</b> the market here — you'd be betting against the sharper number.`);
+  }
+
+  // 3) calibration band
+  if(model >= 85) S.push(`At ${Math.round(model)}% this lands in the 85-90% band, the one range your calibration actually trusts.`);
+  else if(model >= 75) S.push(`At ${Math.round(model)}% this is the 75-84% band, where the model has been overconfident (predicted ~80%, hit ~64%). Discount it.`);
+  else if(model >= 70) S.push(`At ${Math.round(model)}% this is the 70-75% band, historically your worst (predicted ~73%, hit ~49%). Be skeptical.`);
+
+  // 4) chalk
+  if(p.value_chalk) S.push(`And it's chalk: you'd lay ${priceStr} to win $100, so one loss erases several wins.`);
+
+  // 5) type caution
+  if(p.type==="RL") S.push(`This is the rebuilt run line — still unproven. Give it a couple weeks of graded results before trusting the number.`);
+  else if(p.type==="TOTAL") S.push(`Totals are currently overprojecting, so treat a big total edge as suspect until that's fixed.`);
+
+  // 6) bottom line
+  let bl;
+  if(p.value_tag==="NO VALUE") bl = `<b>Bottom line:</b> even the model doesn't beat this price. Pass.`;
+  else if(ev!=null && ev > 25) bl = `<b>Bottom line:</b> the +${ev.toFixed(0)}% EV is almost certainly the model overreaching, not free money. Skip or tiny.`;
+  else if(p.value_tag==="FAIR") bl = `<b>Bottom line:</b> priced about right, no real edge. Pass unless you love it.`;
+  else if(p.value_tag==="VALUE"){
+    if(model >= 85 && !p.value_chalk && p.type==="ML") bl = `<b>Bottom line:</b> real edge, trustworthy band, sane price. This is the kind of spot to actually play.`;
+    else if(!p.value_chalk && gap!=null && gap < 15 && p.type==="ML") bl = `<b>Bottom line:</b> a credible value lean. Playable at a small size.`;
+    else bl = `<b>Bottom line:</b> shows value, but on shaky footing (chalk, inflated model, or an unproven market). Size down or pass.`;
+  } else bl = `<b>Bottom line:</b> go by the reasoning above.`;
+  S.push(bl);
+
+  return `<div class="analysis-body">${S.join(" ")}</div>`;
+}
+
+// ── BEST BETS ─────────────────────────────────────────────────────────────
+// The model does the filtering so you don't have to. A pick qualifies only if
+// it's ML, priced no worse than the ceiling, the model-vs-market gap is credible
+// (not a mirage), and the EV is still positive when we blend the model 50/50 with
+// the market (which strips out the model's known overconfidence). Ranked by that
+// honest blended EV — deep chalk and 20-point mirages can never make the list.
+const BEST_BET_PRICE_FLOOR = -180;   // most chalk allowed (adjust to taste)
+const BEST_BET_MAX_GAP     = 15;     // points above market before it's a mirage
+const BEST_BET_TYPES       = ["ML"]; // ML only for now (RL unproven, totals hot)
+
+function bestBetEval(p){
+  if(!BEST_BET_TYPES.includes(p.type)) return null;
+  if(p.pick_price==null || p.market_prob==null) return null;
+  if(p.pick_price < BEST_BET_PRICE_FLOOR) return null;      // too much chalk
+  const model = p.conf/100, market = p.market_prob;
+  const gapPts = (model - market)*100;
+  if(gapPts < 0 || gapPts > BEST_BET_MAX_GAP) return null;  // credible edge only
+  const trueP = 0.5*model + 0.5*market;                     // damp overconfidence
+  const dec = p.pick_price>0 ? 1 + p.pick_price/100 : 1 + 100/Math.abs(p.pick_price);
+  const ev = trueP*(dec-1) - (1-trueP);                     // honest blended EV
+  if(ev <= 0) return null;
+  return { ev, trueP, gapPts };
+}
+
+function renderBestBets(){
+  const box = document.getElementById("bestBets");
+  if(!box) return;
+  const src = (typeof ACTIVE_PICKS!=="undefined" && ACTIVE_PICKS.length) ? ACTIVE_PICKS : DATA_PICKS;
+  const ranked = (src||[])
+    .map(p => ({p, e: bestBetEval(p)}))
+    .filter(x => x.e)
+    .sort((a,b) => b.e.ev - a.e.ev)
+    .slice(0, 6);
+  if(!ranked.length){
+    box.innerHTML = `<div class="bb-wrap"><div class="bb-head">⭐ Best Bets</div>
+      <div class="bb-empty">No picks clear the bar today: credible edge, fair price (no worse than ${BEST_BET_PRICE_FLOOR}), positive value. That's the model protecting you from bad spots, not a glitch.</div></div>`;
+    return;
+  }
+  const rows = ranked.map(({p, e}) => {
+    const priceStr = (p.pick_price>0?"+":"")+Math.round(p.pick_price);
+    return `<div class="bb-row">
+      <div class="bb-main">
+        <span class="bb-team">${p.label}</span>
+        <span class="bb-price">${priceStr}</span>
+      </div>
+      <div class="bb-meta">
+        <span class="bb-ev">+${(e.ev*100).toFixed(1)}% EV</span>
+        <span class="bb-win">${Math.round(e.trueP*100)}% fair win</span>
+        <span class="bb-game">${p.game}</span>
+      </div>
+    </div>`;
+  }).join("");
+  box.innerHTML = `<div class="bb-wrap">
+    <div class="bb-head">⭐ Best Bets <span class="bb-sub">ranked by honest value · ML · no worse than ${BEST_BET_PRICE_FLOOR} · overconfidence stripped out</span></div>
+    ${rows}
   </div>`;
 }
 
@@ -2454,6 +2600,12 @@ function renderPicks(){
             </div>
           </div>
           <div class="tossup-note">No bet sizing — check sharp action tab before considering</div>
+          <div class="pick-card-props-toggle analysis-toggle" onclick="toggleCardProps(event, this)">
+            <span class="toggle-arrow">▶</span> 🔎 Analysis — is this a good bet?
+          </div>
+          <div class="pick-card-props-panel">
+            ${buildAnalysis(p)}
+          </div>
           <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
             <span class="toggle-arrow">▶</span> View Player Props for this game
           </div>
@@ -2502,6 +2654,12 @@ function renderPicks(){
           if(_res==="push") return '<div class="pick-done-banner" style="background:rgba(139,148,158,.12);color:#8b949e;border:1px solid rgba(139,148,158,.25)">— PUSH</div>';
           return "";
         })()}
+        <div class="pick-card-props-toggle analysis-toggle" onclick="toggleCardProps(event, this)">
+          <span class="toggle-arrow">▶</span> 🔎 Analysis — is this a good bet?
+        </div>
+        <div class="pick-card-props-panel">
+          ${buildAnalysis(p)}
+        </div>
         <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
           <span class="toggle-arrow">▶</span> View Player Props for this game
         </div>
@@ -2528,6 +2686,7 @@ function renderPicks(){
   document.getElementById("pickResults").innerHTML =
     `Showing <b>${visible}</b> of <b>${ACTIVE_PICKS.length}</b> picks`;
   if(visible===0) grid.innerHTML = `<div class="empty">No picks match the current filters.</div>`;
+  renderBestBets();
 }
 
 function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":t==="TOSSUP"?"≈":"⭐"; }

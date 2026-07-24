@@ -1201,26 +1201,43 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
         return {"era": era, "whip": whip, "hr_per_9": hr9,
                 "h_per_9": h9, "k_per_9": k9, "bb_per_9": bb9}
 
+    # Team K rate — SAME fixed logic as score_all_props (was a duplicate that
+    # still read the wrong column "strikeout_rate" with a denominator defaulting
+    # to 1, so kr became the raw season K total ~1241 -> the "124100%" on the
+    # board and a maxed multiplier inflating every projected K OVER). Read k_rate,
+    # validate to a real rate, and keep the LATEST season per team.
     team_k_rate: dict[str, float] = {}
+    team_k_season: dict[str, int] = {}
     for fname in ("mlb_team_hitting_master.csv", "mlb_team_stats_master.csv"):
         ts_path = os.path.join(DATA_DIR, "clean", fname)
         if os.path.exists(ts_path):
             with open(ts_path, encoding="utf-8") as f:
                 for row in csv.DictReader(f):
                     tname = row.get("team_name", "").strip()
-                    if not tname or tname in team_k_rate:
+                    if not tname:
                         continue
                     try:
-                        kr = float(row.get("strikeout_rate", 0) or 0)
-                        if kr == 0:
-                            so  = float(row.get("strikeouts", row.get("so", 0)) or 0)
-                            pa  = float(row.get("plate_appearances", row.get("pa", 1)) or 1)
-                            ab  = float(row.get("at_bats", row.get("ab", 1)) or 1)
-                            denom = pa if pa > ab else ab
-                            kr  = so / denom if denom > 0 else 0.220
-                        team_k_rate[tname] = kr
+                        season = int(float(row.get("season", 0) or 0))
+                    except (ValueError, TypeError):
+                        season = 0
+                    if tname in team_k_season and season <= team_k_season[tname]:
+                        continue
+                    try:
+                        kr = float(row.get("k_rate", 0) or 0)
+                        if not (0.10 < kr < 0.35):
+                            so = float(row.get("strikeouts", 0) or 0)
+                            pa = float(row.get("plate_appearances", 0) or 0)
+                            if pa <= 0:
+                                ab = float(row.get("at_bats", 0) or 0)
+                                bb = float(row.get("walks", 0) or 0)
+                                pa = ab + bb
+                            kr = so / pa if pa > 0 else 0.220
+                        if not (0.10 < kr < 0.35):
+                            kr = 0.220
+                        team_k_rate[tname]   = kr
+                        team_k_season[tname] = season
                     except (ValueError, ZeroDivisionError):
-                        team_k_rate[tname] = 0.220
+                        team_k_rate.setdefault(tname, 0.220)
             break
 
     weather_data: dict[int, dict] = {}

@@ -809,6 +809,34 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   `pick_date >= '2026-07-21'` once ~300 post-fix graded picks exist. TOSSUP-ML edge
   (61%, n=18) and 71-74% sweet spot (n=17) are pre-fix + tiny — do not tune on them.
 
+### Third bundle (same day) — Best Bets, per-card Analysis, K bug (2nd path)
+
+- **K opponent-rate bug — SECOND loader fixed.** `score_all_props` team-K loader
+  was fixed 2026-07-21, but `score_projected_props` had its OWN duplicate loader
+  (mlb_props_model.py ~1204) still reading `strikeout_rate` (wrong col) with a
+  denominator defaulting to 1 → kr = raw season K total (~1241) → "124100%" on the
+  board + maxed K-OVER multiplier. Since lineups are unconfirmed most of the day,
+  the PROJECTED path drives the visible props, so the bug was live. Replaced with
+  the same validated loader (reads `k_rate`, clamps 0.10-0.35, latest season).
+
+- **NEW: per-card Analysis dropdown** (`buildAnalysis(p)` in run_picks_html.py).
+  A second dropdown on every pick card (next to Player Props) that generates a
+  plain-English honest read from the pick's own numbers: market breakeven vs
+  price, model-vs-market gap credibility (flags >15-pt gaps as mirages), the
+  calibration-band warning (75-84% overconfident, 85-90% trusted), chalk warning,
+  and a bottom-line verdict. Pure JS, no API. Bakes the whole framework into the
+  card so the user doesn't have to remember it.
+
+- **NEW: Best Bets surface** (`bestBetEval`/`renderBestBets`, container `#bestBets`
+  above `#picksGrid`). The model filters FOR the user. A pick qualifies only if:
+  type ML (`BEST_BET_TYPES`), price >= -180 (`BEST_BET_PRICE_FLOOR`, kills deep
+  chalk), model-vs-market gap in [0,15] (`BEST_BET_MAX_GAP`, kills mirages), and
+  EV still positive when the model prob is blended 50/50 with the market (strips
+  overconfidence). Ranked by that honest blended EV. On 2026-07-24's board it
+  surfaced Giants/Phillies/CWS/Twins/Cards/Rays and excluded Tigers -294 +
+  Brewers -248 (chalk) and Arizona/Mariners ML (20-pt mirages). Tune the 3 consts
+  to change price ceiling / add bet types.
+
 ---
 
 ## Fixed 2026-07-22 (single bundle)
