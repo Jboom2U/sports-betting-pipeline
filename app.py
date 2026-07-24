@@ -1198,12 +1198,19 @@ def grade_backfill():
                             )
                             file_upd += 1
                     else:
+                        # The analysis JSON stores conf on a 0-100 scale, while
+                        # live save_picks stores 0-1. Normalize here so the picks
+                        # table has ONE scale (0-1) — otherwise confidence-band
+                        # calibration pools two scales and is meaningless.
+                        _bf_conf = float(gp.get("conf") or 0)
+                        if _bf_conf > 1.5:
+                            _bf_conf = _bf_conf / 100.0
                         cur.execute(
                             "INSERT INTO picks (pick_date, game, pick_type, label, team, "
                             "conf, tier, reasoning, actual_result, graded_at) "
                             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())",
                             (date_str, game, ptype, label, gp.get("team"),
-                             float(gp.get("conf") or 0), (gp.get("tier") or "LEAN").upper(),
+                             round(_bf_conf, 4), (gp.get("tier") or "LEAN").upper(),
                              gp.get("reasoning", ""), result),
                         )
                         file_ins += 1
@@ -1223,6 +1230,41 @@ def grade_backfill():
                  f"{updated} updated, {skipped} skipped")
     threading.Thread(target=_run, daemon=True).start()
     return Response("<h2>Grade backfill started</h2><p>Check /db-diag in ~60 seconds to see updated counts.</p><p><a href='/db-diag'>→ /db-diag</a></p>", mimetype="text/html")
+
+
+@app.route("/admin/fix-conf-scale")
+def fix_conf_scale():
+    """
+    One-time repair: backfilled picks stored confidence on a 0-100 scale while
+    live picks use 0-1, so the picks table has two scales mixed. Any conf > 1.5
+    is a 0-100 row (live max is ~0.90); divide those by 100. Idempotent — rerun
+    is a no-op once normalized. Read-only-safe: only touches the conf column.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/fix-conf-scale")
+    from db.connection import db_conn
+    try:
+        with db_conn() as conn:
+            if conn is None:
+                return Response("<h2>No DB connection</h2>", mimetype="text/html"), 500
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM picks WHERE conf > 1.5")
+            before = cur.fetchone()[0]
+            cur.execute("UPDATE picks SET conf = conf / 100.0 WHERE conf > 1.5")
+            conn.commit()
+            cur.execute("SELECT COUNT(*) FROM picks WHERE conf > 1.5")
+            after = cur.fetchone()[0]
+        return Response(
+            f"<body style='background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:40px'>"
+            f"<h2>Confidence scale normalized</h2>"
+            f"<p>Rows on the 0-100 scale before: <b>{before}</b></p>"
+            f"<p>Remaining after fix (should be 0): <b>{after}</b></p>"
+            f"<p><a href='/admin/calibration' style='color:#58a6ff'>→ Calibration</a> · "
+            f"<a href='/admin/analysis' style='color:#58a6ff'>Analysis</a></p></body>",
+            mimetype="text/html")
+    except Exception as e:
+        import traceback
+        return Response(f"<pre>{traceback.format_exc()}</pre>", mimetype="text/html"), 500
 
 
 @app.route("/force-html")

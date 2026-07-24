@@ -783,6 +783,32 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   Pinnacle line + price, side-aware (K unders read "Under"). Top Players lowered to
   3+ picks.
 
+### Follow-up bundle (same day)
+
+- **CONFIRMED DATA BUG — mixed confidence scales in `picks`.** Backfilled picks
+  (`/admin/grade-backfill`) stored conf on a 0-100 scale (the analysis JSON saves
+  `round(conf*100)`) while live `save_picks` stores 0-1. So `width_bucket(conf,...)`
+  in calibration dumped every backfilled row into the overflow bucket — the report's
+  "77-9000%" / "77%+ collapsing, n=158" band is an ARTIFACT (it's just all the
+  backfilled ~46% picks), NOT genuine top-end overconfidence. FIX: backfill insert
+  now normalizes conf/100 when >1.5; one-time route `/admin/fix-conf-scale` divides
+  existing 0-100 rows by 100 (idempotent, conf-only). **RUN /admin/fix-conf-scale
+  ONCE after deploy**, then calibration/report confidence bands become trustworthy.
+
+- **HR/SB props suppressed from the BETTABLE surface** (`SUPPRESS_BETTABLE_PROPS =
+  {"HR","SB"}` in run_picks_html `prep_props`). They were OVER-only, fixed-0.5-line,
+  no-real-price bets losing structurally (HR 4/26≈15%, SB 6/36≈17%). Suppression is
+  DISPLAY-ONLY: HR Watch (built from raw `props`, not prep_props) is unaffected, and
+  grading continues (save loops read raw props), so the record keeps accruing. The
+  real fix (real book lines + both directions + EV, like K props got) is deferred —
+  needs a free/affordable batter-prop line source; Odds API batter props (~1350/mo)
+  don't fit the 500 quota.
+
+- **Reminder: DO NOT pool pre/post-2026-07-21 picks for calibration.** The 21-day
+  report window is mostly the pre-fix blind model. Re-run calibration filtered to
+  `pick_date >= '2026-07-21'` once ~300 post-fix graded picks exist. TOSSUP-ML edge
+  (61%, n=18) and 71-74% sweet spot (n=17) are pre-fix + tiny — do not tune on them.
+
 ---
 
 ## Fixed 2026-07-22 (single bundle)

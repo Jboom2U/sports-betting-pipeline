@@ -627,12 +627,23 @@ def compute_high_conf_rule() -> dict:
             "rule_wide": rule_wide, "record_wide": record_wide}
 
 
+# Prop types suppressed from the BETTABLE Player Props surface. These are
+# OVER-only, fixed-0.5-line, no-real-price bets that have been structural losers
+# (HR OVER ~15%, SB OVER ~17% over 20+ pick samples). Suppression is display-only:
+# HR Watch (built from raw props) is unaffected, and grading continues (the DB
+# save loops read raw props too), so we keep collecting the record to revisit.
+# Clear this set to un-suppress, or once they run on real lines + EV like K props.
+SUPPRESS_BETTABLE_PROPS = {"HR", "SB"}
+
+
 def prep_props(props: list) -> list:
     """Serialize player props for HTML embedding."""
     out = []
     for p in props:
         conf_raw = p["confidence"]
         ptype    = p["prop_type"]
+        if ptype in SUPPRESS_BETTABLE_PROPS:
+            continue   # keep off the bet surface; HR Watch + grading unaffected
 
         # Lineup/starter flags (carried from score_all_props if present)
         unconfirmed = p.get("lineup_unconfirmed", False)
