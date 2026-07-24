@@ -713,6 +713,78 @@ subsystems below — use it before ever touching model weights.
 
 ---
 
+## Fixed 2026-07-24 (value/EV + RL rebuild + props grading + email)
+
+**⚠️ This bundle CHANGES pick generation (RL + ML confidence). It feeds the
+consensus worker — verify CONSENSUS still parses picks after deploy.**
+
+- **Props were never graded (Props 0-0).** Props only got a save attempt at 6am
+  in `run_pipeline.py` step 8b, but lineups don't post until ~2-3h before first
+  pitch, so every prop was `projected` and skipped → `player_prop_history` empty
+  → nothing to grade. FIX: added a prop-save step to `run_afternoon.py` (Step 3c)
+  which runs AFTER lineups lock, so confirmed props persist and grade next 6am.
+  `save_prop_pick` is ON CONFLICT DO NOTHING so it's safe to re-run.
+
+- **Daily Summary never populated (real root cause).** The live ticker
+  (`fetchLiveScores`/`refreshTicker` in run_picks_html.py) fetched finished games
+  from statsapi but dumped them into `track.innerHTML` and NEVER set
+  `window._liveGames`. So `_liveScores()` always fell back to `DATA_SCORES` (the
+  score-less 6am snapshot). Prior "fixes" only touched the picks side. FIX: ticker
+  now sets `window._liveGames` (with full team names for matching) + re-renders the
+  summary every 2 min. Also fixed TOTAL grading in both JS graders (was using the
+  model projection `exp_total` and couldn't parse "OVER 8.5"; now parses the line
+  from the label) and RL grading (both JS graders treated RL like ML — now parse
+  the ±1.5 spread from the label; the DB grader `grade_pick` was already correct).
+
+- **market_signal added to `db/schema.py`** (CREATE TABLE + idempotent migration).
+  Was prod-only; the analysis query needs it.
+
+- **NEW: market VALUE / EV engine (`model/value.py`).** De-vigs the two-way price,
+  compares to the model prob, computes EV per $1. Confidence ≠ value: a 70% team
+  at -240 is NO VALUE (-0.8% EV) + CHALK; a +150 dog the model likes is +15% EV.
+  `value_for_pick(pick)` attached to every pick in `generate_picks`; serialized in
+  `prep_picks`; shown on cards as a VALUE/FAIR/NO VALUE row + EV + "Model x% vs
+  Market y%", with a ⚠ NO VALUE / CHALK badge in the card header. DISPLAY ONLY —
+  does not filter picks. (Report-level value needs price stored per graded pick in
+  the DB — deferred.)
+
+- **RL prices surfaced onto the scored game** (`mlb_model.py` score_game dict):
+  `rl_away_line/price`, `rl_home_line/price`, `total_over_price`,
+  `total_under_price`. The odds scraper already captured them; they just weren't
+  on the scored-game dict. Needed for RL value + the RL rebuild.
+
+- **RL REBUILT (the big one).** OLD logic: always bet the favorite -1.5 with
+  `rl_conf = 0.50 + (wp-0.60)*0.80` — i.e. cover% scaled straight off ML win%.
+  That conflates "wins" with "wins by 2+" and is why RL ran ~40%. NEW: `run_margin_probs(exp_home, exp_away)`
+  in mlb_model.py computes P(win by 2+) from a Poisson run-margin (Skellam) on the
+  model's per-team expected runs. The RL block now prices BOTH favorite -1.5 and
+  dog +1.5 (=1 - fav cover) and publishes only the side with POSITIVE EV vs the
+  real RL price (falls back to a cover-prob edge when prices missing). Net effect:
+  favorite -1.5 (~34-40% cover) mostly stops publishing; +EV dog +1.5 surfaces.
+  Sanity: avg favorite covers -1.5 ~34%, big favorite ~51% — realistic. RL labels
+  can now be "+1.5"; all graders handle it.
+
+- **Confidence: stopped boosting chalk the model over-loves.** `market_agreement_adj`
+  used to return +0.01 when `model_gap > 0.10` (model way above a short market) and
+  +0.02 in the 0.04-0.10 band. Now: `>0.10` FADES (-0.02), 0.04-0.10 trimmed to
+  +0.01. This targets the 77%+ overconfidence WITHOUT a blunt cap — deliberately
+  NOT capping ML top-end, because ML 75%+ is the model's best slice (67.5%/63.8%);
+  the top-end rot was short-priced RL/TOTAL, now handled by the RL rebuild + value
+  flag. Do not add a hard 75% ceiling; it would fade the one proven edge.
+
+- **NEW: nightly analysis report + email.** `analysis_report.py` (day record +
+  21-day trends → Claude narrative), route `/admin/analysis` (?date, ?download,
+  ?email), emailed after 6am grading via `run_pipeline.py` step 7b using a new
+  `send_html_email()` in `alerts.py` (reuses ALERT_EMAIL_* Gmail creds). Needs
+  ANTHROPIC_API_KEY (set) for narrative, else raw numbers.
+
+- **Parlay cards show real combined American odds** (from each ML leg's book price,
+  `build_parlays` → `book_odds`), not the old fixed +260. Prop cards show the real
+  Pinnacle line + price, side-aware (K unders read "Under"). Top Players lowered to
+  3+ picks.
+
+---
+
 ## Fixed 2026-07-22 (single bundle)
 - **2026 team hitting data.** `SEASONS` in `mlb_team_scraper.py` and
   `mlb_historical_normalize.py` now include 2026. Wired the team scrape + team

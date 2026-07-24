@@ -131,6 +131,35 @@ def main():
     except Exception as e:
         log.warning(f"Polymarket snapshot failed (non-fatal): {e}")
 
+    # ── Step 3c: Save confirmed props to DB so they get graded tomorrow ───────
+    # The 6am pipeline runs BEFORE lineups post, so every prop is "projected"
+    # and skipped — player_prop_history ends up empty and grading finds nothing
+    # (that was the Props 0-0 bug). Now that lineups are confirmed, persist the
+    # real props here. Idempotent: save_prop_pick is ON CONFLICT DO NOTHING.
+    try:
+        from model.mlb_props_model import score_all_props as _score_props
+        from db.picks_store import save_prop_pick as _save_prop
+        _props = _score_props(target_date=today)
+        _saved = 0
+        for _pp in _props:
+            if _pp.get("projected"):
+                continue  # lineup still unconfirmed for this game — skip
+            _save_prop(
+                game_date  = today,
+                player_name= _pp.get("player_name", ""),
+                team       = _pp.get("side", ""),
+                away_team  = _pp.get("away_team", ""),
+                home_team  = _pp.get("home_team", ""),
+                prop_type  = _pp.get("prop_type", ""),
+                line       = _pp.get("line", 0),
+                model_conf = _pp.get("confidence", 0),
+                pick_side  = _pp.get("pick_side", "OVER"),
+            )
+            _saved += 1
+        log.info(f"Props persisted for grading: {_saved} confirmed prop pick(s)")
+    except Exception as e:
+        log.warning(f"Afternoon prop save failed (non-fatal): {e}")
+
     # ── Step 4: Regenerate HTML dashboard ────────────────────────────────────
     # run_picks_html.main() already re-runs lineup/hitter refresh internally,
     # but we do it above first so the data is warm before the model scores.

@@ -69,6 +69,47 @@ RECENT_STARTS_WEIGHT = 0.30
 SEASON_ERA_VS_RECENT = 0.70
 
 
+def _poisson_vec(lam: float, cap: int = 22) -> list[float]:
+    """Poisson PMF for k=0..cap at rate lam."""
+    import math
+    lam = max(0.05, float(lam))
+    out, term = [], math.exp(-lam)
+    for k in range(cap + 1):
+        out.append(term)
+        term = term * lam / (k + 1)   # p(k+1) = p(k)*lam/(k+1)
+    return out
+
+
+def run_margin_probs(exp_home: float, exp_away: float, cap: int = 22) -> tuple[float, float]:
+    """
+    Probability the home team wins by 2+ and the away team wins by 2+, treating
+    each team's runs as independent Poisson(exp_runs) — a Skellam run margin.
+
+    This is the CORRECT basis for run-line cover probability. A 62% ML favorite
+    does NOT cover -1.5 62% of the time; covering needs a 2+ run margin, which is
+    far less likely than simply winning. Baseball scoring is mildly over-dispersed
+    vs Poisson (big innings), so this slightly understates blowouts — still vastly
+    better than deriving cover% linearly from win%.
+
+    Returns (p_home_by2, p_away_by2). Dog +1.5 cover = 1 - (that side's by2).
+    """
+    ph = _poisson_vec(exp_home, cap)
+    pa = _poisson_vec(exp_away, cap)
+    p_home_by2 = 0.0
+    p_away_by2 = 0.0
+    for h in range(cap + 1):
+        phh = ph[h]
+        if phh <= 0:
+            continue
+        for a in range(cap + 1):
+            m = h - a
+            if m >= 2:
+                p_home_by2 += phh * pa[a]
+            elif m <= -2:
+                p_away_by2 += phh * pa[a]
+    return p_home_by2, p_away_by2
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -691,13 +732,19 @@ class MLBModel:
         if abs(model_gap) <= 0.03:
             return +0.01   # slight validation boost — market confirms our pick
 
-        # Model is more confident than market — possible edge
+        # Model sees a little more edge than the market — small, CAUTIOUS boost.
+        # Trimmed from +0.02: calibration shows the model's edge claims are not
+        # well calibrated, so we no longer reward "we see more than the market"
+        # as strongly.
         if 0.04 <= model_gap <= 0.10:
-            return +0.02   # we see more edge than the market
+            return +0.01
 
-        # Model significantly more confident — either big edge or model over-confident
+        # Model is WAY above the market (e.g. it loves a -240 favorite the sharps
+        # call smoke). This is exactly the top-end overconfidence the calibration
+        # flagged (77%+ came in underwater). When the model disagrees this far
+        # with a short price, the market is usually right — FADE, don't boost.
         if model_gap > 0.10:
-            return +0.01   # reduce boost (dangerous territory — market may know more)
+            return -0.02
 
         # Market more confident than model — we're fighting the market
         if model_gap < -0.05:
@@ -1125,20 +1172,58 @@ class MLBModel:
             except Exception as _pe:
                 log.debug(f"Polymarket signal skipped for {away}@{home}: {_pe}")
 
-        # Run line: only offer when one side has 60%+ ML confidence
-        rl_threshold = 0.60
-        if home_wp >= rl_threshold:
-            rl_team = home
-            rl_pick = f"{home} -1.5"
-            rl_conf = round(min(0.70, 0.50 + (home_wp - rl_threshold) * 0.80), 4)
-        elif away_wp >= rl_threshold:
-            rl_team = away
-            rl_pick = f"{away} -1.5"
-            rl_conf = round(min(0.70, 0.50 + (away_wp - rl_threshold) * 0.80), 4)
+        # ── Run line — real cover probability + price-aware side ─────────────
+        # OLD behavior (a documented ~40% loser): always bet the favorite -1.5
+        # with confidence scaled straight off ML win%. That conflates "wins" with
+        # "wins by 2+". NEW: derive P(favorite wins by 2+) from the Poisson run
+        # margin, also price the dog +1.5 (= 1 - that), and only publish the side
+        # that has POSITIVE EV against the real run-line price. Falls back to a
+        # cover-prob edge on the number when prices are missing.
+        p_home_by2, p_away_by2 = run_margin_probs(exp_home, exp_away)
+        if home_wp >= away_wp:
+            fav, dog       = home, away
+            fav_cover      = p_home_by2         # home -1.5
+            dog_cover      = 1.0 - p_home_by2   # away +1.5
+            fav_price      = sf(odds_snap.get("rl_home_price"))
+            dog_price      = sf(odds_snap.get("rl_away_price"))
         else:
-            rl_team = None
-            rl_pick = "No strong run line play"
-            rl_conf = 0.0
+            fav, dog       = away, home
+            fav_cover      = p_away_by2         # away -1.5
+            dog_cover      = 1.0 - p_away_by2   # home +1.5
+            fav_price      = sf(odds_snap.get("rl_away_price"))
+            dog_price      = sf(odds_snap.get("rl_home_price"))
+
+        def _rl_ev(pcover, price):
+            if price in (None, 0):
+                return None
+            d = 1 + (price / 100.0 if price > 0 else 100.0 / abs(price))
+            return pcover * (d - 1.0) - (1.0 - pcover)
+
+        ev_fav = _rl_ev(fav_cover, fav_price)
+        ev_dog = _rl_ev(dog_cover, dog_price)
+
+        rl_team = None
+        rl_pick = "No strong run line play"
+        rl_conf = 0.0
+
+        priced = [c for c in (
+            (ev_fav, fav, f"{fav} -1.5", fav_cover),
+            (ev_dog, dog, f"{dog} +1.5", dog_cover),
+        ) if c[0] is not None]
+
+        if priced:
+            # Publish the higher-EV side, but only when it is genuinely +EV and
+            # its cover probability is a real coin-flip-or-better read.
+            ev_best, t, lbl, cov = max(priced, key=lambda x: x[0])
+            if ev_best > 0.0 and cov >= 0.50:
+                rl_team, rl_pick, rl_conf = t, lbl, round(cov, 4)
+        else:
+            # No RL prices this snapshot — publish a side only if the NUMBER has
+            # a clear edge (dogs clear +1.5 more often; require a bigger margin).
+            if dog_cover >= 0.60:
+                rl_team, rl_pick, rl_conf = dog, f"{dog} +1.5", round(dog_cover, 4)
+            elif fav_cover >= 0.55:
+                rl_team, rl_pick, rl_conf = fav, f"{fav} -1.5", round(fav_cover, 4)
 
         return {
             # Identity
@@ -1237,6 +1322,14 @@ class MLBModel:
             "ml_away_odds":     sf(odds_snap.get("ml_away")),
             "ml_home_odds":     sf(odds_snap.get("ml_home")),
             "total_odds_line":  sf(odds_snap.get("total_line")),
+            # Run-line + total prices (already captured by the odds scraper) —
+            # surfaced here so pick value/EV and the RL model can use real prices.
+            "rl_away_line":     sf(odds_snap.get("rl_away_line")),
+            "rl_away_price":    sf(odds_snap.get("rl_away_price")),
+            "rl_home_line":     sf(odds_snap.get("rl_home_line")),
+            "rl_home_price":    sf(odds_snap.get("rl_home_price")),
+            "total_over_price": sf(odds_snap.get("total_over_price")),
+            "total_under_price":sf(odds_snap.get("total_under_price")),
             "total_line_min":   sf(odds_snap.get("total_line_min")),
             "total_line_max":   sf(odds_snap.get("total_line_max")),
             "ml_signal":      movement.get("ml_signal", "NO_DATA"),

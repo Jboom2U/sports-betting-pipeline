@@ -233,6 +233,27 @@ def prep_picks(picks, kalshi_data: dict = None):
         _kelly_full = (_b * _p - (1 - _p)) / _b
         kelly_pct = round(max(0.0, _kelly_full * 0.5) * 100, 1)   # Half-Kelly
 
+        # ── Market VALUE / EV — de-vigged price awareness (advisory only) ────
+        _val = p.get("value") or {}
+        if not _val:
+            try:
+                from model.value import value_for_pick
+                _val = value_for_pick(p)
+            except Exception:
+                _val = {}
+        # American price of the actual bet picked (for card display)
+        if ptype == "ML":
+            _pa = (p.get("side") == "away") or (p["team"] == gd.get("away_team"))
+            _pick_price = gd.get("ml_away_odds") if _pa else gd.get("ml_home_odds")
+        elif ptype == "RL":
+            _pa = p["team"] == gd.get("away_team")
+            _pick_price = gd.get("rl_away_price") if _pa else gd.get("rl_home_price")
+        elif ptype == "TOTAL":
+            _isover = "OVER" in (p.get("label", "").upper())
+            _pick_price = gd.get("total_over_price") if _isover else gd.get("total_under_price")
+        else:
+            _pick_price = None
+
         out.append({
             "type":           ptype,
             "label":          p["label"],
@@ -267,6 +288,13 @@ def prep_picks(picks, kalshi_data: dict = None):
             "ml_away_odds":   gd.get("ml_away_odds"),
             "ml_home_odds":   gd.get("ml_home_odds"),
             "narrative":      p.get("narrative", ""),
+            # ── Market VALUE / EV (advisory — price-awareness, not a filter) ──
+            "value_tag":    _val.get("tag", ""),
+            "value_ev":     _val.get("ev"),
+            "value_edge":   _val.get("edge"),
+            "market_prob":  _val.get("market_prob"),
+            "value_chalk":  _val.get("chalk", False),
+            "pick_price":   _pick_price,
         })
     return out
 
@@ -1649,6 +1677,14 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
 .date-btn:hover{background:rgba(255,255,255,.1);color:var(--text)}
 .date-btn.active{background:rgba(0,230,118,.15);border-color:var(--green);color:var(--green)}
 /* ── ODDS PILL ── */
+.value-row{display:flex;align-items:center;gap:8px;margin:6px 0 2px;flex-wrap:wrap;font-size:.74rem}
+.value-tag{font-weight:800;letter-spacing:.03em;border:1px solid;border-radius:6px;padding:2px 7px}
+.value-ev{font-weight:700}
+.value-meta{color:var(--sub)}
+.val-chalk{font-size:.64rem;font-weight:800;color:#ffb74d;background:rgba(255,183,77,.12);
+  border:1px solid rgba(255,183,77,.35);border-radius:6px;padding:1px 6px;letter-spacing:.05em}
+.val-warn-badge{font-size:.64rem;font-weight:800;color:#ff6b6b;background:rgba(255,107,107,.12);
+  border:1px solid rgba(255,107,107,.4);border-radius:8px;padding:2px 7px;letter-spacing:.04em}
 .odds-row{display:flex;align-items:center;gap:6px;margin:6px 0 2px;flex-wrap:wrap}
 .odds-label{font-size:.68rem;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;margin-right:2px}
 .odds-pill{font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:10px;
@@ -2065,6 +2101,26 @@ function oddsHtml(p){
   </div>`;
 }
 
+// Market VALUE / EV row — de-vigged price awareness. Confidence says how likely;
+// value says whether the PRICE is wrong. Chalk = heavy favorite, value scarce.
+function valueHtml(p){
+  if(!p.value_tag) return "";
+  const col = p.value_tag==="VALUE" ? "var(--green)"
+            : p.value_tag==="NO VALUE" ? "var(--red)" : "var(--sub)";
+  const evStr  = (p.value_ev==null) ? "—" : (p.value_ev>=0?"+":"")+(p.value_ev*100).toFixed(1)+"%";
+  const mktStr = (p.market_prob==null) ? "—" : Math.round(p.market_prob*100)+"%";
+  const priceStr = (p.pick_price==null) ? "" :
+      ` @ ${p.pick_price>0?"+":""}${Math.round(p.pick_price)}`;
+  const chalk = p.value_chalk
+    ? `<span class="val-chalk" title="Heavy favorite — value is scarce at this price">CHALK</span>` : "";
+  return `<div class="value-row">
+    <span class="value-tag" style="color:${col};border-color:${col}">${p.value_tag}${priceStr}</span>
+    <span class="value-ev" style="color:${col}">EV ${evStr}</span>
+    <span class="value-meta">Model ${p.conf}% vs Market ${mktStr}</span>
+    ${chalk}
+  </div>`;
+}
+
 // ── Parlay Drawer ─────────────────────────────────────────────
 let selectedLegs = [];  // [{id, type, label, conf, odds, away, home}]
 let pickData = [];       // registry for + buttons -- reset on each renderPicks()
@@ -2405,6 +2461,7 @@ function renderPicks(){
           <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
           ${_isHighConf(p)?`<span class="hc-badge" title="${_highConfTitle(p)}">🔥 HIGH CONFIDENCE</span>`:""}
           ${_isProfitBand(p)?`<span class="pb-badge" title="${_profitBandTitle(p)}">📈 PROFITABLE</span>`:""}
+          ${(p.value_tag==="NO VALUE"||p.value_chalk)?`<span class="val-warn-badge" title="Model does not beat this price by enough — priced too short">⚠ ${p.value_chalk?"CHALK":"NO VALUE"}</span>`:""}
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}${p.tier==="LEAN"?" — thin edge":""}</span>
         </div>
         <div class="pick-label">${p.label}</div>
@@ -2422,6 +2479,7 @@ function renderPicks(){
         ${lineShopHtml}
         ${kellyHtml}
         ${oddsHtml(p)}
+        ${valueHtml(p)}
         <div class="pick-reasoning">${p.reasoning}</div>
         ${p.narrative ? `<div class="pick-narrative">${p.narrative}</div>` : ""}
         ${(()=>{
@@ -4080,11 +4138,21 @@ function _pickResult(pick, score){
   const homeScore = parseInt(score.home_score||0);
   // MLB games don't end in ties
   const awayWon = awayScore > homeScore;
-  if(pick.type==="ML"||pick.type==="RL"){
+  if(pick.type==="ML"){
     const pickNick = (pick.team||"").split(" ").slice(-1)[0].toLowerCase();
     const awayFull = _scoreAway(score).toLowerCase();
     const pickedAway = awayFull.endsWith(pickNick) || awayFull.includes(pickNick);
     return (pickedAway && awayWon)||(!pickedAway && !awayWon) ? "win" : "loss";
+  }
+  if(pick.type==="RL"){
+    // Grade against the 1.5 spread in the label ("Team -1.5" / "Team +1.5").
+    const sp = parseFloat((String(pick.label).match(/[+-][\d.]+/)||[])[0]);
+    if(isNaN(sp)) return null;
+    const pickNick = (pick.team||"").split(" ").slice(-1)[0].toLowerCase();
+    const awayFull = _scoreAway(score).toLowerCase();
+    const pickedAway = awayFull.endsWith(pickNick) || awayFull.includes(pickNick);
+    const margin = (pickedAway ? awayScore-homeScore : homeScore-awayScore) + sp;
+    return margin > 0 ? "win" : (margin === 0 ? "push" : "loss");
   }
   if(pick.type==="TOTAL"){
     const total = awayScore + homeScore;
@@ -4128,11 +4196,20 @@ function renderDailySummary(){
     const homeScore = parseInt(score.home_score||0);
     if(awayScore===homeScore) return "push";
     const awayWon = awayScore > homeScore;
-    if(pick.type==="ML"||pick.type==="RL"){
+    if(pick.type==="ML"){
       const pickNick = (pick.team||"").split(" ").slice(-1)[0].toLowerCase();
       const awayNick = (score.away||"").split(" ").slice(-1)[0].toLowerCase();
       const pickedAway = pickNick===awayNick || (score.away||"").toLowerCase().includes(pickNick);
       return (pickedAway && awayWon)||(!pickedAway && !awayWon) ? "win" : "loss";
+    }
+    if(pick.type==="RL"){
+      const sp = parseFloat((String(pick.label).match(/[+-][\d.]+/)||[])[0]);
+      if(isNaN(sp)) return null;
+      const pickNick = (pick.team||"").split(" ").slice(-1)[0].toLowerCase();
+      const awayNick = (score.away||"").split(" ").slice(-1)[0].toLowerCase();
+      const pickedAway = pickNick===awayNick || (score.away||"").toLowerCase().includes(pickNick);
+      const margin = (pickedAway ? awayScore-homeScore : homeScore-awayScore) + sp;
+      return margin > 0 ? "win" : (margin === 0 ? "push" : "loss");
     }
     if(pick.type==="TOTAL"){
       const total = awayScore + homeScore;

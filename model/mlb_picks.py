@@ -164,6 +164,18 @@ def generate_picks(scored_games: list, cfg: dict = None) -> list:
                 "game_data":  g,
             })
 
+    # ── Attach market VALUE / EV to every pick (advisory; not a filter) ─────────
+    # Confidence says how likely; value says whether the price is wrong. A
+    # high-confidence heavy favorite can still be a NO VALUE / CHALK play.
+    try:
+        from model.value import value_for_pick
+        for p in picks:
+            p["value"] = value_for_pick(p)
+    except Exception:
+        for p in picks:
+            p.setdefault("value", {"market_prob": None, "edge": None,
+                                   "ev": None, "tag": "", "chalk": False})
+
     picks.sort(key=lambda x: x["conf"], reverse=True)
     return picks
 
