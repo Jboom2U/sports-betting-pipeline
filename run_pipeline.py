@@ -120,22 +120,22 @@ def main(date=None):
     # so it avoids the Odds-API consensus averaging that produced garbage lines
     # (Brewers -259 vs real -115; run line -57). Odds API is the quota-costing
     # fallback only if the Pinnacle feed is empty/unreachable.
+    # At 6am we run BOTH: the Odds API once for the game TOTAL (Pinnacle's free
+    # feed doesn't expose a clean full-game total), then Pinnacle to overwrite
+    # ML/RL with accurate paired prices. The model carries the 6am total forward
+    # through the day's Pinnacle-only refreshes. ~1 Odds-API pull/day (~30/mo).
+    try:
+        from scrapers.mlb_odds_scraper import run as run_odds
+        odds_api_result = run_odds()
+        log.info(f"Odds API (total baseline): {odds_api_result}")
+    except Exception as e:
+        log.warning(f"Odds API baseline failed (non-fatal): {e}")
     try:
         from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
         odds_result = run_pinnacle()
-        log.info(f"Pinnacle odds scrape: {odds_result}")
-        if not (odds_result or {}).get("snapshots"):
-            from scrapers.mlb_odds_scraper import run as run_odds
-            odds_result = run_odds()
-            log.info(f"Pinnacle empty — Odds API fallback: {odds_result}")
+        log.info(f"Pinnacle odds scrape (ML/RL): {odds_result}")
     except Exception as e:
-        log.warning(f"Pinnacle odds failed ({e}); trying Odds API fallback")
-        try:
-            from scrapers.mlb_odds_scraper import run as run_odds
-            odds_result = run_odds()
-            log.info(f"Odds API fallback: {odds_result}")
-        except Exception as e2:
-            log.warning(f"Odds scrape failed (non-fatal): {e2}")
+        log.warning(f"Pinnacle odds failed (non-fatal): {e}")
 
     # ── Step 4: Weather for today's games ─────────────────────────────────────
     try:

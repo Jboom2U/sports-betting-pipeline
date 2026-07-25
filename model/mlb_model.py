@@ -274,15 +274,46 @@ class MLBModel:
         odds_master = os.path.join(CLEAN_DIR, "mlb_odds_master.csv")
         if os.path.exists(odds_master):
             today = _today_et()
+
+            def _has_total(r):
+                tl = r.get("total_line")
+                if tl in (None, "", "None"):
+                    return False
+                try:
+                    return float(tl) > 0
+                except (TypeError, ValueError):
+                    return False
+
             latest_snap = {}
+            latest_total = {}   # most recent snapshot that carries a real total
             for row in read_csv(odds_master):
                 if row.get("game_date") != today:
                     continue
-                k = (row.get("away_team",""), row.get("home_team",""))
-                if k not in latest_snap or row.get("snapshot_time","") > latest_snap[k].get("snapshot_time",""):
+                k  = (row.get("away_team", ""), row.get("home_team", ""))
+                st = row.get("snapshot_time", "")
+                if k not in latest_snap or st > latest_snap[k].get("snapshot_time", ""):
                     latest_snap[k] = row
+                if _has_total(row) and (k not in latest_total
+                        or st > latest_total[k].get("snapshot_time", "")):
+                    latest_total[k] = row
+
+            # Pinnacle drives accurate ML/RL but doesn't expose a clean game total,
+            # so its latest snapshot has an empty total. Backfill the total from the
+            # most recent snapshot that has one (the daily Odds-API pull).
+            for k, row in list(latest_snap.items()):
+                if not _has_total(row) and k in latest_total:
+                    merged = dict(row)
+                    src = latest_total[k]
+                    merged["total_line"]        = src.get("total_line")
+                    merged["total_over_price"]  = src.get("total_over_price")
+                    merged["total_under_price"] = src.get("total_under_price")
+                    merged["total_line_min"]    = src.get("total_line_min")
+                    merged["total_line_max"]    = src.get("total_line_max")
+                    latest_snap[k] = merged
+
             self.odds = latest_snap
-            log.info(f"Odds loaded: {len(self.odds)} games")
+            log.info(f"Odds loaded: {len(self.odds)} games "
+                     f"({sum(1 for r in self.odds.values() if _has_total(r))} with totals)")
 
         import glob
         movement_files = sorted(
@@ -1180,21 +1211,35 @@ class MLBModel:
         # that has POSITIVE EV against the real run-line price. Falls back to a
         # cover-prob edge on the number when prices are missing.
         p_home_by2, p_away_by2 = run_margin_probs(exp_home, exp_away)
+        # Reality caps: even a big favorite covers -1.5 only ~51-55% of the time,
+        # and a dog clears +1.5 well under ~68%. The Poisson output can run past
+        # these when the model's per-team expected runs are hot (e.g. a 3.9-run
+        # projected margin), producing absurd cover% and EV. Clamp to sane bounds
+        # until the run-environment projection itself is reined in.
+        RL_FAV_COVER_CAP = 0.55
+        RL_DOG_COVER_CAP = 0.68
         if home_wp >= away_wp:
             fav, dog       = home, away
-            fav_cover      = p_home_by2         # home -1.5
-            dog_cover      = 1.0 - p_home_by2   # away +1.5
+            fav_cover      = min(p_home_by2, RL_FAV_COVER_CAP)        # home -1.5
+            dog_cover      = min(1.0 - p_home_by2, RL_DOG_COVER_CAP)  # away +1.5
             fav_price      = sf(odds_snap.get("rl_home_price"))
             dog_price      = sf(odds_snap.get("rl_away_price"))
         else:
             fav, dog       = away, home
-            fav_cover      = p_away_by2         # away -1.5
-            dog_cover      = 1.0 - p_away_by2   # home +1.5
+            fav_cover      = min(p_away_by2, RL_FAV_COVER_CAP)        # away -1.5
+            dog_cover      = min(1.0 - p_away_by2, RL_DOG_COVER_CAP)  # home +1.5
             fav_price      = sf(odds_snap.get("rl_away_price"))
             dog_price      = sf(odds_snap.get("rl_home_price"))
 
+        # Reject corrupt run-line prices (|p| < 100 is impossible American odds —
+        # the near-even-game averaging bug). Treat as missing.
+        if fav_price is not None and abs(fav_price) < 100:
+            fav_price = None
+        if dog_price is not None and abs(dog_price) < 100:
+            dog_price = None
+
         def _rl_ev(pcover, price):
-            if price in (None, 0):
+            if price in (None, 0) or abs(price) < 100:
                 return None
             d = 1 + (price / 100.0 if price > 0 else 100.0 / abs(price))
             return pcover * (d - 1.0) - (1.0 - pcover)

@@ -895,6 +895,18 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
     [1]=under. **VERIFY the away/home mapping isn't flipped** via the DEEP DUMP in
     `/admin/pinnacle-odds-test` (favorite should carry the negative price on the
     correct team) before fully trusting Pinnacle lines.
+  - **RESOLVED 2026-07-25: away/home flip fixed** (prices carry `designation`
+    home/away/over/under — map by that, NOT list order; home is listed first).
+    A's mapped to bare "Athletics" (schedule name). Leaguewide-prop matchups
+    (e.g. "Away Runs (15 Games)") filtered via `REAL_TEAMS`.
+  - **TOTALS: Pinnacle's free feed has NO clean full-game total** — its s;0;ou
+    children are team totals + inning props (lines 0.5-5.5), never the ~8.5 game
+    total. Decision: keep ONE Odds-API pull at 6am purely for the total (total
+    LINE averaging is safe, unlike ML price averaging), Pinnacle drives ML/RL all
+    day, and `MLBModel.load()` BACKFILLS the total onto the latest (Pinnacle)
+    snapshot from the most recent snapshot that has one. So run_pipeline step 3
+    now runs BOTH (Odds API for total + Pinnacle for ML/RL); afternoon/mid-day
+    stay Pinnacle-only and the 6am total carries forward.
 
 - **NEW: Ask-the-Model (`ask_model.py` + `/ask`, `/ask/answer`).** Natural-language
   Q&A over today's board. `build_board_pack()` scores today's games + picks (with
