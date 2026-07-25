@@ -382,67 +382,103 @@ def _mk_points(p):
         return None
 
 
-def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str) -> list:
+def _by_designation(prices: list) -> dict:
+    """Index a market's prices by their 'designation' label (home/away/over/under)."""
+    d = {}
+    for p in prices or []:
+        des = (p.get("designation") or "").lower()
+        if des:
+            d[des] = p
+    return d
+
+
+def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str,
+                   raw_matchups: list = None) -> list:
     """
     Merge markets with matchup metadata and return one snapshot row per game.
 
-    Real Pinnacle key formats (verified live 2026-07-25):
-      moneyline (full game): "s;0;m"        (NOT "s;0;ml")
-      total     (full game): "s;0;ou"
-      run line  (full game): "s;0;s;1.5" / "s;0;s;-1.5"  (handicap in the key)
-    Matchup participants carry NO id in this feed, only alignment + order, so
-    prices are mapped by LIST ORDER: prices[0] = away (participant order 0),
-    prices[1] = home (order 1). Over/Under totals: prices[0]=over, [1]=under.
+    Verified live 2026-07-25:
+      moneyline (full game): key "s;0;m"       prices tagged designation home/away
+      run line  (full game): key "s;0;s;<h>"   e.g. s;0;s;-1.5, designation home/away
+      total     (full game): key "s;0;ou"      but lives on a CHILD matchup whose
+                             parentId is the game — resolve via parentId.
+    Prices carry a 'designation' field, so map by that (NOT list order — home is
+    listed first). Run line published as standard favorite -1.5 / dog +1.5.
     """
-    by_matchup: dict[int, dict] = {}
+    # child matchup id -> parent game id (totals live on children)
+    child_parent = {}
+    for m in (raw_matchups or []):
+        if not isinstance(m, dict):
+            continue
+        pid, mid = m.get("parentId"), m.get("id")
+        if pid in matchup_index and mid is not None:
+            child_parent[mid] = pid
+
+    slots = {gid: {"ml": None, "spreads": [], "totals": []} for gid in matchup_index}
     for mkt in raw:
         mid = mkt.get("matchupId") or mkt.get("matchup_id")
-        if mid is None or mid not in matchup_index:
+        if mid is None:
+            continue
+        owner = mid if mid in matchup_index else child_parent.get(mid)
+        if owner is None:
             continue
         key    = mkt.get("key", "")
         prices = mkt.get("prices", []) or []
-        slot = by_matchup.setdefault(mid, {"ml": None, "ou": None, "spreads": []})
-        if key == "s;0;m":
-            slot["ml"] = prices
+        if key == "s;0;m" and mid == owner:
+            slots[owner]["ml"] = prices
+        elif key.startswith("s;0;s;") and mid == owner:
+            slots[owner]["spreads"].append(prices)
         elif key == "s;0;ou":
-            if slot["ou"] is None:
-                slot["ou"] = prices
-        elif key.startswith("s;0;s;"):
-            slot["spreads"].append(prices)
+            slots[owner]["totals"].append(prices)
 
     rows = []
     for mid, meta in matchup_index.items():
-        markets = by_matchup.get(mid, {})
-        ml_prices = markets.get("ml") or []
-        if len(ml_prices) < 2:
-            continue   # no full-game moneyline — skip
+        s = slots.get(mid, {})
+        ml = _by_designation(s.get("ml"))
+        if "away" not in ml or "home" not in ml:
+            continue
+        ml_away = _mk_price(ml["away"])
+        ml_home = _mk_price(ml["home"])
 
-        # Moneyline (prices in participant order: 0=away, 1=home)
-        ml_away = _mk_price(ml_prices[0])
-        ml_home = _mk_price(ml_prices[1])
+        # Run line — publish standard fav -1.5 / dog +1.5 from the ±1.5 markets.
+        home_rl, away_rl = {}, {}
+        for prices in s.get("spreads", []):
+            dd = _by_designation(prices)
+            for side, store in (("home", home_rl), ("away", away_rl)):
+                if side in dd:
+                    pt = _mk_points(dd[side])
+                    if pt is not None and abs(pt) == 1.5:
+                        store[pt] = _mk_price(dd[side])
+        home_fav = (ml_home is not None and ml_away is not None and ml_home < ml_away)
+        rl_home_line = -1.5 if home_fav else 1.5
+        rl_away_line = 1.5 if home_fav else -1.5
+        rl_home_price = home_rl.get(rl_home_line)
+        rl_away_price = away_rl.get(rl_away_line)
+        if rl_home_price is None:
+            rl_home_line = None
+        if rl_away_price is None:
+            rl_away_line = None
 
-        # Total: both prices carry the same line in 'points'; [0]=over, [1]=under
-        ou_prices = markets.get("ou") or []
+        # Total — among the child s;0;ou markets, pick the MAIN line (over/under
+        # prices closest to even; deep alt lines are heavily skewed).
         total = over_p = under_p = None
-        if len(ou_prices) >= 2:
-            total   = _mk_points(ou_prices[0])
-            if total is None:
-                total = _mk_points(ou_prices[1])
-            over_p  = _mk_price(ou_prices[0])
-            under_p = _mk_price(ou_prices[1])
-
-        # Run line: pick the ±1.5 spread; [0]=away side, [1]=home side
-        rl_away_line = rl_away_price = rl_home_line = rl_home_price = None
-        for sp in markets.get("spreads", []):
-            if len(sp) < 2:
+        best = None
+        for prices in s.get("totals", []):
+            dd = _by_designation(prices)
+            o = dd.get("over") or (prices[0] if len(prices) >= 2 else None)
+            u = dd.get("under") or (prices[1] if len(prices) >= 2 else None)
+            op = _mk_price(o) if o else None
+            up = _mk_price(u) if u else None
+            ln = (_mk_points(o) if o else None)
+            if ln is None and u:
+                ln = _mk_points(u)
+            if op is None or up is None or ln is None:
                 continue
-            a_pt = _mk_points(sp[0])
-            if a_pt is not None and abs(a_pt) == 1.5:
-                rl_away_line  = a_pt
-                rl_away_price = _mk_price(sp[0])
-                rl_home_line  = _mk_points(sp[1])
-                rl_home_price = _mk_price(sp[1])
-                break
+            bal = abs(abs(op) - abs(up))
+            if best is None or bal < best[0]:
+                best = (bal, ln, op, up)
+        if best:
+            _, total, over_p, under_p = best
 
         game_id = f"pinnacle_{mid}"
         snap_id = f"{str(mid)[:8]}_{snapshot_time[:13]}"
@@ -631,7 +667,7 @@ def run() -> dict:
         log.warning("[Pinnacle] No games for today found in matchup response.")
         return {"snapshots": 0, "movements": 0, "source": "pinnacle"}
 
-    curr_snaps = _parse_markets(raw_markets, matchup_index, snapshot_time)
+    curr_snaps = _parse_markets(raw_markets, matchup_index, snapshot_time, raw_matchups)
     log.info(f"[Pinnacle] Parsed {len(curr_snaps)} game snapshots with odds")
 
     for snap in curr_snaps:

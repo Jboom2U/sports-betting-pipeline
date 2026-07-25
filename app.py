@@ -549,7 +549,7 @@ def pinnacle_odds_test():
         raw_m  = fetch_matchups()
         raw_mk = fetch_markets()
         idx    = _parse_matchups(raw_m)
-        rows   = _parse_markets(raw_mk, idx, snapt)
+        rows   = _parse_markets(raw_mk, idx, snapt, raw_m)
 
         out = [f"Pinnacle games parsed: {len(rows)}  (matchups indexed: {len(idx)})",
                f"raw matchups: {len(raw_m)}  |  raw markets: {len(raw_mk)}", ""]
