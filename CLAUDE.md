@@ -857,6 +857,21 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Fixed 2026-07-25 — Daily Summary REAL root cause (finished games dropped)
+
+**The long-running "Daily Summary not working" bug — actual cause found via live
+console inspection.** `window._liveGames` + the live-score matching were FINE all
+along. The problem: `today_picks_all` (→ `DATA_TODAY_PICKS`) was set to `picks`
+whenever `actual_date == today`, and `picks` comes from `score_today()`, which
+**deliberately excludes completed/in-progress games** (`mlb_model.py:1483`,
+`_game_is_over`). So the instant a game went Final it was removed from the picks
+dataset — the exact games the summary needs to show. Confirmed live: 34 picks
+across 14 games, Kansas City @ Detroit (Final 3-2) had ZERO picks in the data.
+FIX (`run_picks_html.py` ~4794): ALWAYS build `today_picks_all` by scoring
+`all_schedule` (the full slate incl. started/finished), never from `picks`. The
+main grid still uses `picks` (correctly hides finished games from the bettable
+board); only the summary dataset includes them.
+
 ## Fixed 2026-07-25 — props grading root cause + Pinnacle as PRIMARY odds source
 
 - **PROPS 0-0 ROOT CAUSE (real one).** Neither `run_pipeline` step 8b nor

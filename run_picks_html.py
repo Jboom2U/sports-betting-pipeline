@@ -4791,19 +4791,19 @@ def main(date=None, no_open=False):
     # Now generate picks from the fully filtered game list
     picks     = generate_picks(scored)
 
-    # Daily Summary needs TODAY's picks all evening. The main grid (scored) pivots
-    # to tomorrow once today's games start, which empties the summary. all_schedule
-    # already holds today's FULL slate (incl. started/finished); score it so the
-    # summary can match completed games against live scores regardless of pivot.
-    _today_str = date or _today_et()
-    if actual_date == _today_str:
-        today_picks_all = picks
-    else:
-        _today_scored = []
-        for _g in all_schedule:
-            try: _today_scored.append(model.score_game(_g))
-            except Exception: pass
-        today_picks_all = generate_picks(_today_scored)
+    # Daily Summary needs TODAY's picks all evening, INCLUDING games that already
+    # finished. `picks` comes from score_today(), which deliberately drops
+    # completed/in-progress games (mlb_model.py:1483) — so using it here made
+    # finished games vanish from the summary the moment they went Final (the
+    # long-standing "Daily Summary not working" bug). all_schedule holds the FULL
+    # slate incl. started/finished, so ALWAYS score that for the summary dataset.
+    _today_scored = []
+    for _g in all_schedule:
+        try:
+            _today_scored.append(model.score_game(_g))
+        except Exception:
+            pass
+    today_picks_all = generate_picks(_today_scored) if _today_scored else picks
 
     parlays_2        = build_parlays(picks, legs=2, max_parlays=5)
     parlays_3        = build_parlays(picks, legs=3, max_parlays=5)
