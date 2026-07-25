@@ -61,18 +61,23 @@ def main():
     except Exception as e:
         log.warning(f"Analysis grade failed (non-fatal): {e}")
 
-    # ── Step 1: Refresh odds (lines move all morning) — Pinnacle primary ──────
-    # Free + sharp + paired line/price per matchup (no consensus-averaging bugs).
+    # ── Step 1: Refresh odds — Pinnacle for ML/RL, Odds API for the TOTAL ─────
+    # Pinnacle (free, sharp, paired line/price) drives ML/RL. Pinnacle's guest
+    # feed has no clean full-game total, so we take a SECOND Odds-API total pull
+    # here (~2h before first pitch = near the closing number). Two accurate total
+    # updates/day (6am + now), still well inside the 500/mo quota.
+    try:
+        from scrapers.mlb_odds_scraper import run as run_odds
+        odds_api_result = run_odds()
+        log.info(f"Odds API (afternoon total): {odds_api_result}")
+    except Exception as e:
+        log.warning(f"Odds API afternoon total failed (non-fatal): {e}")
     try:
         from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
         result = run_pinnacle()
-        log.info(f"Pinnacle odds refreshed: {result}")
-        if not (result or {}).get("snapshots"):
-            from scrapers.mlb_odds_scraper import run as run_odds
-            result = run_odds()
-            log.info(f"Pinnacle empty — Odds API fallback: {result}")
+        log.info(f"Pinnacle odds refreshed (ML/RL): {result}")
     except Exception as e:
-        log.warning(f"Odds refresh failed (non-fatal): {e}")
+        log.warning(f"Pinnacle odds refresh failed (non-fatal): {e}")
 
     # ── Step 1b: Refresh umpire assignments (can post/change up to game time) ──
     try:

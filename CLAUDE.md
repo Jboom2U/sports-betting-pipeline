@@ -907,6 +907,20 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
     snapshot from the most recent snapshot that has one. So run_pipeline step 3
     now runs BOTH (Odds API for total + Pinnacle for ML/RL); afternoon/mid-day
     stay Pinnacle-only and the 6am total carries forward.
+  - **EXHAUSTIVE SEARCH CONFIRMED: Pinnacle's guest feed has NO clean full-game
+    Total Runs line.** Main matchup = ML + spread only. Every Over/Under CHILD
+    matchup is a player prop or inning/derivative total, tagged by `units`
+    (TotalBases, HomeRuns, EarnedRuns, HitsAllowed, PitchingOuts, Strikeouts) or a
+    low inning line (0.5-4.5). No units=Total / ~8.5 game-total child exists.
+    FINAL DECISION: pull the total from the Odds API TWICE/day — 6am (run_pipeline)
+    AND the afternoon refresh (run_afternoon step 1, ~2h pre-game ≈ closing) — and
+    the model backfills it onto the live Pinnacle snapshots. ~2 Odds pulls/day
+    (~60/mo, fine). Do NOT keep hunting the Pinnacle game total; it isn't there.
+  - **PROP ROADMAP UNLOCKED (free).** Those units-tagged Over/Under children ARE
+    the full prop menu on the same plumbing as K props: batter TotalBases/HomeRuns/
+    Hits/etc. and pitcher EarnedRuns/HitsAllowed/PitchingOuts/Walks. Parse a child
+    by `units` + its s;0;ou line/prices (line often in the key or points). This is
+    the path to expanding props (task 15/props work).
 
 - **NEW: Ask-the-Model (`ask_model.py` + `/ask`, `/ask/answer`).** Natural-language
   Q&A over today's board. `build_board_pack()` scores today's games + picks (with

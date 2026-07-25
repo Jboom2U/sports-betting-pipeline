@@ -591,23 +591,8 @@ def pinnacle_odds_test():
             # total candidates: children of this game carrying s;0;ou
             kids = {m.get("id") for m in raw_m
                     if isinstance(m, dict) and m.get("parentId") == one_id}
-            # Map child matchupId -> participant names, to tell game total
-            # (Over/Under) from team totals (team-named participants).
-            kids_parts = {m.get("id"): [p.get("name", "?") for p in m.get("participants", [])]
-                          for m in raw_m if isinstance(m, dict) and m.get("parentId") == one_id}
-            out.append(f"  child matchups: {len(kids_parts)}")
-            out.append("  children carrying s;0;ou (participants -> line):")
-            shown = 0
-            for mk in raw_mk:
-                if (isinstance(mk, dict) and mk.get("key") == "s;0;ou"
-                        and mk.get("matchupId") in kids_parts and shown < 20):
-                    pr = mk.get("prices", [])
-                    ln = next((p.get("points") for p in pr if p.get("points") is not None), "?")
-                    out.append(f"    {kids_parts.get(mk.get('matchupId'))} -> line {ln}")
-                    shown += 1
-            # GLOBAL hunt: any matchup whose participants are Over/Under (the real
-            # game-total lives here) — show id, parentId, units, and its s;0;ou line.
-            out.append("  GAME-TOTAL hunt (matchups with Over/Under participants):")
+            # Every child of this game: its units + type + its s;0;ou line.
+            # The game total is the one whose units marks a full-game runs total.
             ou_line = {}
             for mk in raw_mk:
                 if isinstance(mk, dict) and mk.get("key") == "s;0;ou":
@@ -615,14 +600,24 @@ def pinnacle_odds_test():
                     ln = next((p.get("points") for p in pr if p.get("points") is not None), None)
                     if ln is not None:
                         ou_line[mk.get("matchupId")] = ln
+            out.append("  ALL children of this game (units | type | period | s;0;ou line):")
+            for m in raw_m:
+                if not isinstance(m, dict) or m.get("parentId") != one_id:
+                    continue
+                cid = m.get("id")
+                out.append(f"    units={m.get('units')} type={m.get('type')} "
+                           f"period={m.get('period')} line={ou_line.get(cid)}")
+            # Also: any Over/Under matchup ANYWHERE with a game-total-range line
+            out.append("  Over/Under matchups with line 7-12 (likely GAME totals):")
             hunt = 0
             for m in raw_m:
                 if not isinstance(m, dict):
                     continue
-                pnames = [(p.get("name") or "").lower() for p in m.get("participants", [])]
-                if set(pnames) == {"over", "under"} and hunt < 12:
+                pn = [(p.get("name") or "").lower() for p in m.get("participants", [])]
+                ln = ou_line.get(m.get("id"))
+                if set(pn) == {"over", "under"} and ln is not None and 7 <= ln <= 12 and hunt < 15:
                     out.append(f"    id {m.get('id')} parent {m.get('parentId')} "
-                               f"units={m.get('units')} line={ou_line.get(m.get('id'))}")
+                               f"units={m.get('units')} line={ln}")
                     hunt += 1
         out.append("")
         for r in sorted(rows, key=lambda x: x["away_team"]):
