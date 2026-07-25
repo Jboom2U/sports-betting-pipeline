@@ -837,6 +837,55 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   Brewers -248 (chalk) and Arizona/Mariners ML (20-pt mirages). Tune the 3 consts
   to change price ceiling / add bet types.
 
+### RL guards + unproven-value muting (same day)
+
+- **Impossible-price guard.** `american_to_decimal` (model/value.py) now returns
+  None for `|price| < 100` (e.g. -57). Cause: the odds scraper averages every
+  book's run-line price into one bucket regardless of line, so a near-even game
+  where books split (Braves -1.5 +180 vs +1.5 -220) averages to garbage like -57.
+  Also guarded in `mlb_model.py` RL block and `prep_picks` `_pick_price`. **Real
+  fix queued: pair line+price per book in the scraper (task).**
+
+- **RL cover-prob reality caps** (`mlb_model.py`): `RL_FAV_COVER_CAP=0.55`,
+  `RL_DOG_COVER_CAP=0.68`. Poisson cover can run past these when per-team expected
+  runs are hot (3.9-run projected margins), producing absurd cover%/EV. Clamp
+  until the run-environment projection itself is reined in.
+
+- **RL value display muted.** `valueHtml`/`buildAnalysis` give RL an honest
+  "RUN LINE · UNPROVEN — Model cover X%, tracking results, no verdict yet" note
+  instead of a loud VALUE/EV (which read as fake +70%/+96% edges on hot
+  projections + bad prices). RL already excluded from Best Bets. Un-mute once the
+  scraper price fix lands and ~2 weeks of graded RL results exist.
+
+## Fixed 2026-07-25 — props grading root cause + Pinnacle as PRIMARY odds source
+
+- **PROPS 0-0 ROOT CAUSE (real one).** Neither `run_pipeline` step 8b nor
+  `run_afternoon` step 3c pulled the Pinnacle K-line file before calling
+  `score_all_props`, so K props generated 0 rows (no line = no bet) and nothing
+  was saved to `player_prop_history` to grade — 23rd AND 24th both blank. FIX:
+  both now call `save_strikeout_lines()` before scoring props. (Note: the K-prop
+  loop in score_all_props ~line 1091 is OUTSIDE the `lineup_confirmed` gate, so K
+  props do NOT need lineups — they only need the Pinnacle file present.)
+
+- **PINNACLE IS NOW THE PRIMARY ODDS SOURCE (was Odds-API-first).** The Brewers
+  card showed -259 when the real line was -115 because `mlb_odds_scraper`
+  arithmetic-averages American odds across books (mathematically wrong) and the
+  running model only reloads odds at startup. `mlb_pinnacle_scraper.run()` ALREADY
+  existed (built as a quota fallback) and pulls ML (s;0;ml), total (s;0;ou), and
+  run line (s;0;s) with PAIRED line+price per matchup, writing the same
+  `mlb_odds_master.csv`. Flipped to Pinnacle-first in 3 places: `run_pipeline`
+  step 3, `run_afternoon` step 1, and `_run_odds_snapshot()` in app.py. Odds API
+  is now the fallback only (saves ~30 quota/mo AND fixes accuracy + the RL -57
+  garbage, since Pinnacle needs no cross-book averaging).
+  - **VERIFY AFTER DEPLOY:** hit `/admin/pinnacle-odds-test` (dry run, no writes,
+    no quota) — confirms all ~15 games parse with correct team names. The A's are
+    the one to watch: schedule uses "Athletics", Pinnacle map outputs "Oakland
+    Athletics" (TEAM_NAME_MAP) — if the A's game shows no odds on the board after
+    deploy, align that mapping.
+  - STILL TODO (task): frequent Pinnacle pulls up to first pitch + freeze per game
+    at start ("ML should update to gametime then lock"). Right now it's 6am +
+    afternoon + force-odds (all now accurate via Pinnacle).
+
 ---
 
 ## Fixed 2026-07-22 (single bundle)

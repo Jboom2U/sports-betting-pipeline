@@ -61,11 +61,16 @@ def main():
     except Exception as e:
         log.warning(f"Analysis grade failed (non-fatal): {e}")
 
-    # ── Step 1: Refresh odds (lines move all morning) ─────────────────────────
+    # ── Step 1: Refresh odds (lines move all morning) — Pinnacle primary ──────
+    # Free + sharp + paired line/price per matchup (no consensus-averaging bugs).
     try:
-        from scrapers.mlb_odds_scraper import run as run_odds
-        result = run_odds()
-        log.info(f"Odds refreshed: {result}")
+        from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
+        result = run_pinnacle()
+        log.info(f"Pinnacle odds refreshed: {result}")
+        if not (result or {}).get("snapshots"):
+            from scrapers.mlb_odds_scraper import run as run_odds
+            result = run_odds()
+            log.info(f"Pinnacle empty — Odds API fallback: {result}")
     except Exception as e:
         log.warning(f"Odds refresh failed (non-fatal): {e}")
 

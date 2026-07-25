@@ -116,12 +116,26 @@ def main(date=None):
         sys.exit(1)
 
     # ── Step 3: Odds snapshot + line movement ─────────────────────────────────
+    # Pinnacle FIRST — free, sharp, and it returns paired line+price per matchup
+    # so it avoids the Odds-API consensus averaging that produced garbage lines
+    # (Brewers -259 vs real -115; run line -57). Odds API is the quota-costing
+    # fallback only if the Pinnacle feed is empty/unreachable.
     try:
-        from scrapers.mlb_odds_scraper import run as run_odds
-        odds_result = run_odds()
-        log.info(f"Odds scrape: {odds_result}")
+        from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
+        odds_result = run_pinnacle()
+        log.info(f"Pinnacle odds scrape: {odds_result}")
+        if not (odds_result or {}).get("snapshots"):
+            from scrapers.mlb_odds_scraper import run as run_odds
+            odds_result = run_odds()
+            log.info(f"Pinnacle empty — Odds API fallback: {odds_result}")
     except Exception as e:
-        log.warning(f"Odds scrape failed (non-fatal): {e}")
+        log.warning(f"Pinnacle odds failed ({e}); trying Odds API fallback")
+        try:
+            from scrapers.mlb_odds_scraper import run as run_odds
+            odds_result = run_odds()
+            log.info(f"Odds API fallback: {odds_result}")
+        except Exception as e2:
+            log.warning(f"Odds scrape failed (non-fatal): {e2}")
 
     # ── Step 4: Weather for today's games ─────────────────────────────────────
     try:

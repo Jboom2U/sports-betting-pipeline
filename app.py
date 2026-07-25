@@ -196,24 +196,24 @@ def _needs_odds_snapshot() -> bool:
 def _run_odds_snapshot():
     """Take a fresh odds + Kalshi snapshot. Non-fatal — powers the Sharp Action panel."""
     log.info("Taking mid-day odds + Kalshi snapshot...")
+    # Pinnacle FIRST (free, sharp, accurate lines). Odds API only if Pinnacle is empty.
     odds_ok = False
     try:
-        from scrapers.mlb_odds_scraper import run as run_odds
-        result = run_odds()
-        log.info(f"Odds snapshot complete: {result}")
-        if not result.get("quota_exceeded") and result.get("snapshots", 0) > 0:
+        from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
+        pin_result = run_pinnacle()
+        log.info(f"Pinnacle mid-day snapshot: {pin_result}")
+        if (pin_result or {}).get("snapshots", 0) > 0:
             odds_ok = True
-    except Exception as e:
-        log.warning(f"Odds snapshot failed (non-fatal): {e}")
+    except Exception as pe:
+        log.warning(f"Pinnacle mid-day snapshot failed (non-fatal): {pe}")
 
     if not odds_ok:
-        # Odds API unavailable or quota exhausted — try Pinnacle (no auth, no quota)
         try:
-            from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
-            pin_result = run_pinnacle()
-            log.info(f"Pinnacle mid-day snapshot: {pin_result}")
-        except Exception as pe:
-            log.warning(f"Pinnacle mid-day snapshot failed (non-fatal): {pe}")
+            from scrapers.mlb_odds_scraper import run as run_odds
+            result = run_odds()
+            log.info(f"Odds API fallback snapshot: {result}")
+        except Exception as e:
+            log.warning(f"Odds snapshot failed (non-fatal): {e}")
 
     try:
         from scrapers.mlb_kalshi_scraper import run as run_kalshi
@@ -530,6 +530,35 @@ def force_refresh():
         _cache["generated_at"] = 0
     _regenerate_in_background()
     return redirect("/")
+
+
+@app.route("/admin/pinnacle-odds-test")
+def pinnacle_odds_test():
+    """Dry-run: pull Pinnacle game odds (ML/total/RL) and show every game with
+    its lines + team names, so we can confirm they match the schedule (the A's
+    naming is the one to eyeball). Writes nothing, spends zero quota."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/pinnacle-odds-test")
+    import html as _h
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        from scrapers.mlb_pinnacle_scraper import (
+            fetch_matchups, fetch_markets, _parse_matchups, _parse_markets)
+        snapt = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        idx  = _parse_matchups(fetch_matchups())
+        rows = _parse_markets(fetch_markets(), idx, snapt)
+        out = [f"Pinnacle games parsed: {len(rows)}  (matchups indexed: {len(idx)})", ""]
+        for r in sorted(rows, key=lambda x: x["away_team"]):
+            out.append(f"{r['away_team']} @ {r['home_team']}  |  ML {r['ml_away']}/{r['ml_home']}"
+                       f"  |  RL {r['rl_away_line']}({r['rl_away_price']})/{r['rl_home_line']}({r['rl_home_price']})"
+                       f"  |  Tot {r['total_line']} o{r['total_over_price']}/u{r['total_under_price']}")
+        body = _h.escape("\n".join(out))
+        return Response(f"<body style='background:#0d1117;color:#c9d1d9;font-family:ui-monospace,monospace;"
+                        f"padding:24px'><h2 style='color:#58a6ff'>Pinnacle odds dry-run</h2>"
+                        f"<pre>{body}</pre></body>", mimetype="text/html")
+    except Exception as e:
+        import traceback
+        return Response(f"<pre>{traceback.format_exc()}</pre>", mimetype="text/html"), 500
 
 
 @app.route("/force-odds")
