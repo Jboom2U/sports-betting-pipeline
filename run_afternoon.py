@@ -137,6 +137,14 @@ def main():
     # (that was the Props 0-0 bug). Now that lineups are confirmed, persist the
     # real props here. Idempotent: save_prop_pick is ON CONFLICT DO NOTHING.
     try:
+        # Pull real Pinnacle K lines first (free) — without them score_all_props
+        # emits 0 K props, so nothing saves to grade. This was the props 0-0 bug.
+        try:
+            from scrapers.mlb_pinnacle_scraper import save_strikeout_lines
+            _nk = save_strikeout_lines(today)
+            log.info(f"Pinnacle K lines pulled for prop save: {_nk} pitcher(s)")
+        except Exception as _pe:
+            log.warning(f"Pinnacle K pull before prop save failed (non-fatal): {_pe}")
         from model.mlb_props_model import score_all_props as _score_props
         from db.picks_store import save_prop_pick as _save_prop
         _props = _score_props(target_date=today)

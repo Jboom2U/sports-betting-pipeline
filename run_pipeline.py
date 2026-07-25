@@ -285,6 +285,15 @@ def main(date=None):
         today_str2 = actual_date if 'actual_date' in dir() else (
             datetime.now().strftime("%Y-%m-%d") if not date else date
         )
+        # Pull the real Pinnacle K lines FIRST — K props need them, and without
+        # the file score_all_props generates 0 K props (no line = no bet), so
+        # nothing was ever saved to grade. Free (Pinnacle guest API), no quota.
+        try:
+            from scrapers.mlb_pinnacle_scraper import save_strikeout_lines
+            _nk = save_strikeout_lines(today_str2)
+            log.info(f"Pinnacle K lines pulled for prop save: {_nk} pitcher(s)")
+        except Exception as _pe:
+            log.warning(f"Pinnacle K pull before prop save failed (non-fatal): {_pe}")
         from model.mlb_props_model import score_all_props as _score_props
         prop_picks = _score_props(target_date=today_str2)
         saved_props = 0
