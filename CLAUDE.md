@@ -886,6 +886,17 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
     at start ("ML should update to gametime then lock"). Right now it's 6am +
     afternoon + force-odds (all now accurate via Pinnacle).
 
+- **NEW: Ask-the-Model (`ask_model.py` + `/ask`, `/ask/answer`).** Natural-language
+  Q&A over today's board. `build_board_pack()` scores today's games + picks (with
+  value/EV, market %, pitching, signals) + real-line K props + 21-day trends into a
+  text pack (cached 10 min), then `answer_question()` sends it to Claude (haiku)
+  with a system prompt that bakes in the calibration truths (85%+ trusted, 75-84%
+  overconfident, confidence != value, RL unproven, never invent data). `/ask` is a
+  standalone page (textarea + async fetch) linked from the dashboard header; both
+  routes are site-auth gated by the global before_request. Needs ANTHROPIC_API_KEY
+  (set); without it returns the raw board pack. Answers today's board only — extend
+  build_board_pack for historical/player-deep questions later.
+
 ---
 
 ## Fixed 2026-07-22 (single bundle)

@@ -542,23 +542,135 @@ def pinnacle_odds_test():
     import html as _h
     from datetime import datetime as _dt, timezone as _tz
     try:
+        import json as _json
         from scrapers.mlb_pinnacle_scraper import (
             fetch_matchups, fetch_markets, _parse_matchups, _parse_markets)
         snapt = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        idx  = _parse_matchups(fetch_matchups())
-        rows = _parse_markets(fetch_markets(), idx, snapt)
-        out = [f"Pinnacle games parsed: {len(rows)}  (matchups indexed: {len(idx)})", ""]
+        raw_m  = fetch_matchups()
+        raw_mk = fetch_markets()
+        idx    = _parse_matchups(raw_m)
+        rows   = _parse_markets(raw_mk, idx, snapt)
+
+        out = [f"Pinnacle games parsed: {len(rows)}  (matchups indexed: {len(idx)})",
+               f"raw matchups: {len(raw_m)}  |  raw markets: {len(raw_mk)}", ""]
+
+        # ── Diagnostics: why markets aren't matching matchups ────────────────
+        idx_ids = set(idx.keys())
+        mk_mids, key_samples = [], {}
+        for mk in raw_mk:
+            if not isinstance(mk, dict):
+                continue
+            mid = mk.get("matchupId", mk.get("matchup_id"))
+            mk_mids.append(mid)
+            key_samples.setdefault(mk.get("key", "?"), 0)
+            key_samples[mk.get("key", "?")] += 1
+        mk_mid_set = set(mk_mids)
+        overlap = idx_ids & mk_mid_set
+        out.append(f"matchup index ids (sample 5): {list(idx_ids)[:5]}")
+        out.append(f"market matchupIds (sample 5): {list(mk_mid_set)[:5]}")
+        out.append(f"ids present in BOTH index and markets: {len(overlap)}")
+        out.append(f"market key counts (top): "
+                   f"{dict(sorted(key_samples.items(), key=lambda x:-x[1])[:12])}")
+        out.append("")
+        # one sample raw market object so we can see the real field names
+        if raw_mk:
+            sample = next((m for m in raw_mk if isinstance(m, dict)), {})
+            out.append("SAMPLE RAW MARKET OBJECT:")
+            out.append(_json.dumps(sample, indent=2)[:1400])
+        out.append("")
+        # one sample matchup object
+        if raw_m:
+            sm = next((m for m in raw_m if isinstance(m, dict) and m.get("type") in ("", "matchup", None)), {})
+            out.append("SAMPLE RAW MATCHUP OBJECT (game type):")
+            out.append(_json.dumps(sm, indent=2)[:1400])
+        out.append("")
         for r in sorted(rows, key=lambda x: x["away_team"]):
             out.append(f"{r['away_team']} @ {r['home_team']}  |  ML {r['ml_away']}/{r['ml_home']}"
                        f"  |  RL {r['rl_away_line']}({r['rl_away_price']})/{r['rl_home_line']}({r['rl_home_price']})"
                        f"  |  Tot {r['total_line']} o{r['total_over_price']}/u{r['total_under_price']}")
         body = _h.escape("\n".join(out))
         return Response(f"<body style='background:#0d1117;color:#c9d1d9;font-family:ui-monospace,monospace;"
-                        f"padding:24px'><h2 style='color:#58a6ff'>Pinnacle odds dry-run</h2>"
+                        f"padding:24px'><h2 style='color:#58a6ff'>Pinnacle odds diagnostic</h2>"
                         f"<pre>{body}</pre></body>", mimetype="text/html")
     except Exception as e:
         import traceback
         return Response(f"<pre>{traceback.format_exc()}</pre>", mimetype="text/html"), 500
+
+
+@app.route("/ask/answer", methods=["POST"])
+def ask_answer():
+    """Answer a natural-language question about today's board. Site-auth gated."""
+    q = (request.form.get("q") or request.args.get("q") or "").strip()
+    try:
+        from ask_model import answer_question
+        res = answer_question(q)
+        return {"answer": res.get("answer", "")}
+    except Exception as e:
+        import traceback
+        log.warning(f"/ask/answer failed: {traceback.format_exc()}")
+        return {"answer": f"Something went wrong: {e}"}, 500
+
+
+@app.route("/ask")
+def ask_page():
+    """Ask-the-model page: type a question about any game/team/prop, get a read."""
+    html = """<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Statalizer Bot — Statalizers</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--sub:#8b949e;--blue:#58a6ff;--green:#3fb950}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Arial;margin:0;padding:24px;line-height:1.55}
+.wrap{max-width:820px;margin:0 auto}
+h1{color:var(--blue);font-size:1.4rem;margin:0 0 4px}
+.sub{color:var(--sub);font-size:.9rem;margin-bottom:18px}
+textarea{width:100%;min-height:80px;background:var(--card);border:1px solid var(--border);
+  border-radius:10px;color:var(--text);padding:12px 14px;font-size:1rem;font-family:inherit;resize:vertical}
+.row{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.btn{background:var(--green);color:#04260f;border:none;padding:10px 20px;border-radius:9px;
+  font-weight:800;cursor:pointer;font-size:.95rem}
+.btn:disabled{opacity:.5;cursor:default}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+.chip{background:var(--card);border:1px solid var(--border);color:var(--sub);border-radius:20px;
+  padding:6px 12px;font-size:.8rem;cursor:pointer}
+.chip:hover{color:var(--text);border-color:var(--blue)}
+.answer{margin-top:20px;background:var(--card);border:1px solid var(--border);border-left:3px solid var(--green);
+  border-radius:10px;padding:16px 18px;white-space:pre-wrap;display:none}
+.loading{color:var(--sub);font-style:italic;margin-top:20px;display:none}
+a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
+</style></head><body><div class="wrap">
+<h1>🧠 Statalizer Bot</h1>
+<div class="sub">Ask about any game, matchup, team, or prop on today's board. Statalizer Bot answers from the
+model's own reads and is honest about where it's calibrated and where it isn't.</div>
+<textarea id="q" placeholder="e.g. What do you think about the Phillies moneyline tonight? Is there value on Skubal's strikeout prop?"></textarea>
+<div class="row"><button class="btn" id="go" onclick="ask()">Ask</button>
+<a class="back" href="/">&larr; Back to dashboard</a></div>
+<div class="chips">
+  <span class="chip" onclick="fill('Which moneylines have the best value today?')">Best value MLs?</span>
+  <span class="chip" onclick="fill('What is your read on tonight\\'s best game?')">Best game read</span>
+  <span class="chip" onclick="fill('Any strikeout props worth betting today?')">K props?</span>
+  <span class="chip" onclick="fill('Which favorites are overpriced chalk to avoid?')">Chalk to avoid</span>
+</div>
+<div class="loading" id="load">Reading the board…</div>
+<div class="answer" id="a"></div>
+</div>
+<script>
+function fill(t){document.getElementById('q').value=t;}
+async function ask(){
+  const q=document.getElementById('q').value.trim();
+  if(!q)return;
+  const go=document.getElementById('go'),load=document.getElementById('load'),a=document.getElementById('a');
+  go.disabled=true;load.style.display='block';a.style.display='none';
+  try{
+    const r=await fetch('/ask/answer',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'q='+encodeURIComponent(q)});
+    const d=await r.json();
+    a.textContent=d.answer||'No answer.';
+  }catch(e){a.textContent='Error: '+e;}
+  finally{go.disabled=false;load.style.display='none';a.style.display='block';}
+}
+document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey))ask();});
+</script></body></html>"""
+    return Response(html, mimetype="text/html")
 
 
 @app.route("/force-odds")

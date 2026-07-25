@@ -253,6 +253,12 @@ def prep_picks(picks, kalshi_data: dict = None):
             _pick_price = gd.get("total_over_price") if _isover else gd.get("total_under_price")
         else:
             _pick_price = None
+        # Reject impossible American prices (|p| < 100) — corrupt odds data.
+        try:
+            if _pick_price is not None and abs(float(_pick_price)) < 100:
+                _pick_price = None
+        except (TypeError, ValueError):
+            _pick_price = None
 
         out.append({
             "type":           ptype,
@@ -1715,6 +1721,8 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   border:1px solid rgba(255,183,77,.35);border-radius:6px;padding:1px 6px;letter-spacing:.05em}
 .val-warn-badge{font-size:.64rem;font-weight:800;color:#ff6b6b;background:rgba(255,107,107,.12);
   border:1px solid rgba(255,107,107,.4);border-radius:8px;padding:2px 7px;letter-spacing:.04em}
+.val-unproven{font-size:.66rem;font-weight:800;color:#8b949e;background:rgba(139,148,158,.1);
+  border:1px solid rgba(139,148,158,.3);border-radius:6px;padding:2px 7px;letter-spacing:.04em}
 .odds-row{display:flex;align-items:center;gap:6px;margin:6px 0 2px;flex-wrap:wrap}
 .odds-label{font-size:.68rem;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;margin-right:2px}
 .odds-pill{font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:10px;
@@ -1761,6 +1769,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <div class="stat-pill">Locks <span id="lockCount">—</span></div>
     <div class="stat-pill">Top Pick <span id="topPick">—</span></div>
     <a href="/performance" class="status-link">📊 Performance</a>
+    <a href="/ask" class="status-link">🧠 Statalizer Bot</a>
     <a href="/status" class="status-link">⚙ Status</a>
     <button id="refreshBtn" onclick="doRefresh()">
       <svg id="refreshIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -2135,6 +2144,17 @@ function oddsHtml(p){
 // Market VALUE / EV row — de-vigged price awareness. Confidence says how likely;
 // value says whether the PRICE is wrong. Chalk = heavy favorite, value scarce.
 function valueHtml(p){
+  // Run line is a rebuilt, unproven market sitting on a shaky price feed. Do NOT
+  // show a loud VALUE/EV number for it yet — it reads as a fake edge. Show the
+  // model's cover read and price, flagged as unproven, until it earns trust.
+  if(p.type==="RL"){
+    const priceStr = (p.pick_price==null) ? "no clean price" :
+      `@ ${p.pick_price>0?"+":""}${Math.round(p.pick_price)}`;
+    return `<div class="value-row">
+      <span class="val-unproven">RUN LINE · UNPROVEN</span>
+      <span class="value-meta">Model cover ${p.conf}% ${priceStr} · tracking results, no verdict yet</span>
+    </div>`;
+  }
   if(!p.value_tag) return "";
   const col = p.value_tag==="VALUE" ? "var(--green)"
             : p.value_tag==="NO VALUE" ? "var(--red)" : "var(--sub)";
@@ -2160,6 +2180,18 @@ function buildAnalysis(p){
   const fmtP = x => (x==null ? "—" : Math.round(x*100)+"%");
   const price = p.pick_price;
   const priceStr = (price==null) ? "" : (price>0?"+":"")+Math.round(price);
+
+  // Run line gets an honest, muted read — it's a rebuilt market on a shaky price
+  // feed, so no EV verdict yet regardless of what the raw number says.
+  if(p.type==="RL"){
+    const cov = Math.round(p.conf);
+    const pr = (price==null) ? "The price feed for this game looks unreliable (close games make books disagree on the favorite), so there's no trustworthy price to value it against."
+      : `Priced ${priceStr}.`;
+    return `<div class="analysis-body">The model reads this run line as about a <b>${cov}%</b> cover.
+      ${pr} But the run line was just rebuilt and its run-margin projections still run hot, so treat this
+      number as information, not an edge. It's kept out of Best Bets on purpose and won't get a verdict until
+      a couple weeks of graded results prove it out. <b>Bottom line:</b> watch, don't bet it on these numbers.</div>`;
+  }
 
   // No price -> can't judge value (TOSSUP / unpriced)
   if(price==null || !p.value_tag){
@@ -2624,7 +2656,7 @@ function renderPicks(){
           <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
           ${_isHighConf(p)?`<span class="hc-badge" title="${_highConfTitle(p)}">🔥 HIGH CONFIDENCE</span>`:""}
           ${_isProfitBand(p)?`<span class="pb-badge" title="${_profitBandTitle(p)}">📈 PROFITABLE</span>`:""}
-          ${(p.value_tag==="NO VALUE"||p.value_chalk)?`<span class="val-warn-badge" title="Model does not beat this price by enough — priced too short">⚠ ${p.value_chalk?"CHALK":"NO VALUE"}</span>`:""}
+          ${(p.type!=="RL" && (p.value_tag==="NO VALUE"||p.value_chalk))?`<span class="val-warn-badge" title="Model does not beat this price by enough — priced too short">⚠ ${p.value_chalk?"CHALK":"NO VALUE"}</span>`:""}
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}${p.tier==="LEAN"?" — thin edge":""}</span>
         </div>
         <div class="pick-label">${p.label}</div>
