@@ -368,121 +368,83 @@ def load_strikeout_lines(date: str) -> dict:
         return {}
 
 
+def _mk_price(p):
+    try:
+        return int(round(float(p.get("price", p.get("value")))))
+    except (TypeError, ValueError):
+        return None
+
+
+def _mk_points(p):
+    try:
+        return float(p.get("points", p.get("designation", p.get("handicap"))))
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str) -> list:
     """
-    Merge markets with matchup metadata and return a list of snapshot rows,
-    one row per game, in SNAPSHOT_FIELDNAMES format.
+    Merge markets with matchup metadata and return one snapshot row per game.
+
+    Real Pinnacle key formats (verified live 2026-07-25):
+      moneyline (full game): "s;0;m"        (NOT "s;0;ml")
+      total     (full game): "s;0;ou"
+      run line  (full game): "s;0;s;1.5" / "s;0;s;-1.5"  (handicap in the key)
+    Matchup participants carry NO id in this feed, only alignment + order, so
+    prices are mapped by LIST ORDER: prices[0] = away (participant order 0),
+    prices[1] = home (order 1). Over/Under totals: prices[0]=over, [1]=under.
     """
-    # Group markets by matchupId
     by_matchup: dict[int, dict] = {}
     for mkt in raw:
         mid = mkt.get("matchupId") or mkt.get("matchup_id")
         if mid is None or mid not in matchup_index:
             continue
-        if mid not in by_matchup:
-            by_matchup[mid] = {"ml": None, "ou": None, "spread": None}
-
         key    = mkt.get("key", "")
-        prices = mkt.get("prices", [])
-
-        if "ml" in key or key == "s;0;ml":
-            by_matchup[mid]["ml"] = prices
-        elif "ou" in key or key == "s;0;ou":
-            by_matchup[mid]["ou"] = prices
-        elif key == "s;0;s" or "spread" in key:
-            by_matchup[mid]["spread"] = prices
+        prices = mkt.get("prices", []) or []
+        slot = by_matchup.setdefault(mid, {"ml": None, "ou": None, "spreads": []})
+        if key == "s;0;m":
+            slot["ml"] = prices
+        elif key == "s;0;ou":
+            if slot["ou"] is None:
+                slot["ou"] = prices
+        elif key.startswith("s;0;s;"):
+            slot["spreads"].append(prices)
 
     rows = []
     for mid, meta in matchup_index.items():
         markets = by_matchup.get(mid, {})
-        if not markets or not markets.get("ml"):
-            # No odds data at all — skip this game
-            continue
+        ml_prices = markets.get("ml") or []
+        if len(ml_prices) < 2:
+            continue   # no full-game moneyline — skip
 
-        away_pid = meta["away_participant_id"]
-        home_pid = meta["home_participant_id"]
+        # Moneyline (prices in participant order: 0=away, 1=home)
+        ml_away = _mk_price(ml_prices[0])
+        ml_home = _mk_price(ml_prices[1])
 
-        def price_for(pid, prices):
-            """Extract American-odds price for a participant."""
-            if not prices or pid is None:
-                return None
-            for p in prices:
-                if p.get("participantId") == pid or p.get("participant_id") == pid:
-                    val = p.get("price") or p.get("value")
-                    try:
-                        return int(round(float(val)))
-                    except (TypeError, ValueError):
-                        return None
-            return None
+        # Total: both prices carry the same line in 'points'; [0]=over, [1]=under
+        ou_prices = markets.get("ou") or []
+        total = over_p = under_p = None
+        if len(ou_prices) >= 2:
+            total   = _mk_points(ou_prices[0])
+            if total is None:
+                total = _mk_points(ou_prices[1])
+            over_p  = _mk_price(ou_prices[0])
+            under_p = _mk_price(ou_prices[1])
 
-        def point_for(pid, prices):
-            """Extract handicap/spread point value."""
-            if not prices or pid is None:
-                return None
-            for p in prices:
-                if p.get("participantId") == pid or p.get("participant_id") == pid:
-                    val = p.get("designation") or p.get("points") or p.get("handicap")
-                    try:
-                        return float(val)
-                    except (TypeError, ValueError):
-                        return None
-            return None
+        # Run line: pick the ±1.5 spread; [0]=away side, [1]=home side
+        rl_away_line = rl_away_price = rl_home_line = rl_home_price = None
+        for sp in markets.get("spreads", []):
+            if len(sp) < 2:
+                continue
+            a_pt = _mk_points(sp[0])
+            if a_pt is not None and abs(a_pt) == 1.5:
+                rl_away_line  = a_pt
+                rl_away_price = _mk_price(sp[0])
+                rl_home_line  = _mk_points(sp[1])
+                rl_home_price = _mk_price(sp[1])
+                break
 
-        def total_line_from_ou(prices):
-            """Pinnacle OU prices carry the line as 'designation' (e.g. '8.5')."""
-            if not prices:
-                return None
-            for p in prices:
-                val = p.get("designation") or p.get("points") or p.get("line")
-                try:
-                    return float(val)
-                except (TypeError, ValueError):
-                    pass
-            return None
-
-        def over_price(prices):
-            if not prices:
-                return None
-            for p in prices:
-                d = (p.get("designation") or "").lower()
-                if d == "over" or p.get("side") == "over":
-                    try:
-                        return int(round(float(p.get("price") or p.get("value"))))
-                    except (TypeError, ValueError):
-                        pass
-            return None
-
-        def under_price(prices):
-            if not prices:
-                return None
-            for p in prices:
-                d = (p.get("designation") or "").lower()
-                if d == "under" or p.get("side") == "under":
-                    try:
-                        return int(round(float(p.get("price") or p.get("value"))))
-                    except (TypeError, ValueError):
-                        pass
-            return None
-
-        ml_prices  = markets.get("ml") or []
-        ou_prices  = markets.get("ou") or []
-        spr_prices = markets.get("spread") or []
-
-        ml_away = price_for(away_pid, ml_prices)
-        ml_home = price_for(home_pid, ml_prices)
-
-        rl_away_line  = point_for(away_pid, spr_prices)
-        rl_home_line  = point_for(home_pid, spr_prices)
-        rl_away_price = price_for(away_pid, spr_prices)
-        rl_home_price = price_for(home_pid, spr_prices)
-
-        total    = total_line_from_ou(ou_prices)
-        over_p   = over_price(ou_prices)
-        under_p  = under_price(ou_prices)
-
-        # game_id: use matchup id as string
         game_id = f"pinnacle_{mid}"
-
         snap_id = f"{str(mid)[:8]}_{snapshot_time[:13]}"
 
         rows.append({

@@ -885,6 +885,16 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   - STILL TODO (task): frequent Pinnacle pulls up to first pitch + freeze per game
     at start ("ML should update to gametime then lock"). Right now it's 6am +
     afternoon + force-odds (all now accurate via Pinnacle).
+  - **PARSER BUG FOUND + FIXED 2026-07-25 (dry-run showed 0 games parsed).** The
+    real Pinnacle market key formats (verified live): moneyline = `s;0;m` (NOT
+    `s;0;ml` — the old parser looked for "ml" so it matched nothing → 0 games),
+    total = `s;0;ou`, run line = `s;0;s;1.5`/`s;0;s;-1.5` (handicap in the key,
+    not a bare `s;0;s`). Also: matchup participants carry NO id in this feed (only
+    `alignment` + `order`), so `_parse_markets` now maps prices by LIST ORDER —
+    prices[0]=away (participant order 0), prices[1]=home. Totals: [0]=over,
+    [1]=under. **VERIFY the away/home mapping isn't flipped** via the DEEP DUMP in
+    `/admin/pinnacle-odds-test` (favorite should carry the negative price on the
+    correct team) before fully trusting Pinnacle lines.
 
 - **NEW: Ask-the-Model (`ask_model.py` + `/ask`, `/ask/answer`).** Natural-language
   Q&A over today's board. `build_board_pack()` scores today's games + picks (with

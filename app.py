@@ -572,17 +572,22 @@ def pinnacle_odds_test():
         out.append(f"market key counts (top): "
                    f"{dict(sorted(key_samples.items(), key=lambda x:-x[1])[:12])}")
         out.append("")
-        # one sample raw market object so we can see the real field names
-        if raw_mk:
-            sample = next((m for m in raw_mk if isinstance(m, dict)), {})
-            out.append("SAMPLE RAW MARKET OBJECT:")
-            out.append(_json.dumps(sample, indent=2)[:1400])
-        out.append("")
-        # one sample matchup object
-        if raw_m:
-            sm = next((m for m in raw_m if isinstance(m, dict) and m.get("type") in ("", "matchup", None)), {})
-            out.append("SAMPLE RAW MATCHUP OBJECT (game type):")
-            out.append(_json.dumps(sm, indent=2)[:1400])
+        # Deep-dump ONE indexed game: its matchup participants + ml/ou/spread
+        # markets, so we can confirm prices[0]=away is the correct mapping.
+        one_id = next(iter(idx_ids), None)
+        if one_id is not None:
+            meta = idx.get(one_id, {})
+            out.append(f"DEEP DUMP for indexed game {one_id}: "
+                       f"{meta.get('away_team')} (away) @ {meta.get('home_team')} (home)")
+            gm = next((m for m in raw_m if isinstance(m, dict) and m.get("id") == one_id), {})
+            out.append("  matchup participants: " +
+                       _json.dumps(gm.get("participants", []))[:500])
+            for mk in raw_mk:
+                if not isinstance(mk, dict) or mk.get("matchupId") != one_id:
+                    continue
+                k = mk.get("key", "")
+                if k == "s;0;m" or k == "s;0;ou" or k.startswith("s;0;s;"):
+                    out.append(f"  market {k}: prices={_json.dumps(mk.get('prices', []))[:300]}")
         out.append("")
         for r in sorted(rows, key=lambda x: x["away_team"]):
             out.append(f"{r['away_team']} @ {r['home_team']}  |  ML {r['ml_away']}/{r['ml_home']}"
