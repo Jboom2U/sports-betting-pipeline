@@ -67,9 +67,9 @@ TEAM_NAME_MAP = {
     "Texas Rangers":             "Texas Rangers",
     "Seattle Mariners":          "Seattle Mariners",
     "Los Angeles Angels":        "Los Angeles Angels",
-    "Oakland Athletics":         "Oakland Athletics",
-    "Athletics":                 "Oakland Athletics",
-    "Sacramento River Cats":     "Oakland Athletics",    # temporary ballpark name
+    "Oakland Athletics":         "Athletics",           # schedule uses bare "Athletics"
+    "Athletics":                 "Athletics",
+    "Sacramento River Cats":     "Athletics",            # temporary ballpark name
     # National League East
     "New York Mets":             "New York Mets",
     "Atlanta Braves":            "Atlanta Braves",
@@ -89,6 +89,9 @@ TEAM_NAME_MAP = {
     "Arizona Diamondbacks":      "Arizona Diamondbacks",
     "Colorado Rockies":          "Colorado Rockies",
 }
+
+# Canonical set of real MLB team names (used to reject leaguewide prop matchups).
+REAL_TEAMS = set(TEAM_NAME_MAP.values())
 
 # Reuse SNAPSHOT_FIELDNAMES / MOVEMENT_FIELDNAMES from the primary odds scraper
 # so we can append to the same CSV files without import cycles.
@@ -238,6 +241,12 @@ def _parse_matchups(raw: list) -> dict:
             home_pid  = participants[1].get("id") or participants[1].get("participantId")
 
         if not away_name or not home_name:
+            continue
+
+        # Only real MLB team-vs-team games. Pinnacle mixes leaguewide prop
+        # matchups into the feed (e.g. "Away Runs (15 Games)"); those normalize
+        # to non-team names and must not be treated as games.
+        if away_name not in REAL_TEAMS or home_name not in REAL_TEAMS:
             continue
 
         index[matchup_id] = {
@@ -473,6 +482,11 @@ def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str,
             if ln is None and u:
                 ln = _mk_points(u)
             if op is None or up is None or ln is None:
+                continue
+            # Real MLB game totals live ~6.5-12.5. Derivative s;0;ou markets that
+            # sneak in via parentId (inning props, alt lines) fall outside this;
+            # reject them so we don't pick a 0.5 or 15.5 "total".
+            if not (6.0 <= ln <= 13.0):
                 continue
             bal = abs(abs(op) - abs(up))
             if best is None or bal < best[0]:

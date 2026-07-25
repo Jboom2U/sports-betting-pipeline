@@ -588,6 +588,20 @@ def pinnacle_odds_test():
                 k = mk.get("key", "")
                 if k == "s;0;m" or k == "s;0;ou" or k.startswith("s;0;s;"):
                     out.append(f"  market {k}: prices={_json.dumps(mk.get('prices', []))[:300]}")
+            # total candidates: children of this game carrying s;0;ou
+            kids = {m.get("id") for m in raw_m
+                    if isinstance(m, dict) and m.get("parentId") == one_id}
+            out.append(f"  child matchups: {len(kids)}")
+            tot_cands = []
+            for mk in raw_mk:
+                if (isinstance(mk, dict) and mk.get("key") == "s;0;ou"
+                        and mk.get("matchupId") in kids):
+                    pr = mk.get("prices", [])
+                    ln = next((p.get("points") for p in pr if p.get("points") is not None), "?")
+                    tot_cands.append(f"line {ln}: {_json.dumps(pr)[:160]}")
+            out.append("  s;0;ou total candidates (from children):")
+            for tc in tot_cands[:12]:
+                out.append("    " + tc)
         out.append("")
         for r in sorted(rows, key=lambda x: x["away_team"]):
             out.append(f"{r['away_team']} @ {r['home_team']}  |  ML {r['ml_away']}/{r['ml_home']}"
