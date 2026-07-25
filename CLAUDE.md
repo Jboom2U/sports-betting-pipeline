@@ -947,6 +947,12 @@ board); only the summary dataset includes them.
   routes are site-auth gated by the global before_request. Needs ANTHROPIC_API_KEY
   (set); without it returns the raw board pack. Answers today's board only — extend
   build_board_pack for historical/player-deep questions later.
+  - **UPGRADED 2026-07-25: independent analyst.** build_board_pack now scores the
+    FULL slate from m.schedule (not score_today, which drops finished/unpicked
+    games - why the bot went silent on no-pick games), with richer per-game data
+    (starters+ERA, bullpen ERA, offense RPG/OPS, park, weather, market). System
+    prompt now tells it to give its OWN read from the raw data AND compare to the
+    model, flagging agree/disagree, and never go silent when the model has no pick.
 
 ---
 

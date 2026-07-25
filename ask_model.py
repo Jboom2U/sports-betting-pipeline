@@ -50,30 +50,56 @@ def build_board_pack(force: bool = False) -> str:
 
         m = MLBModel()
         m.load()
-        scored, _actual = m.score_today(target_date=today)
+        # Score EVERY game on today's slate — including finished, in-progress, and
+        # games the model passed on — so the bot can analyze ANY matchup the user
+        # asks about. score_today() drops finished/in-progress games, which is why
+        # the bot used to go silent on games with no pick.
+        sched, seen = [], set()
+        for g in m.schedule:
+            if g.get("game_date") != today:
+                continue
+            gid = g.get("game_id")
+            if gid in seen:
+                continue
+            seen.add(gid)
+            sched.append(g)
+        scored = []
+        for g in sched:
+            try:
+                scored.append(m.score_game(g))
+            except Exception:
+                pass
         picks = generate_picks(scored)
         by_game = defaultdict(list)
         for p in picks:
             by_game[p.get("game", "")].append(p)
 
-        out.append("=== GAMES (model reads) ===")
+        out.append("=== GAMES (full raw data for YOUR analysis + the model's read) ===")
         for g in scored:
             gl = f"{g.get('away_team','')} @ {g.get('home_team','')}"
-            out.append(f"\n{gl}")
-            out.append(f"  SP: {g.get('away_sp','TBD')} (ERA {g.get('away_sp_era_adj','?')}) "
+            out.append(f"\n{gl}  ({g.get('venue','')})")
+            out.append(f"  Starters: {g.get('away_sp','TBD')} (ERA {g.get('away_sp_era_adj','?')}) "
                        f"vs {g.get('home_sp','TBD')} (ERA {g.get('home_sp_era_adj','?')})")
-            out.append(f"  Model win%: away {g.get('away_wp')} / home {g.get('home_wp')} | "
-                       f"exp total {g.get('exp_total')} vs line {g.get('total_line')}")
-            out.append(f"  Market ML: away {g.get('ml_away_odds')} / home {g.get('ml_home_odds')} | "
-                       f"park {g.get('park_runs')} | weather {g.get('weather_flag')} | "
+            out.append(f"  Bullpen ERA: away {g.get('away_bp_era','?')} / home {g.get('home_bp_era','?')}")
+            out.append(f"  Offense: away {g.get('away_rpg','?')} RPG (OPS {g.get('away_ops','?')}) / "
+                       f"home {g.get('home_rpg','?')} RPG (OPS {g.get('home_ops','?')})")
+            out.append(f"  Park runs factor {g.get('park_runs','?')} | "
+                       f"weather {g.get('weather_flag','')} {g.get('temp_f','?')}F {g.get('wind_label','')}")
+            out.append(f"  MODEL: win% away {g.get('away_wp')} / home {g.get('home_wp')} | "
+                       f"exp total {g.get('exp_total')} vs line {g.get('total_line')} | "
                        f"sharp {g.get('sharp_side','')} {g.get('ml_signal','')}")
-            for p in by_game.get(gl, []):
-                v = p.get("value", {}) or {}
-                out.append(f"  PICK {p.get('type')}: {p.get('label')} | conf "
-                           f"{p.get('conf',0):.0%} | tier {p.get('tier')} | "
-                           f"value {v.get('tag','')} | EV {_fmt_ev(v)} | "
-                           f"model {p.get('conf',0):.0%} vs market "
-                           f"{'' if v.get('market_prob') is None else round(v['market_prob']*100)}%")
+            out.append(f"  MARKET: ML away {g.get('ml_away_odds')} / home {g.get('ml_home_odds')}")
+            ph = by_game.get(gl, [])
+            if ph:
+                for p in ph:
+                    v = p.get("value", {}) or {}
+                    out.append(f"  MODEL PICK {p.get('type')}: {p.get('label')} | conf "
+                               f"{p.get('conf',0):.0%} | tier {p.get('tier')} | value {v.get('tag','')} "
+                               f"| EV {_fmt_ev(v)} | model {p.get('conf',0):.0%} vs market "
+                               f"{'' if v.get('market_prob') is None else round(v['market_prob']*100)}%")
+            else:
+                out.append("  MODEL PICK: none — the model passed here (no qualifying edge or TBD "
+                           "starters). Give YOUR OWN read from the data above.")
     except Exception as e:
         out.append(f"[board scoring failed: {e}]")
 
@@ -110,25 +136,27 @@ def build_board_pack(force: bool = False) -> str:
     return text
 
 
-_SYSTEM = """You are Statalizer Bot, the analyst for the Statalizers MLB betting
-model. Answer the user's question about a specific game, team, matchup, or prop
-using ONLY the board data provided below. You are talking to the model's owner, who may be relaying your
-read to a friend, so be clear and confident where the data supports it and honest
-where it doesn't.
+_SYSTEM = """You are Statalizer Bot, an MLB betting analyst working alongside the
+Statalizers model. For any game, team, matchup, or prop the user asks about, give
+BOTH of these, clearly separated:
 
-Calibration truths you MUST apply:
-- The model is well-calibrated only at 85%+ confidence. It is OVERCONFIDENT in the
-  75-84% range (predicts ~80%, actually hits ~64%). Discount high-confidence chalk.
-- Confidence is NOT value. A heavy favorite (e.g. -240) can be a bad bet when the
-  price is worse than the model's real edge. Prefer positive-EV picks at fair prices
-  and call out chalk with no value.
-- The run line is newly rebuilt and UNPROVEN — describe its read but do not give it
-  a confident betting verdict yet.
-- If the provided data does not cover the question, say so plainly. NEVER invent
-  numbers, lines, or games that aren't in the data.
+1. YOUR OWN read. Reason from the raw data provided - starting pitching and ERA,
+   bullpen ERA, team offense (RPG/OPS), park factor, weather, market price. Form
+   your own opinion on who has the edge and whether there is value at the price.
+   This is your independent take, not a summary of the model.
 
-Give a direct read: what the model sees, whether there's real value at the price,
-and how much to trust it. Keep it tight — a few sentences, not an essay."""
+2. THE MODEL'S read. What its win%, pick, tier, and value/EV say. Then explicitly
+   state whether you AGREE or DISAGREE with the model, and why. It is genuinely
+   useful when you see it differently - say so and make the case.
+
+If the model has NO pick on a game, do NOT go silent - give your own read from the
+data anyway; that is the most interesting case. Use ONLY the data provided; NEVER
+invent numbers, lines, or games.
+
+Calibration truths to apply to the model's numbers: it is well-calibrated only at
+85%+ confidence and OVERCONFIDENT at 75-84% (predicts ~80%, hits ~64%); confidence
+is NOT value (chalk can be a bad price); the run line is newly rebuilt and unproven.
+Be direct and tight - a few short paragraphs, opinion clearly distinct from the model."""
 
 
 def answer_question(question: str, date: str = None) -> dict:
