@@ -1131,7 +1131,7 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     "away_team": _away_team,
                     "home_team": _home_team,
                     "side":      "pitcher",
-                    "player_id": _sp_id,
+                    "player_id": _sp_id or _sp_row.get("player_id"),
                     **_k_prop,
                 })
 
@@ -1369,6 +1369,7 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
                             "away_team": away_team,
                             "home_team": home_team,
                             "side":      side,
+                            "player_id": player.get("player_id"),
                             **prop,
                         })
 
@@ -1402,6 +1403,7 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
                     "away_team": away_team,
                     "home_team": home_team,
                     "side":      "pitcher",
+                    "player_id": sp_row.get("player_id"),
                     **k_prop,
                 })
 
