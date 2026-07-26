@@ -857,6 +857,22 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Added 2026-07-26 — Badge tracker + full admin index
+
+- **HIGH CONFIDENCE / PROFITABLE tracker** (`renderTracker` in run_picks_html,
+  `#trackerWidget` on the LEFT of the yesterday/bankroll row). Shows the running
+  graded record of the two badge categories (elite = 🔥 High Confidence, wide =
+  📈 Profitable) from `compute_high_conf_rule()` (live DB), green if >52.4%. Same
+  source the board badges use, so it reconciles with the Yesterday tab.
+- **Admin hub rebuilt** (`/admin`) into a full organized index: Daily views,
+  Analysis & performance (analysis report w/ date picker, calibration, signal
+  audit, analytics, model-config), Diagnostics (pinnacle tests, status), Actions
+  (force-pipeline/odds, refresh-signals, grade-backfill, unstick, pw). Header now
+  has 📋 Analysis + 🗂 Menu links so past-day analysis is one click.
+- Records mismatch (Yesterday tab 24-19 vs analysis report 20-16) = point-in-time
+  report (generated 7:52am) vs live tab. Not a math bug. TODO: make the report
+  read live at view time / show its generation time prominently.
+
 ## Fixed 2026-07-25 — Daily Summary REAL root cause (finished games dropped)
 
 **The long-running "Daily Summary not working" bug — actual cause found via live

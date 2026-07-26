@@ -650,6 +650,15 @@ def ask_answer():
 @app.route("/ask")
 def ask_page():
     """Ask-the-model page: type a question about any game/team/prop, get a read."""
+    # Warm the board pack in the background so the first question hits a ready
+    # cache instead of loading the model + scoring inside the request (the timeout).
+    def _warm():
+        try:
+            from ask_model import build_board_pack
+            build_board_pack()
+        except Exception as e:
+            log.warning(f"ask warm failed: {e}")
+    threading.Thread(target=_warm, daemon=True).start()
     html = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>Statalizer Bot — Statalizers</title>
@@ -699,9 +708,14 @@ async function ask(){
   go.disabled=true;load.style.display='block';a.style.display='none';
   try{
     const r=await fetch('/ask/answer',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'q='+encodeURIComponent(q)});
-    const d=await r.json();
-    a.textContent=d.answer||'No answer.';
-  }catch(e){a.textContent='Error: '+e;}
+    const txt=await r.text();
+    let d;
+    try{ d=JSON.parse(txt); }catch(_){ d=null; }
+    if(d && d.answer){ a.textContent=d.answer; }
+    else if(!r.ok || d===null){
+      a.textContent="Statalizer Bot is still warming up the day's data (first question after a while can take a moment). Give it 15 seconds and ask again.";
+    } else { a.textContent='No answer.'; }
+  }catch(e){a.textContent='That took too long to load. Wait a few seconds and try again.';}
   finally{go.disabled=false;load.style.display='none';a.style.display='block';}
 }
 document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey))ask();});
@@ -1010,47 +1024,74 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
 <div class="container">
   <h1>Admin hub</h1>
   <p class="sub">All internal routes for Statalizers.com</p>
+  <h2 style="font-size:14px;color:#8b949e;margin:1.5rem 0 .75rem;text-transform:uppercase;letter-spacing:.05em">Daily views</h2>
   <div class="grid">
-    <a class="card" href="/">
-      <span class="badge badge-public">Public</span>
+    <a class="card" href="/"><span class="badge badge-public">Public</span>
       <div class="card-title">Main dashboard</div>
-      <div class="card-desc">Today's picks by confidence tier</div>
-    </a>
-    <a class="card" href="/performance-html">
-      <span class="badge badge-public">Public</span>
+      <div class="card-desc">Today's picks, Best Bets, Daily Summary</div></a>
+    <a class="card" href="/ask"><span class="badge badge-public">Public</span>
+      <div class="card-title">🧠 Statalizer Bot</div>
+      <div class="card-desc">Ask about any game, matchup, or prop</div></a>
+    <a class="card" href="/performance-html"><span class="badge badge-public">Public</span>
       <div class="card-title">Performance tracker</div>
-      <div class="card-desc">W/L/ROI by tier, sharp action table, 7-90d toggles</div>
-    </a>
-    <a class="card" href="/analytics">
-      <span class="badge badge-admin">Admin</span>
+      <div class="card-desc">W/L/ROI by tier &amp; type, sharp action, 7-90d toggles</div></a>
+  </div>
+
+  <h2 style="font-size:14px;color:#8b949e;margin:1.75rem 0 .75rem;text-transform:uppercase;letter-spacing:.05em">Analysis &amp; performance</h2>
+  <div class="grid">
+    <a class="card" href="/admin/analysis"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">📋 Nightly analysis report</div>
+      <div class="card-desc">Day review + trends. Date picker for ANY past day, download, email</div></a>
+    <a class="card" href="/admin/calibration"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Calibration</div>
+      <div class="card-desc">Predicted vs actual by confidence band, tier, type</div></a>
+    <a class="card" href="/admin/signal-audit"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Signal audit</div>
+      <div class="card-desc">Which model inputs actually vary across the slate</div></a>
+    <a class="card" href="/analytics"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Analytics dashboard</div>
-      <div class="card-desc">Natural language DB queries, pick trends</div>
-    </a>
-    <a class="card" href="/admin/model-config">
-      <span class="badge badge-admin">Admin</span>
+      <div class="card-desc">Natural-language DB queries over pick history</div></a>
+    <a class="card" href="/admin/model-config"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Model control panel</div>
-      <div class="card-desc">Tune signal weights, preview pick impact, save config</div>
-    </a>
-    <a class="card" href="/status">
-      <span class="badge badge-admin">Admin</span>
+      <div class="card-desc">Tune signal weights, preview impact, save config</div></a>
+  </div>
+
+  <h2 style="font-size:14px;color:#8b949e;margin:1.75rem 0 .75rem;text-transform:uppercase;letter-spacing:.05em">Diagnostics</h2>
+  <div class="grid">
+    <a class="card" href="/admin/pinnacle-odds-test"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Pinnacle odds diagnostic</div>
+      <div class="card-desc">Dry-run ML/RL/total parse, no writes, no quota</div></a>
+    <a class="card" href="/admin/pinnacle-k-test"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Pinnacle K-line test</div>
+      <div class="card-desc">Live strikeout lines + prices parse check</div></a>
+    <a class="card" href="/status"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Pipeline status</div>
-      <div class="card-desc">Last run, DB connection, R2 storage health</div>
-    </a>
-    <a class="card" href="/schedule-status">
-      <span class="badge badge-admin">Admin</span>
+      <div class="card-desc">Last run, DB, R2 health</div></a>
+    <a class="card" href="/schedule-status"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Schedule status</div>
-      <div class="card-desc">6am pipeline, 11:30am refresh, odds snapshots</div>
-    </a>
-    <a class="card" href="/force-pipeline">
-      <span class="badge badge-admin">Admin</span>
+      <div class="card-desc">Next pipeline, refresh, first pitch (JSON)</div></a>
+  </div>
+
+  <h2 style="font-size:14px;color:#8b949e;margin:1.75rem 0 .75rem;text-transform:uppercase;letter-spacing:.05em">Actions (run on click)</h2>
+  <div class="grid">
+    <a class="card" href="/force-pipeline"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Force pipeline</div>
-      <div class="card-desc">Manually trigger the full 6am pipeline</div>
-    </a>
-    <a class="card" href="/unstick">
-      <span class="badge badge-admin">Admin</span>
+      <div class="card-desc">Trigger the full 6am pipeline now</div></a>
+    <a class="card" href="/force-odds"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Force odds snapshot</div>
+      <div class="card-desc">Fresh Pinnacle ML/RL pull + dashboard rebuild</div></a>
+    <a class="card" href="/admin/refresh-signals"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Refresh signals</div>
+      <div class="card-desc">Umpire, bullpen, pitcher/team stats (no quota)</div></a>
+    <a class="card" href="/admin/grade-backfill"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Grade backfill</div>
+      <div class="card-desc">Import + grade past picks from R2 analysis JSONs</div></a>
+    <a class="card" href="/unstick"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Unstick pipeline</div>
-      <div class="card-desc">Clear stuck pipeline state and restart</div>
-    </a>
+      <div class="card-desc">Clear stuck pipeline state</div></a>
+    <a class="card" href="/admin/change-site-password"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Change site password</div>
+      <div class="card-desc">Update the public site login</div></a>
   </div>
   <p class="logout"><a href="/admin/logout">Sign out</a></p>
 </div></body></html>""", mimetype="text/html")

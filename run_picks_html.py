@@ -1256,6 +1256,14 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .yday-bankroll-wrap{display:flex;gap:14px;align-items:flex-start;margin-bottom:0}
 .yday-bankroll-wrap #yesterdayBanner{flex:1;min-width:0}
 .bankroll-widget{background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:14px 16px;min-width:175px;max-width:210px;flex-shrink:0}
+.tracker-widget{background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:14px 16px;min-width:200px;max-width:240px;flex-shrink:0}
+.tw-title{font-size:.82rem;font-weight:800;color:var(--gold);margin-bottom:10px}
+.tw-sub{font-size:.68rem;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;margin:8px 0 3px}
+.tw-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:.78rem;padding:2px 0}
+.tw-lbl{color:var(--text);font-weight:600}
+.tw-rec{font-weight:700}
+.tw-none{color:var(--sub);font-style:italic;font-size:.72rem}
+.tw-note{font-size:.64rem;color:var(--sub);line-height:1.4;margin-top:9px;border-top:1px solid var(--border);padding-top:8px}
 .bk-title{font-size:.7rem;color:#8b949e;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
 .bk-input-row{display:flex;align-items:center;gap:6px;margin-bottom:8px}
 .bk-dollar{font-size:1rem;font-weight:700;color:#e6edf3}
@@ -1770,6 +1778,8 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <div class="stat-pill">Top Pick <span id="topPick">—</span></div>
     <a href="/performance" class="status-link">📊 Performance</a>
     <a href="/ask" class="status-link">🧠 Statalizer Bot</a>
+    <a href="/admin/analysis" class="status-link">📋 Analysis</a>
+    <a href="/admin" class="status-link">🗂 Menu</a>
     <a href="/status" class="status-link">⚙ Status</a>
     <button id="refreshBtn" onclick="doRefresh()">
       <svg id="refreshIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1863,6 +1873,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <!-- PANEL: GAME PICKS -->
   <div class="section-panel active" id="panel-picks">
     <div class="yday-bankroll-wrap">
+      <div class="tracker-widget" id="trackerWidget"></div>
       <div id="yesterdayBanner"></div>
       <div class="bankroll-widget" id="bankrollWidget">
         <div class="bk-title">💰 My Bankroll</div>
@@ -2448,6 +2459,36 @@ const HIGH_CONF = __HIGHCONF__;   // {rule:{ML:75}, record:{ML:"ML 75%+: 87 pick
       box.style.display = "flex";
     }
   }catch(e){}
+})();
+
+// Left-side tracker: running graded record of the two badge categories over time,
+// so you can judge whether High Confidence / Profitable picks are worth leaning on
+// (e.g. as parlay pieces). Data is derived from the model's own graded history.
+(function renderTracker(){
+  try{
+    const box = document.getElementById("trackerWidget");
+    if(!box || !HIGH_CONF){ if(box) box.style.display="none"; return; }
+    const elite = HIGH_CONF.record ? Object.values(HIGH_CONF.record) : [];
+    const wide  = HIGH_CONF.record_wide ? Object.values(HIGH_CONF.record_wide) : [];
+    function rows(recs){
+      if(!recs.length) return '<div class="tw-row"><span class="tw-none">building record…</span></div>';
+      return recs.map(r=>{
+        const i = r.indexOf(":");
+        const lbl = (i>=0 ? r.slice(0,i) : r).trim();
+        const stat = (i>=0 ? r.slice(i+1) : "").trim();
+        const m = stat.match(/([\d.]+)%/);
+        const wr = m ? parseFloat(m[1]) : null;
+        const col = wr==null ? "var(--sub)" : (wr>=52.38 ? "var(--green)" : "var(--red)");
+        return `<div class="tw-row"><span class="tw-lbl">${lbl}</span>`+
+               `<span class="tw-rec" style="color:${col}">${stat}</span></div>`;
+      }).join("");
+    }
+    box.innerHTML = `<div class="tw-title">📊 Badge Track Record</div>`+
+      `<div class="tw-sub">🔥 High Confidence</div>${rows(elite)}`+
+      `<div class="tw-sub">📈 Profitable</div>${rows(wide)}`+
+      `<div class="tw-note">Running graded win rate of these flagged picks. `+
+      `Green = beating break-even (52.4%). Good parlay pieces while the rate holds.</div>`;
+  }catch(e){ const box=document.getElementById("trackerWidget"); if(box) box.style.display="none"; }
 })();
 
 function _isHighConf(p){

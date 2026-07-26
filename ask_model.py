@@ -22,9 +22,25 @@ ET = ZoneInfo("America/New_York")
 _pack_cache = {"date": None, "built_at": 0.0, "text": ""}
 _PACK_TTL = 600  # seconds
 
+# Cache the loaded model so we don't re-read every CSV on each question (the main
+# source of the /ask timeout). Reloaded every 30 min.
+_model_cache = {"model": None, "loaded_at": 0.0}
+_MODEL_TTL = 1800
+
 
 def _today_et() -> str:
     return datetime.now(ET).strftime("%Y-%m-%d")
+
+
+def _get_model():
+    now = time.time()
+    if _model_cache["model"] is None or now - _model_cache["loaded_at"] > _MODEL_TTL:
+        from model.mlb_model import MLBModel
+        m = MLBModel()
+        m.load()
+        _model_cache["model"] = m
+        _model_cache["loaded_at"] = now
+    return _model_cache["model"]
 
 
 def _fmt_ev(v: dict) -> str:
@@ -48,8 +64,7 @@ def build_board_pack(force: bool = False) -> str:
         from model.mlb_model import MLBModel
         from model.mlb_picks import generate_picks
 
-        m = MLBModel()
-        m.load()
+        m = _get_model()
         # Score EVERY game on today's slate — including finished, in-progress, and
         # games the model passed on — so the bot can analyze ANY matchup the user
         # asks about. score_today() drops finished/in-progress games, which is why
@@ -106,11 +121,8 @@ def build_board_pack(force: bool = False) -> str:
     # ── K props (real Pinnacle lines) ────────────────────────────────────────
     try:
         from model.mlb_props_model import score_all_props
-        from scrapers.mlb_pinnacle_scraper import save_strikeout_lines
-        try:
-            save_strikeout_lines(today)
-        except Exception:
-            pass
+        # Use the K-line file already pulled by the pipeline — do NOT do a live
+        # Pinnacle fetch here (it was a big chunk of the /ask request latency).
         props = [p for p in score_all_props(today) if p.get("prop_type") == "K"]
         if props:
             out.append("\n=== PITCHER K PROPS (real Pinnacle lines) ===")
