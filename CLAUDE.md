@@ -857,6 +857,22 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Added 2026-07-26 — Stats & Trends tab (visual bar charts)
+
+- **New "📊 Stats & Trends" tab** (`panel-trends`, `renderTrends()` in
+  run_picks_html). Server computes 21-day graded trends via
+  `analysis_report.build_data_pack(today)` -> embedded as `DATA_TRENDS`
+  (`__TRENDS__`). Four CSS bar charts (no external lib): win% by confidence band,
+  by bet type, by tier, and prop hit% by type. Bars colored green/red vs the
+  52.4% break-even line (white marker). To add more charts, extend build_data_pack
+  and add a `chart(...)` call in renderTrends.
+- **DONE: player headshots on prop cards.** MLBAM `player_id` now flows onto every
+  prop: batters from the lineup dict, pitchers from a NEW `away/home_probable_pitcher_id`
+  column added to mlb_scraper + mlb_normalize + game_pitchers. prep_props serializes
+  `player_id`; the prop card renders `img.mlbstatic.com/.../people/<id>/headshot/67/current`
+  with onerror hide. NOTE: pitcher (K-prop) faces only appear AFTER the next 6am
+  schedule re-scrape populates the new id column; batter faces work immediately.
+
 ## Added 2026-07-26 — Badge tracker + full admin index
 
 - **HIGH CONFIDENCE / PROFITABLE tracker** (`renderTracker` in run_picks_html,

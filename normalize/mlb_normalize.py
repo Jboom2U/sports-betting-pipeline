@@ -173,9 +173,11 @@ def normalize_schedule(rows: list[dict]) -> list[dict]:
             "away_team":             normalize_team(r.get("away_team", "")),
             "away_team_id":          safe_int(r.get("away_team_id")),
             "away_probable_pitcher": normalize_player(r.get("away_probable_pitcher", "")),
+            "away_probable_pitcher_id": r.get("away_probable_pitcher_id", ""),
             "home_team":             normalize_team(r.get("home_team", "")),
             "home_team_id":          safe_int(r.get("home_team_id")),
             "home_probable_pitcher": normalize_player(r.get("home_probable_pitcher", "")),
+            "home_probable_pitcher_id": r.get("home_probable_pitcher_id", ""),
             "venue":                 r.get("venue", "").strip(),
             "timestamp":             r.get("timestamp", ""),
         })

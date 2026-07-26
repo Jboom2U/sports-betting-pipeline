@@ -218,9 +218,11 @@ def fetch_schedule(days_ahead: int = 2) -> list[dict]:
                     "away_team":            away["team"]["name"],
                     "away_team_id":         away["team"]["id"],
                     "away_probable_pitcher":away.get("probablePitcher", {}).get("fullName", ""),
+                    "away_probable_pitcher_id":away.get("probablePitcher", {}).get("id", ""),
                     "home_team":            home["team"]["name"],
                     "home_team_id":         home["team"]["id"],
                     "home_probable_pitcher":home.get("probablePitcher", {}).get("fullName", ""),
+                    "home_probable_pitcher_id":home.get("probablePitcher", {}).get("id", ""),
                     "venue":                game.get("venue", {}).get("name", ""),
                     "timestamp":            TIMESTAMP,
                 })

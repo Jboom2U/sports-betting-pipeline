@@ -681,6 +681,7 @@ def prep_props(props: list) -> list:
         out.append({
             "prop_type":    ptype,
             "player_name":  p["player_name"],
+            "player_id":    p.get("player_id"),
             "line":         p["line"],
             "proj":         p["proj"],
             "conf":         round(conf_raw * 100, 1),
@@ -1645,6 +1646,20 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .section-nav-btn:hover:not(.active){color:var(--text)}
 .section-panel{display:none}
 .section-panel.active{display:block}
+/* Stats & Trends bar charts */
+.trend-chart{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+.trend-chart-title{font-size:.95rem;font-weight:800;color:var(--text);margin-bottom:3px}
+.trend-chart-sub{font-size:.72rem;color:var(--sub);margin-bottom:14px}
+.trend-row{display:grid;grid-template-columns:96px 1fr 120px;align-items:center;gap:10px;margin:7px 0}
+.trend-label{font-size:.8rem;color:var(--text);font-weight:600;text-align:right}
+.trend-bar-track{position:relative;height:20px;background:var(--bg);border-radius:5px;overflow:hidden}
+.trend-bar{height:100%;border-radius:5px;transition:width .4s ease}
+.trend-be{position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,.35);z-index:2}
+.trend-be-lbl{position:absolute;top:-15px;font-size:.55rem;color:var(--sub);transform:translateX(-50%)}
+.trend-val{font-size:.76rem;font-weight:700;white-space:nowrap}
+.trend-empty{color:var(--sub);font-style:italic;padding:20px;text-align:center}
+.prop-name-row{display:flex;align-items:center;gap:10px}
+.prop-face{width:46px;height:46px;border-radius:50%;object-fit:cover;background:var(--bg);border:1px solid var(--border);flex-shrink:0}
 
 /* ── TODAY'S GAMES ── */
 .schedule-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:36px}
@@ -1868,6 +1883,13 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <button class="section-nav-btn" data-panel="panel-hr-watch">💣 HR Watch</button>
     <button class="section-nav-btn" data-panel="panel-monte-carlo">🎲 Monte Carlo</button>
     <button class="section-nav-btn" data-panel="panel-daily-summary">📋 Daily Summary</button>
+    <button class="section-nav-btn" data-panel="panel-trends">📊 Stats &amp; Trends</button>
+  </div>
+
+  <!-- PANEL: STATS & TRENDS -->
+  <div class="section-panel" id="panel-trends">
+    <div class="section-title">📊 Stats &amp; Trends <span style="font-size:.7rem;color:var(--sub);font-weight:500">— last 21 days of graded picks</span></div>
+    <div id="trendsContent"></div>
   </div>
 
   <!-- PANEL: GAME PICKS -->
@@ -2436,6 +2458,7 @@ function refreshPropButtons(){
 // else (all TOTAL, all RL, ML under 75%) landed 44-55% — indistinguishable from
 // a coin flip. Threshold should be re-derived from post-2026-07-21 calibration.
 const HIGH_CONF = __HIGHCONF__;   // {rule:{ML:75}, record:{ML:"ML 75%+: 87 picks, 65.5%"}}
+const DATA_TRENDS = __TRENDS__;   // {conf_band:[], by_tier:[], market:[], props:[]}
 
 // Show the badge tiers' live graded record so the "best pick" claim is verifiable.
 // Records are derived server-side from the model's own graded history.
@@ -2490,6 +2513,62 @@ const HIGH_CONF = __HIGHCONF__;   // {rule:{ML:75}, record:{ML:"ML 75%+: 87 pick
       `Green = beating break-even (52.4%). Good parlay pieces while the rate holds.</div>`;
   }catch(e){ const box=document.getElementById("trackerWidget"); if(box) box.style.display="none"; }
 })();
+
+// Stats & Trends — visual bar charts of the last 21 days of graded picks.
+function renderTrends(){
+  const box = document.getElementById("trendsContent");
+  if(!box) return;
+  const T = DATA_TRENDS || {};
+  const BE = 52.38;
+  const num = x => (x==null ? 0 : +x);
+  function bar(label, pct, valText){
+    const w = Math.max(2, Math.min(100, pct));
+    const col = pct>=BE ? "var(--green)" : "var(--red)";
+    return `<div class="trend-row">
+      <span class="trend-label">${label}</span>
+      <div class="trend-bar-track">
+        <div class="trend-bar" style="width:${w}%;background:${col}"></div>
+        <div class="trend-be" style="left:${BE}%"></div>
+      </div>
+      <span class="trend-val" style="color:${col}">${valText}</span>
+    </div>`;
+  }
+  function chart(title, sub, rows){
+    return `<div class="trend-chart"><div class="trend-chart-title">${title}</div>
+      <div class="trend-chart-sub">${sub}</div>
+      ${rows || '<div class="trend-empty">No graded data yet.</div>'}</div>`;
+  }
+  // 1. by confidence band
+  let cb = "";
+  (T.conf_band||[]).forEach(r=>{
+    const w=num(r.w), l=num(r.l), n=w+l; if(!n) return;
+    const pct=w/n*100;
+    cb += bar(`${Math.round(num(r.lo)*100)}-${Math.round(num(r.hi)*100)}%`, pct, `${pct.toFixed(1)}% (${w}-${l})`);
+  });
+  // 2. by bet type  3. by tier  (both aggregated from by_tier)
+  const typeAgg={}, tierAgg={};
+  (T.by_tier||[]).forEach(r=>{
+    const ty=r.pick_type||"?"; (typeAgg[ty]=typeAgg[ty]||{w:0,l:0}); typeAgg[ty].w+=num(r.w); typeAgg[ty].l+=num(r.l);
+    const ti=r.tier||"?";      (tierAgg[ti]=tierAgg[ti]||{w:0,l:0}); tierAgg[ti].w+=num(r.w); tierAgg[ti].l+=num(r.l);
+  });
+  const rowsFrom = (agg, order) => Object.keys(agg).sort((a,b)=>((order?order[a]:0)??9)-((order?order[b]:0)??9))
+    .map(k=>{const{w,l}=agg[k];const n=w+l;if(!n)return"";const pct=w/n*100;return bar(k,pct,`${pct.toFixed(1)}% (${w}-${l})`);}).join("");
+  const bt = rowsFrom(typeAgg, null);
+  const tr = rowsFrom(tierAgg, {LOCK:0,STRONG:1,LEAN:2,TOSSUP:3});
+  // 4. props hit rate
+  let pr = "";
+  (T.props||[]).forEach(r=>{
+    const h=num(r.hits), tot=num(r.total); if(!tot) return;
+    const pct=h/tot*100;
+    pr += bar(`${r.prop_type} ${r.side||''}`.trim(), pct, `${pct.toFixed(0)}% (${h}/${tot})`);
+  });
+  box.innerHTML =
+    chart("Win rate by confidence band","Does higher model confidence actually win more? The white line marks 52.4% break-even.", cb) +
+    chart("Win rate by bet type","Moneyline vs run line vs totals.", bt) +
+    chart("Win rate by tier","LOCK / STRONG / LEAN / TOSSUP.", tr) +
+    chart("Prop hit rate by type","Player props, side-aware.", pr);
+}
+renderTrends();
 
 function _isHighConf(p){
   if(!p || !HIGH_CONF || !HIGH_CONF.rule) return false;
@@ -2810,7 +2889,10 @@ function renderSurfacedProps(){
           <span class="pick-type-badge badge-PROP">👤 PROP · ${p.prop_type}</span>
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
         </div>
-        <div class="pick-label">${p.player_name} — ${label}</div>
+        <div class="prop-name-row">
+          ${p.player_id ? `<img class="prop-face" alt="" loading="lazy" src="https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_100/v1/people/${p.player_id}/headshot/67/current" onerror="this.style.display='none'">` : ""}
+          <div class="pick-label">${p.player_name} — ${label}</div>
+        </div>
         <div class="pick-game">${p.game}</div>
         <div class="conf-row">
           <div class="conf-bar-wrap">
@@ -4992,6 +5074,22 @@ def main(date=None, no_open=False):
     schedule_next_games = all_schedule_next if all_schedule_next else scored_next
     schedule_next_json  = json.dumps(prep_schedule_view(schedule_next_games, [], standings))
 
+    # Stats & Trends — 21-day graded trends for the visual bar charts.
+    trends_data = {}
+    try:
+        from analysis_report import build_data_pack as _bdp
+        _tp = _bdp(_today_et())
+        if not _tp.get("error"):
+            trends_data = {
+                "conf_band": _tp.get("trend_by_conf_band", []),
+                "by_tier":   _tp.get("trend_by_tier", []),
+                "market":    _tp.get("trend_market_signal", []),
+                "props":     _tp.get("trend_props", []),
+            }
+    except Exception as _te:
+        log.debug(f"Trends pack failed: {_te}")
+    trends_json = json.dumps(trends_data, default=str)
+
     # Serialize all data for HTML template injection
     high_conf_json  = json.dumps(compute_high_conf_rule())
     picks_json      = json.dumps(prep_picks(picks, kalshi_data=kalshi_data))
@@ -5011,6 +5109,7 @@ def main(date=None, no_open=False):
     html = (HTML
             .replace("__DATE__",         actual_date)
             .replace("__HIGHCONF__",     high_conf_json)
+            .replace("__TRENDS__",       trends_json)
             .replace("__TODAY_PICKS__",  today_picks_json)
             .replace("__PICKS__",        picks_json)
             .replace("__GAMES__",        games_json)

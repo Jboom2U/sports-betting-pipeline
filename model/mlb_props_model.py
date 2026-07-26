@@ -917,10 +917,12 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     try:
                         gid = int(row.get("game_id", 0))
                         game_pitchers[gid] = {
-                            "away_sp":   row.get("away_probable_pitcher", "TBD"),
-                            "home_sp":   row.get("home_probable_pitcher", "TBD"),
-                            "away_team": row.get("away_team", ""),
-                            "home_team": row.get("home_team", ""),
+                            "away_sp":    row.get("away_probable_pitcher", "TBD"),
+                            "home_sp":    row.get("home_probable_pitcher", "TBD"),
+                            "away_sp_id": row.get("away_probable_pitcher_id", ""),
+                            "home_sp_id": row.get("home_probable_pitcher_id", ""),
+                            "away_team":  row.get("away_team", ""),
+                            "home_team":  row.get("home_team", ""),
                         }
                     except (ValueError, TypeError):
                         pass
@@ -1063,6 +1065,7 @@ def score_all_props(target_date: str = None) -> list[dict]:
                         "away_team": away_team,
                         "home_team": home_team,
                         "side":      "away",
+                        "player_id": player.get("player_id"),
                         **prop,
                     })
 
@@ -1082,6 +1085,7 @@ def score_all_props(target_date: str = None) -> list[dict]:
                         "away_team": away_team,
                         "home_team": home_team,
                         "side":      "home",
+                        "player_id": player.get("player_id"),
                         **prop,
                     })
 
@@ -1093,7 +1097,9 @@ def score_all_props(target_date: str = None) -> list[dict]:
         _home_team = _gp.get("home_team", "")
         _game_str  = f"{_away_team} @ {_home_team}"
         _weather   = weather_data.get(_gid)
-        for _sp_name, _opp_team in ((_gp["away_sp"], _home_team), (_gp["home_sp"], _away_team)):
+        for _sp_name, _opp_team, _sp_id in (
+                (_gp["away_sp"], _home_team, _gp.get("away_sp_id", "")),
+                (_gp["home_sp"], _away_team, _gp.get("home_sp_id", ""))):
             if not _sp_name or _sp_name == "TBD":
                 continue
             # Skip if already scored this pitcher in the confirmed game loop
@@ -1125,6 +1131,7 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     "away_team": _away_team,
                     "home_team": _home_team,
                     "side":      "pitcher",
+                    "player_id": _sp_id,
                     **_k_prop,
                 })
 
