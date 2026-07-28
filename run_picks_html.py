@@ -1664,6 +1664,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .ls-badge{font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:20px;display:inline-block}
 .ls-yes{color:var(--green);background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35)}
 .ls-no{color:#ffb74d;background:rgba(255,183,77,.1);border:1px solid rgba(255,183,77,.3)}
+.gs-badge{font-size:.72rem;font-weight:800;padding:3px 10px;border-radius:20px;display:inline-block;letter-spacing:.03em}
+.gs-bad{color:#ff6b6b;background:rgba(255,107,107,.14);border:1px solid rgba(255,107,107,.45)}
+.gs-warn{color:#ffb74d;background:rgba(255,183,77,.14);border:1px solid rgba(255,183,77,.45)}
+.gs-banner{margin:4px 0 8px;padding:7px 12px;border-radius:8px;background:rgba(255,107,107,.08);
+  border:1px solid rgba(255,107,107,.3);font-size:.8rem;color:#ff9d9d;display:flex;align-items:center;gap:8px}
 
 /* ── TODAY'S GAMES ── */
 .schedule-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:36px}
@@ -2790,6 +2795,7 @@ function renderPicks(){
         </div>
         <div class="pick-label">${p.label}</div>
         <div class="pick-game">${p.game}</div>
+        ${(()=>{ const st=_statusFor(p.away, p.home); return st ? `<div class="gs-banner">${st.badge} <span>This game is ${st.detail.toLowerCase()} — the bet may not stand.</span></div>` : ""; })()}
         <div class="conf-row">
           <div class="conf-bar-wrap">
             <div class="conf-bar bar-${p.tier}" style="width:${barPct}%"></div>
@@ -3350,6 +3356,7 @@ function renderGames(){
           <span class="game-time">${g.time}</span>
         </div>
         <div class="lineup-status">
+          ${(()=>{ const st=_statusFor(g.away, g.home); return st ? st.badge+" " : ""; })()}
           ${g.lineup_confirmed
             ? `<span class="ls-badge ls-yes">✓ Lineups confirmed</span>`
             : `<span class="ls-badge ls-no">⏳ Lineups not set — refresh closer to first pitch</span>`}
@@ -4087,7 +4094,10 @@ function renderTicker(){
       for (const dateEntry of (data.dates || [])) {
         for (const game of (dateEntry.games || [])) {
           const abstract = game?.status?.abstractGameState;
-          if (abstract !== "Final" && abstract !== "Live") continue;
+          const detailed = game?.status?.detailedState || "";
+          // Weather / other disruptions: surface these instead of dropping them.
+          const abnormal = /postpon|cancel|delay|suspend/i.test(detailed);
+          if (abstract !== "Final" && abstract !== "Live" && !abnormal) continue;
           const away      = game.teams.away;
           const home      = game.teams.home;
           const linescore = game.linescore || {};
@@ -4107,6 +4117,8 @@ function renderTicker(){
             home_score: home.score ?? 0,
             is_live:    isLive,
             label:      label,
+            status:     detailed,                 // detailed game state
+            abnormal:   abnormal,                 // postponed/cancelled/delayed/suspended
           });
         }
       }
@@ -4125,6 +4137,15 @@ function renderTicker(){
       const duration = Math.max(20, games.length * 5);
       track.style.animationDuration = duration + "s";
       try { if (typeof renderDailySummary === "function") renderDailySummary(); } catch(e){}
+      // Refresh Today's Games so cancel/delay + lineup status stay current.
+      try { if (typeof renderGames === "function") renderGames(); } catch(e){}
+      // Re-render Game Picks ONCE on the first live fetch so status banners appear
+      // (they can't render before the async score feed lands). Not repeated, so it
+      // won't keep collapsing expanded cards every 2 minutes.
+      if (!window._picksStatusPainted) {
+        window._picksStatusPainted = true;
+        try { if (typeof renderPicks === "function") renderPicks(); } catch(e){}
+      }
     }
   }
 
@@ -4460,6 +4481,22 @@ function renderSharpAction(){
 function _liveScores(){ return window._liveGames || DATA_SCORES || []; }
 function _scoreAway(s){ return s.away_name || s.away || ""; }
 function _scoreHome(s){ return s.home_name || s.home || ""; }
+// Weather/other disruption badge from the live feed's detailed game state.
+function statusBadge(detailed){
+  if(!detailed) return "";
+  const d = detailed.toLowerCase();
+  if(d.includes("postpon")) return `<span class="gs-badge gs-bad">⛔ POSTPONED</span>`;
+  if(d.includes("cancel"))  return `<span class="gs-badge gs-bad">🚫 CANCELLED</span>`;
+  if(d.includes("suspend")) return `<span class="gs-badge gs-warn">⏸ SUSPENDED</span>`;
+  if(d.includes("delay"))   return `<span class="gs-badge gs-warn">⏳ ${detailed.toUpperCase()}</span>`;
+  return "";
+}
+function _statusFor(away, home){
+  const s = _liveScores().find(x =>
+    (_scoreAway(x)===away && _scoreHome(x)===home) ||
+    (_scoreAway(x)===home && _scoreHome(x)===away));
+  return (s && s.abnormal) ? { detail: s.status, badge: statusBadge(s.status) } : null;
+}
 function _findScore(pick){
   return _liveScores().find(s =>
     (_scoreAway(s)===pick.away && _scoreHome(s)===pick.home) ||
@@ -4472,7 +4509,7 @@ function _isFinal(score){
   return lbl==="Final" || lbl.startsWith("F/") || lbl==="F";
 }
 function _pickResult(pick, score){
-  if(!score || !_isFinal(score)) return null;
+  if(!score || score.abnormal || !_isFinal(score)) return null;  // postponed/cancelled = no action
   const awayScore = parseInt(score.away_score||0);
   const homeScore = parseInt(score.home_score||0);
   // MLB games don't end in ties
@@ -4530,7 +4567,7 @@ function renderDailySummary(){
 
   // Determine WIN/LOSS/PUSH from a final score
   function pickResult(pick, score){
-    if(!score || !isFinal(score)) return null;
+    if(!score || score.abnormal || !isFinal(score)) return null;  // postponed/cancelled = no action
     const awayScore = parseInt(score.away_score||0);
     const homeScore = parseInt(score.home_score||0);
     if(awayScore===homeScore) return "push";

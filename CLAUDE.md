@@ -857,6 +857,19 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Added 2026-07-27 — game cancel/delay status on cards
+
+- **Weather/disruption status surfaced.** `fetchLiveScores` now captures each game's
+  `detailedState` and an `abnormal` flag (postponed/cancelled/delayed/suspended) and
+  no longer drops non-Final/Live games. `statusBadge()` + `_statusFor()` render a
+  badge (⛔ POSTPONED / 🚫 CANCELLED / ⏳ DELAYED / ⏸ SUSPENDED) on Today's Games
+  cards (next to lineup badge) and a red banner on Game Picks cards ("bet may not
+  stand"). refreshTicker re-renders Today's Games each cycle + Game Picks once on
+  first live fetch (window._picksStatusPainted guard) so banners appear.
+- **Postponed games no longer mis-grade.** Both `_pickResult` graders skip
+  `score.abnormal`, so a 0-0 postponed game is no-action, not a PUSH (was wrongly
+  showing Cincinnati games as PUSH in Daily Summary).
+
 ## Added 2026-07-27 — frequent odds pulls + freeze at first pitch
 
 - **Frequent Pinnacle pulls** (`_start_frequent_odds` in app.py): recurring thread
