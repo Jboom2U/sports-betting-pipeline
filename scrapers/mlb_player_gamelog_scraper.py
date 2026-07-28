@@ -70,7 +70,12 @@ def fetch_game_log(player_id: int, season: str = SEASON, group: str = "hitting")
             team   = split.get("team", {}).get("name", "")
             opp    = split.get("opponent", {}).get("name", "")
             venue  = split.get("venue", {}).get("name", "")
-            raw_date = game.get("officialDate") or game.get("gameDate", "")[:10]
+            # gameLog splits carry the date at split["date"]; the nested game
+            # object does NOT have officialDate (that was leaving game_date empty,
+            # so every row got skipped and the table stayed empty).
+            raw_date = (split.get("date")
+                        or game.get("officialDate")
+                        or (game.get("gameDate", "") or "")[:10])
 
             def _i(key): return int(stat.get(key, 0) or 0)
             if group == "pitching":

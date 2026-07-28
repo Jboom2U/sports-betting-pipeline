@@ -857,6 +857,19 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Fixed 2026-07-27 — Players data ACTUAL root cause (empty game_date)
+
+- **THE bug (found via `/admin/gamelog-diag`):** `fetch_game_log` read the date
+  from the nested `game` object (`game.officialDate`) which is EMPTY in gameLog
+  splits — the date is at `split["date"]`. So every row had game_date="" and
+  `upsert_game_logs` SKIPPED all of them (its no-game_date guard). Result: MLB API
+  returned 84 rows for a player, 0 written, table always empty. FIX: read
+  `split.get("date")` first. Diagnostic confirmed fetch=84 rows, upsert=0 before,
+  which pinpointed it exactly.
+- `seed_all_players()` (all 30 active rosters) now populates everyone via
+  `/admin/refresh-gamelogs`; `gamelog_diag` self-heals the unique index too.
+- **After deploy: hit /admin/refresh-gamelogs once** to backfill the whole league.
+
 ## Fixed 2026-07-27 — game logs seed from props (not confirmed lineups) + pitcher logs
 
 - **Root cause of empty Players data:** gamelog scraper only pulled CONFIRMED
