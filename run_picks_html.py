@@ -1660,6 +1660,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .trend-empty{color:var(--sub);font-style:italic;padding:20px;text-align:center}
 .prop-name-row{display:flex;align-items:center;gap:10px}
 .prop-face{width:46px;height:46px;border-radius:50%;object-fit:cover;background:var(--bg);border:1px solid var(--border);flex-shrink:0}
+.prop-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--sub)}
+.prop-link:hover{color:var(--blue);border-bottom-color:var(--blue)}
 .lineup-status{margin:6px 0 2px}
 .ls-badge{font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:20px;display:inline-block}
 .ls-yes{color:var(--green);background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35)}
@@ -1802,6 +1804,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <div class="stat-pill">Top Pick <span id="topPick">—</span></div>
     <a href="/performance" class="status-link">📊 Performance</a>
     <a href="/ask" class="status-link">🧠 Statalizer Bot</a>
+    <a href="/players" class="status-link">👤 Players</a>
     <a href="/admin/analysis" class="status-link">📋 Analysis</a>
     <a href="/admin" class="status-link">🗂 Menu</a>
     <a href="/status" class="status-link">⚙ Status</a>
@@ -2905,8 +2908,8 @@ function renderSurfacedProps(){
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
         </div>
         <div class="prop-name-row">
-          ${p.player_id ? `<img class="prop-face" alt="" loading="lazy" src="https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_100/v1/people/${p.player_id}/headshot/67/current" onerror="this.style.display='none'">` : ""}
-          <div class="pick-label">${p.player_name} — ${label}</div>
+          ${p.player_id ? `<a href="/player/${p.player_id}" title="View ${p.player_name}'s trends"><img class="prop-face" alt="" loading="lazy" src="https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_100/v1/people/${p.player_id}/headshot/67/current" onerror="this.style.display='none'"></a>` : ""}
+          <div class="pick-label">${p.player_id ? `<a href="/player/${p.player_id}" class="prop-link">${p.player_name}</a>` : p.player_name} — ${label}</div>
         </div>
         <div class="pick-game">${p.game}</div>
         <div class="conf-row">

@@ -857,6 +857,21 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Added 2026-07-27 — Players section (search + per-game trend pages)
+
+- **NEW `player_data.py`**: `search_players(q,team)` + `get_player(id)` over
+  `player_game_logs` (per-game h/tb/hr/rbi/k/sb + opponent/date).
+- **`/players`** — searchable directory (name/team) with headshots, links to pages.
+- **`/player/<id>`** — RotoBot-style per-game vertical bar charts for Hits/TB/HR/
+  RBI/K/SB with L5/L10/L20 toggle. Both routes site-auth gated.
+- **Clickable players**: prop card face + name now link to `/player/<id>`. Header
+  has a 👤 Players link.
+- **DEPENDENCY**: pages are empty if `player_game_logs` isn't accumulating. The
+  gamelog scraper runs in run_pipeline step 9b (`mlb_player_gamelog_scraper`); its
+  transaction-abort bug was fixed 2026-07-21. If a player page shows "No game logs
+  yet," verify that table is filling (check /analytics or db). Runs column not in
+  logs, so no Runs/H+R+RBI chart yet — add to the scraper + STAT_COLS later.
+
 ## Added 2026-07-27 — game cancel/delay status on cards
 
 - **Weather/disruption status surfaced.** `fetchLiveScores` now captures each game's

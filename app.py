@@ -723,6 +723,143 @@ document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter'&&
     return Response(html, mimetype="text/html")
 
 
+@app.route("/players")
+def players_page():
+    """Searchable directory of every player we have game logs for."""
+    import html as _h
+    q    = (request.args.get("q") or "").strip()
+    team = (request.args.get("team") or "").strip()
+    from player_data import search_players
+    rows = search_players(q, team) if (q or team) else search_players()
+    cards = ""
+    for r in rows:
+        pid = r.get("player_id")
+        if pid is None:
+            continue
+        nm  = _h.escape(r.get("player_name") or "")
+        tm  = _h.escape(r.get("team") or "")
+        gm  = r.get("games") or 0
+        face = (f"https://img.mlbstatic.com/mlb-photos/image/upload/w_96,q_100/v1/people/{pid}/headshot/67/current")
+        cards += (f"<a class='pl-card' href='/player/{pid}'>"
+                  f"<img class='pl-face' src='{face}' onerror=\"this.style.visibility='hidden'\" alt=''>"
+                  f"<div><div class='pl-name'>{nm}</div>"
+                  f"<div class='pl-team'>{tm} · {gm} games</div></div></a>")
+    if not cards:
+        cards = "<div class='pl-empty'>No players found. Try a different name or team.</div>"
+    html = """<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>Players — Statalizers</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--sub:#8b949e;--blue:#58a6ff;--green:#3fb950}
+*{box-sizing:border-box}body{background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Arial;margin:0;padding:24px}
+.wrap{max-width:900px;margin:0 auto}
+h1{color:var(--blue);font-size:1.4rem;margin:0 0 14px}
+.search{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+.search input{flex:1;min-width:180px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:10px 12px;font-size:1rem}
+.search button{background:var(--green);color:#04260f;border:none;padding:10px 18px;border-radius:9px;font-weight:800;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.pl-card{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;text-decoration:none;color:inherit}
+.pl-card:hover{border-color:var(--blue)}
+.pl-face{width:48px;height:48px;border-radius:50%;object-fit:cover;background:var(--bg);border:1px solid var(--border)}
+.pl-name{font-weight:700}.pl-team{font-size:.78rem;color:var(--sub)}
+.pl-empty{color:var(--sub);padding:20px}
+a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
+</style></head><body><div class="wrap">
+<h1>👤 Players</h1>
+<form class="search" method="get" action="/players">
+  <input name="q" placeholder="Search player name…" value="__Q__" autofocus>
+  <input name="team" placeholder="Team…" value="__TEAM__" style="max-width:180px">
+  <button type="submit">Search</button>
+</form>
+<div class="grid">__CARDS__</div>
+<p style="margin-top:18px"><a class="back" href="/">&larr; Back to dashboard</a></p>
+</div></body></html>"""
+    html = (html.replace("__CARDS__", cards)
+                .replace("__Q__", _h.escape(q)).replace("__TEAM__", _h.escape(team)))
+    return Response(html, mimetype="text/html")
+
+
+@app.route("/player/<int:pid>")
+def player_page(pid):
+    """Per-game trend charts for one player (hits/TB/HR/RBI/K/SB, L5/L10/L20)."""
+    import html as _h, json as _json
+    from player_data import get_player
+    p = get_player(pid)
+    name = _h.escape(p.get("player_name") or f"Player {pid}")
+    team = _h.escape(p.get("team") or "")
+    games_json = _json.dumps(p.get("games") or [], default=str)
+    face = f"https://img.mlbstatic.com/mlb-photos/image/upload/w_180,q_100/v1/people/{pid}/headshot/67/current"
+    html = """<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>__NAME__ — Statalizers</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--sub:#8b949e;--blue:#58a6ff;--green:#3fb950}
+*{box-sizing:border-box}body{background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Arial;margin:0;padding:24px}
+.wrap{max-width:900px;margin:0 auto}
+.phead{display:flex;align-items:center;gap:16px;margin-bottom:8px}
+.phead img{width:66px;height:66px;border-radius:50%;object-fit:cover;background:var(--card);border:1px solid var(--border)}
+.phead h1{color:var(--blue);font-size:1.5rem;margin:0}
+.phead .team{color:var(--sub);font-size:.9rem}
+.toggle{display:flex;gap:8px;margin:14px 0 18px}
+.toggle button{background:var(--card);border:1px solid var(--border);color:var(--sub);border-radius:8px;padding:6px 14px;cursor:pointer;font-weight:700}
+.toggle button.active{color:var(--green);border-color:var(--green)}
+.pchart{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.pchart-title{font-weight:800;margin-bottom:2px}
+.pchart-avg{font-size:.75rem;color:var(--sub);font-weight:600;margin-left:8px}
+.pbars{display:flex;align-items:flex-end;gap:6px;height:130px;margin-top:12px}
+.pbar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+.pbar-val{font-size:.72rem;font-weight:800;margin-bottom:3px}
+.pbar{width:100%;max-width:34px;background:var(--green);border-radius:4px 4px 0 0;min-height:2px}
+.pbar.zero{background:#30363d}
+.pbar-lbl{font-size:.6rem;color:var(--sub);text-align:center;margin-top:5px;line-height:1.25}
+.pl-empty{color:var(--sub);padding:24px;text-align:center}
+a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
+</style></head><body><div class="wrap">
+<div class="phead">
+  <img src="__FACE__" onerror="this.style.visibility='hidden'" alt="">
+  <div><h1>__NAME__</h1><div class="team">__TEAM__</div></div>
+</div>
+<div class="toggle">
+  <button data-n="5">Last 5</button>
+  <button data-n="10" class="active">Last 10</button>
+  <button data-n="20">Last 20</button>
+</div>
+<div id="charts"></div>
+<p style="margin-top:6px"><a class="back" href="/players">&larr; All players</a> &nbsp; <a class="back" href="/">Dashboard</a></p>
+</div>
+<script>
+const GAMES = __GAMES__;   // oldest-first
+const STATS = [["h","Hits"],["tb","Total Bases"],["hr","Home Runs"],["rbi","RBIs"],["k","Strikeouts"],["sb","Stolen Bases"]];
+let N = 10;
+function render(){
+  const box=document.getElementById("charts");
+  if(!GAMES.length){ box.innerHTML='<div class="pl-empty">No game logs yet for this player. They\\'ll fill in as games are played.</div>'; return; }
+  const g = GAMES.slice(-N);
+  box.innerHTML = STATS.map(([col,label])=>{
+    const vals = g.map(x=>+(x[col]||0));
+    const mx = Math.max(1, ...vals);
+    const avg = vals.reduce((a,b)=>a+b,0)/(vals.length||1);
+    const bars = g.map((x,i)=>{
+      const v=vals[i]; const h=Math.round(v/mx*100);
+      const d=(x.game_date||"").slice(5); const opp=(x.opponent||"").split(" ").slice(-1)[0];
+      return `<div class="pbar-col"><div class="pbar-val">${v}</div>`+
+             `<div class="pbar ${v===0?'zero':''}" style="height:${h}%"></div>`+
+             `<div class="pbar-lbl">${d}<br>${opp}</div></div>`;
+    }).join("");
+    return `<div class="pchart"><div class="pchart-title">${label}`+
+           `<span class="pchart-avg">avg ${avg.toFixed(1)} · L${g.length}</span></div>`+
+           `<div class="pbars">${bars}</div></div>`;
+  }).join("");
+}
+document.querySelectorAll(".toggle button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".toggle button").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active"); N=+b.dataset.n; render();
+});
+render();
+</script></body></html>"""
+    html = (html.replace("__GAMES__", games_json).replace("__NAME__", name)
+                .replace("__TEAM__", team).replace("__FACE__", face))
+    return Response(html, mimetype="text/html")
+
+
 @app.route("/force-odds")
 def force_odds():
     """Force an immediate odds snapshot regardless of the 2-hour gate."""
