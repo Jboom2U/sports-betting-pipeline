@@ -178,6 +178,18 @@ def main():
     except Exception as e:
         log.warning(f"Afternoon prop save failed (non-fatal): {e}")
 
+    # ── Step 3d: Player game logs (powers the Players section trend charts) ───
+    # The 6am pipeline runs this too, but lineups aren't posted yet so
+    # get_lineup_players() finds nobody and player_game_logs stays EMPTY — which
+    # is why the Players search/pages had no data. Now that lineups are confirmed,
+    # pull each player's season game log so their trend charts fill in.
+    try:
+        from scrapers.mlb_player_gamelog_scraper import run as _run_gamelogs
+        _gl = _run_gamelogs()
+        log.info(f"Player game logs (afternoon): {_gl}")
+    except Exception as e:
+        log.warning(f"Afternoon game-log scrape failed (non-fatal): {e}")
+
     # ── Step 4: Regenerate HTML dashboard ────────────────────────────────────
     # run_picks_html.main() already re-runs lineup/hitter refresh internally,
     # but we do it above first so the data is warm before the model scores.

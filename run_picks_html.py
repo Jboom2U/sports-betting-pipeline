@@ -3926,7 +3926,10 @@ function renderProps(){
           <span class="prop-type-badge badge-${p.prop_type}">${propIcon(p.prop_type)} ${p.prop_type}</span>
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
         </div>
-        <div class="prop-player">${p.player_name}${sideStr}</div>
+        <div class="prop-name-row">
+          ${p.player_id ? `<a href="/player/${p.player_id}" title="View ${p.player_name}'s trends"><img class="prop-face" alt="" loading="lazy" src="https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_100/v1/people/${p.player_id}/headshot/67/current" onerror="this.style.display='none'"></a>` : ""}
+          <div class="prop-player">${p.player_id ? `<a href="/player/${p.player_id}" class="prop-link">${p.player_name}</a>` : p.player_name}${sideStr}</div>
+        </div>
         <div class="prop-game">${p.game}${orderStr}</div>
         <div class="prop-line-row">
           <div>

@@ -857,6 +857,21 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Fixed 2026-07-27 — Players section wiring (clicks + empty search)
+
+- **Prop-card links were on the WRONG card.** The face/link were added to the
+  Top-Props/inline card, but the main Player Props tab uses `renderProps()`
+  (`#propsGrid`, prop-card with Line/Projection/Sportsbook rows). Added the face +
+  `/player/<id>` link to the `.prop-player` name there. All 259 props DO carry
+  player_id (verified live) — it was purely a render-location miss.
+- **`player_game_logs` was EMPTY → Players search/pages blank.** The gamelog
+  scraper's `get_lineup_players()` reads today's CONFIRMED lineup JSON, but it only
+  ran in the 6am pipeline (step 9b) before lineups post, so it found nobody every
+  day and the table never filled. FIX: run `mlb_player_gamelog_scraper` in
+  `run_afternoon` (step 3d) after lineups lock, + on-demand `/admin/refresh-gamelogs`
+  to populate immediately once lineups are up. Fetches each player's FULL season
+  log, so the table + trend charts fill fast once it runs with real lineups.
+
 ## Added 2026-07-27 — Players section (search + per-game trend pages)
 
 - **NEW `player_data.py`**: `search_players(q,team)` + `get_player(id)` over

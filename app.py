@@ -723,6 +723,29 @@ document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter'&&
     return Response(html, mimetype="text/html")
 
 
+@app.route("/admin/refresh-gamelogs")
+def admin_refresh_gamelogs():
+    """Populate player_game_logs on demand (background). Powers the Players section.
+    Needs today's lineups posted — run once lineups are confirmed."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/refresh-gamelogs")
+    def _worker():
+        try:
+            from scrapers.mlb_player_gamelog_scraper import run as run_gl
+            res = run_gl()
+            log.info(f"Manual game-log refresh: {res}")
+        except Exception as e:
+            log.warning(f"Manual game-log refresh failed: {e}")
+    threading.Thread(target=_worker, daemon=True).start()
+    return Response(
+        "<body style='background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:40px'>"
+        "<h2>Player game-log refresh started</h2>"
+        "<p>Pulling season logs for today's lineup players (~1-2 min). Needs lineups "
+        "posted — if it comes back empty, lineups aren't confirmed yet.</p>"
+        "<p><a href='/players' style='color:#58a6ff'>&rarr; Players</a></p></body>",
+        mimetype="text/html")
+
+
 @app.route("/players")
 def players_page():
     """Searchable directory of every player we have game logs for."""
