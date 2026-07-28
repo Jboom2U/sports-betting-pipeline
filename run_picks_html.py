@@ -1660,6 +1660,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .trend-empty{color:var(--sub);font-style:italic;padding:20px;text-align:center}
 .prop-name-row{display:flex;align-items:center;gap:10px}
 .prop-face{width:46px;height:46px;border-radius:50%;object-fit:cover;background:var(--bg);border:1px solid var(--border);flex-shrink:0}
+.lineup-status{margin:6px 0 2px}
+.ls-badge{font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:20px;display:inline-block}
+.ls-yes{color:var(--green);background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35)}
+.ls-no{color:#ffb74d;background:rgba(255,183,77,.1);border:1px solid rgba(255,183,77,.3)}
 
 /* ── TODAY'S GAMES ── */
 .schedule-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:36px}
@@ -2497,20 +2501,25 @@ const DATA_TRENDS = __TRENDS__;   // {conf_band:[], by_tier:[], market:[], props
       if(!recs.length) return '<div class="tw-row"><span class="tw-none">building record…</span></div>';
       return recs.map(r=>{
         const i = r.indexOf(":");
-        const lbl = (i>=0 ? r.slice(0,i) : r).trim();
-        const stat = (i>=0 ? r.slice(i+1) : "").trim();
-        const m = stat.match(/([\d.]+)%/);
-        const wr = m ? parseFloat(m[1]) : null;
+        const rule = (i>=0 ? r.slice(0,i) : r).trim();         // e.g. "ML 80%+"
+        const stat = (i>=0 ? r.slice(i+1) : "").trim();        // e.g. "51 picks, 64.7%"
+        const nm = stat.match(/(\d+)\s*picks/);
+        const wm = stat.match(/([\d.]+)%/);
+        const n  = nm ? parseInt(nm[1]) : null;
+        const wr = wm ? parseFloat(wm[1]) : null;
         const col = wr==null ? "var(--sub)" : (wr>=52.38 ? "var(--green)" : "var(--red)");
-        return `<div class="tw-row"><span class="tw-lbl">${lbl}</span>`+
-               `<span class="tw-rec" style="color:${col}">${stat}</span></div>`;
+        let rec = stat;
+        if(n!=null && wr!=null){ const w=Math.round(n*wr/100); rec = `${w}-${n-w} · ${wr}%`; }
+        return `<div class="tw-row"><span class="tw-lbl">${rule}</span>`+
+               `<span class="tw-rec" style="color:${col}">${rec}</span></div>`;
       }).join("");
     }
     box.innerHTML = `<div class="tw-title">📊 Badge Track Record</div>`+
-      `<div class="tw-sub">🔥 High Confidence</div>${rows(elite)}`+
-      `<div class="tw-sub">📈 Profitable</div>${rows(wide)}`+
-      `<div class="tw-note">Running graded win rate of these flagged picks. `+
-      `Green = beating break-even (52.4%). Good parlay pieces while the rate holds.</div>`;
+      `<div class="tw-sub">🔥 tagged High Confidence cards</div>${rows(elite)}`+
+      `<div class="tw-sub">📈 tagged Profitable cards</div>${rows(wide)}`+
+      `<div class="tw-note">Running graded W-L of every card that carried the badge `+
+      `(ML 80%+ earns 🔥, 70%+ earns 📈). Green = beating break-even. `+
+      `Grows as new tagged picks settle.</div>`;
   }catch(e){ const box=document.getElementById("trackerWidget"); if(box) box.style.display="none"; }
 })();
 
@@ -3339,6 +3348,11 @@ function renderGames(){
         <div class="game-header">
           <span class="matchup">${g.away} @ ${g.home}</span>
           <span class="game-time">${g.time}</span>
+        </div>
+        <div class="lineup-status">
+          ${g.lineup_confirmed
+            ? `<span class="ls-badge ls-yes">✓ Lineups confirmed</span>`
+            : `<span class="ls-badge ls-no">⏳ Lineups not set — refresh closer to first pitch</span>`}
         </div>
         <div class="game-body">
           <div class="game-row">

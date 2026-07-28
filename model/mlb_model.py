@@ -289,8 +289,16 @@ class MLBModel:
             for row in read_csv(odds_master):
                 if row.get("game_date") != today:
                     continue
-                k  = (row.get("away_team", ""), row.get("home_team", ""))
+                # FREEZE AT FIRST PITCH: with frequent evening pulls, a started
+                # game would otherwise get overwritten with a live line. Only use
+                # snapshots taken BEFORE the game's first pitch, so each game's
+                # number locks at its last pre-game value. (snapshot_time and
+                # game_time_utc are both UTC ISO, so string compare is chronological.)
+                gt = row.get("game_time_utc", "")
                 st = row.get("snapshot_time", "")
+                if gt and st and st > gt:
+                    continue
+                k  = (row.get("away_team", ""), row.get("home_team", ""))
                 if k not in latest_snap or st > latest_snap[k].get("snapshot_time", ""):
                     latest_snap[k] = row
                 if _has_total(row) and (k not in latest_total

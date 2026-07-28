@@ -857,6 +857,20 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Added 2026-07-27 — frequent odds pulls + freeze at first pitch
+
+- **Frequent Pinnacle pulls** (`_start_frequent_odds` in app.py): recurring thread
+  re-pulls Pinnacle ML/RL every 40 min up to the day's LAST first pitch, then
+  stops. Free, keeps Sharp Action / line movement current. Guarded (`_frequent_odds_started`)
+  so restarts don't stack threads. Started at app startup.
+- **Freeze at first pitch** (`MLBModel.load` odds loader): only uses snapshots
+  whose `snapshot_time <= game_time_utc`, so a started game locks at its last
+  pre-game line and frequent evening pulls never overwrite it with a live number.
+- Badge tracker relabeled to read as a W-L record ("🔥 tagged High Confidence
+  cards: 33-18 · 64.7%"). NOTE: 📈 record still counts ALL ML 70%+ (superset of the
+  80%+ 🔥 cards); split to 70-80% exclusive if the user wants it to match badges 1:1.
+- Lineup-confirmed badge on every Today's Games card (green confirmed / amber not set).
+
 ## Added 2026-07-26 — Stats & Trends tab (visual bar charts)
 
 - **New "📊 Stats & Trends" tab** (`panel-trends`, `renderTrends()` in

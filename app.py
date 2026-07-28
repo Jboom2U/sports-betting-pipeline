@@ -3331,6 +3331,67 @@ def _run_afternoon_refresh():
     log.info("=== Afternoon refresh complete — dashboard rebuilding ===")
 
 
+_frequent_odds_started = [False]
+
+
+def _start_frequent_odds():
+    """
+    Keep Sharp Action / line movement current: re-pull Pinnacle ML/RL every ~40
+    min through the day up to the LAST first pitch, then stop. Free (Pinnacle, no
+    quota). Games that have already started are frozen by the odds loader (it only
+    uses snapshots taken before each game's first pitch), so a live line never
+    replaces the pre-game number. Guarded so restarts don't stack threads.
+    """
+    if _frequent_odds_started[0]:
+        return
+    _frequent_odds_started[0] = True
+    import csv as _csv
+    from datetime import timezone as _tz
+
+    def _last_first_pitch():
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        last_et = None
+        try:
+            with open(os.path.join(CLEAN_DIR, "mlb_schedule_master.csv"), encoding="utf-8") as f:
+                for row in _csv.DictReader(f):
+                    if row.get("game_date") != today:
+                        continue
+                    u = row.get("game_time_utc", "").strip()
+                    if not u:
+                        continue
+                    try:
+                        g = datetime.strptime(u, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tz.utc).astimezone(ET)
+                        if last_et is None or g > last_et:
+                            last_et = g
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return last_et
+
+    def _loop():
+        import time as _t
+        while True:
+            _t.sleep(2400)  # 40 min
+            try:
+                last = _last_first_pitch()
+                if last is None or datetime.now(ET) > last:
+                    log.info("Frequent odds: all games started — done for today.")
+                    _frequent_odds_started[0] = False
+                    return
+                from scrapers.mlb_pinnacle_scraper import run as run_pinnacle
+                res = run_pinnacle()
+                log.info(f"Frequent Pinnacle pull: {res}")
+                with _cache_lock:
+                    _cache["generated_at"] = 0
+                _regenerate_in_background()
+            except Exception as e:
+                log.warning(f"Frequent odds loop error (non-fatal): {e}")
+
+    threading.Thread(target=_loop, daemon=True).start()
+    log.info("Frequent odds pulls started (every 40 min to last first pitch).")
+
+
 def _schedule_adaptive_refresh():
     """
     Schedule today's afternoon refresh to fire 2 hours before the first pitch.
@@ -3460,6 +3521,12 @@ def warm_cache():
                 _schedule_adaptive_refresh()
             except Exception as _sar_e:
                 log.warning(f"Adaptive refresh re-scheduling failed (non-fatal): {_sar_e}")
+
+        # Keep Sharp Action fresh: recurring Pinnacle pulls up to last first pitch.
+        try:
+            _start_frequent_odds()
+        except Exception as _fo_e:
+            log.warning(f"Frequent odds start failed (non-fatal): {_fo_e}")
 
         # ── Step 3b: Seed cache from R2 HTML ────────────────────────────
         # If Railway restarted mid-day after a deploy, the in-memory cache is gone but
