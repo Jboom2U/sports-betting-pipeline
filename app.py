@@ -731,29 +731,78 @@ def admin_refresh_gamelogs():
         return redirect("/admin/login?next=/admin/refresh-gamelogs")
     def _worker():
         try:
-            from model.mlb_props_model import score_all_props
-            from scrapers.mlb_player_gamelog_scraper import run_for_players
-            today = datetime.now(ET).strftime("%Y-%m-%d")
-            players = {}
-            for p in score_all_props(today):
-                pid = p.get("player_id")
-                if not pid:
-                    continue
-                players[int(pid)] = {"player_id": int(pid),
-                                     "player_name": p.get("player_name", ""),
-                                     "is_pitcher": p.get("side") == "pitcher"}
-            res = run_for_players(list(players.values()))
-            log.info(f"Manual game-log refresh (from props): {res}")
+            # Ensure the ON CONFLICT target exists (self-heal if the prod table
+            # predates the UNIQUE constraint — that would fail every upsert).
+            from db.connection import db_conn
+            with db_conn() as conn:
+                if conn is not None:
+                    conn.cursor().execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_pgl_date_name_team "
+                        "ON player_game_logs (game_date, player_name, team)")
+                    conn.commit()
+        except Exception as e:
+            log.warning(f"gamelog index ensure failed (non-fatal): {e}")
+        try:
+            from scrapers.mlb_player_gamelog_scraper import seed_all_players
+            res = seed_all_players()
+            log.info(f"Manual game-log refresh (all rosters): {res}")
         except Exception as e:
             log.warning(f"Manual game-log refresh failed: {e}")
     threading.Thread(target=_worker, daemon=True).start()
     return Response(
         "<body style='background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:40px'>"
         "<h2>Player game-log refresh started</h2>"
-        "<p>Pulling season logs for every player in today's props (~1-2 min, works "
-        "even before lineups confirm). Refresh the Players page shortly.</p>"
-        "<p><a href='/players' style='color:#58a6ff'>&rarr; Players</a></p></body>",
+        "<p>Pulling season logs for EVERY active MLB player (all 30 rosters, ~2-3 min). "
+        "Works regardless of lineups. Refresh the Players page in a few minutes.</p>"
+        "<p><a href='/admin/gamelog-diag' style='color:#58a6ff'>Run diagnostic</a> · "
+        "<a href='/players' style='color:#58a6ff'>Players</a></p></body>",
         mimetype="text/html")
+
+
+@app.route("/admin/gamelog-diag")
+def gamelog_diag():
+    """Test the game-log pipeline end-to-end on ONE player + report where it breaks."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/gamelog-diag")
+    import html as _h, traceback as _tb
+    out = []
+    # ensure the unique index (self-heal)
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            if conn is not None:
+                conn.cursor().execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_pgl_date_name_team "
+                    "ON player_game_logs (game_date, player_name, team)")
+                conn.commit()
+                out.append("unique index ensured ✓")
+    except Exception:
+        out.append("index ensure ERROR:\n" + _tb.format_exc())
+    # test one player
+    try:
+        from scrapers.mlb_player_gamelog_scraper import fetch_game_log, upsert_game_logs, SEASON
+        test_pid, test_name = 665742, "Juan Soto"   # known active batter
+        out.append(f"SEASON={SEASON} | testing {test_name} ({test_pid})")
+        logs = fetch_game_log(test_pid, SEASON, group="hitting")
+        out.append(f"fetch_game_log -> {len(logs)} rows")
+        if logs:
+            out.append(f"sample row: {logs[0]}")
+            n = upsert_game_logs(test_name, test_pid, logs)
+            out.append(f"upsert_game_logs -> {n} rows written")
+    except Exception:
+        out.append("fetch/upsert ERROR:\n" + _tb.format_exc())
+    # table count
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*), COUNT(DISTINCT player_id) FROM player_game_logs")
+            r = cur.fetchone()
+            out.append(f"player_game_logs: {r[0]} rows, {r[1]} distinct players")
+    except Exception:
+        out.append("count ERROR:\n" + _tb.format_exc())
+    return Response("<pre style='color:#c9d1d9;background:#0d1117;padding:20px;white-space:pre-wrap'>"
+                    + _h.escape("\n\n".join(str(x) for x in out)) + "</pre>", mimetype="text/html")
 
 
 @app.route("/players")

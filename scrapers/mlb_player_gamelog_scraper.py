@@ -175,6 +175,32 @@ def upsert_game_logs(player_name: str, player_id: int, logs: list) -> int:
     return count
 
 
+def seed_all_players() -> dict:
+    """
+    Seed game logs for EVERY active MLB player (all 30 team rosters), so the
+    Players search covers everyone regardless of who's playing today. Background
+    job (~780 players). Pitchers get pitching logs, position players hitting.
+    """
+    teams = _get(f"{BASE_URL}/teams", {"sportId": 1, "season": SEASON}).get("teams", [])
+    players = []
+    for t in teams:
+        tid = t.get("id")
+        if not tid:
+            continue
+        roster = _get(f"{BASE_URL}/teams/{tid}/roster",
+                      {"season": SEASON, "rosterType": "active"}).get("roster", [])
+        for r in roster:
+            person = r.get("person", {}) or {}
+            pos = (r.get("position", {}) or {}).get("abbreviation", "")
+            pid = person.get("id")
+            if pid:
+                players.append({"player_id": pid,
+                                "player_name": person.get("fullName", ""),
+                                "is_pitcher": pos == "P"})
+    log.info(f"seed_all_players: {len(players)} players across {len(teams)} teams")
+    return run_for_players(players)
+
+
 def get_lineup_players() -> list:
     """
     Load today's lineup players from the raw lineup JSON.
