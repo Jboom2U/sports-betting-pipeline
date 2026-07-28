@@ -184,9 +184,18 @@ def main():
     # is why the Players search/pages had no data. Now that lineups are confirmed,
     # pull each player's season game log so their trend charts fill in.
     try:
-        from scrapers.mlb_player_gamelog_scraper import run as _run_gamelogs
-        _gl = _run_gamelogs()
-        log.info(f"Player game logs (afternoon): {_gl}")
+        from model.mlb_props_model import score_all_props as _sap
+        from scrapers.mlb_player_gamelog_scraper import run_for_players as _rfp
+        _plist = {}
+        for _p in _sap(target_date=today):
+            _pid = _p.get("player_id")
+            if not _pid:
+                continue
+            _plist[int(_pid)] = {"player_id": int(_pid),
+                                 "player_name": _p.get("player_name", ""),
+                                 "is_pitcher": _p.get("side") == "pitcher"}
+        _gl = _rfp(list(_plist.values()))
+        log.info(f"Player game logs (afternoon, from props): {_gl}")
     except Exception as e:
         log.warning(f"Afternoon game-log scrape failed (non-fatal): {e}")
 

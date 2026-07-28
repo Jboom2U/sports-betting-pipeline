@@ -52,15 +52,15 @@ def get_player_id(name: str) -> int | None:
     return people[0].get("id")
 
 
-def fetch_game_log(player_id: int, season: str = SEASON) -> list:
+def fetch_game_log(player_id: int, season: str = SEASON, group: str = "hitting") -> list:
     """
-    Fetch season game log for a player.
-    Returns list of per-game dicts with keys:
-      game_date, opponent, venue, pitcher_hand, ab, h, hr, rbi, bb, k, tb, sb
+    Fetch season game log for a player. group="hitting" (batters) or "pitching"
+    (pitchers). For pitchers, `k` is strikeouts THROWN, `h`/`hr`/`bb` are allowed;
+    ab/rbi/tb/sb are 0. This lets K-prop pitchers get a meaningful strikeouts chart.
     """
     data = _get(
         f"{BASE_URL}/people/{player_id}/stats",
-        {"stats": "gameLog", "group": "hitting", "season": season, "gameType": "R"}
+        {"stats": "gameLog", "group": group, "season": season, "gameType": "R"}
     )
     results = []
     for stat_block in data.get("stats", []):
@@ -70,27 +70,48 @@ def fetch_game_log(player_id: int, season: str = SEASON) -> list:
             team   = split.get("team", {}).get("name", "")
             opp    = split.get("opponent", {}).get("name", "")
             venue  = split.get("venue", {}).get("name", "")
-            is_home = split.get("isHome", False)
-
-            # pitcher_hand not directly available in game log — mark unknown
             raw_date = game.get("officialDate") or game.get("gameDate", "")[:10]
 
+            def _i(key): return int(stat.get(key, 0) or 0)
+            if group == "pitching":
+                row = {"ab": 0, "h": _i("hits"), "hr": _i("homeRuns"), "rbi": 0,
+                       "bb": _i("baseOnBalls"), "k": _i("strikeOuts"), "tb": 0, "sb": 0}
+            else:
+                row = {"ab": _i("atBats"), "h": _i("hits"), "hr": _i("homeRuns"),
+                       "rbi": _i("rbi"), "bb": _i("baseOnBalls"), "k": _i("strikeOuts"),
+                       "tb": _i("totalBases"), "sb": _i("stolenBases")}
             results.append({
-                "game_date":    raw_date,
-                "team":         team,
-                "opponent":     opp,
-                "venue":        venue,
-                "pitcher_hand": "R",   # default; splits endpoint has full breakdown
-                "ab":           int(stat.get("atBats",      0) or 0),
-                "h":            int(stat.get("hits",        0) or 0),
-                "hr":           int(stat.get("homeRuns",    0) or 0),
-                "rbi":          int(stat.get("rbi",         0) or 0),
-                "bb":           int(stat.get("baseOnBalls", 0) or 0),
-                "k":            int(stat.get("strikeOuts",  0) or 0),
-                "tb":           int(stat.get("totalBases",  0) or 0),
-                "sb":           int(stat.get("stolenBases", 0) or 0),
+                "game_date": raw_date, "team": team, "opponent": opp,
+                "venue": venue, "pitcher_hand": "R", **row,
             })
     return results
+
+
+def run_for_players(players: list) -> dict:
+    """
+    Seed game logs for an explicit player list (decoupled from confirmed lineups).
+    players = [{player_id, player_name, is_pitcher}]. Always populates because the
+    caller passes today's props players (which always exist and carry IDs).
+    """
+    ok = rows = fail = 0
+    seen = set()
+    for p in players:
+        pid = p.get("player_id")
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        try:
+            logs = fetch_game_log(int(pid), SEASON,
+                                  group="pitching" if p.get("is_pitcher") else "hitting")
+            if logs:
+                rows += upsert_game_logs(p.get("player_name", ""), int(pid), logs)
+                ok += 1
+            time.sleep(0.12)
+        except Exception as e:
+            log.warning(f"gamelog seed failed for {p.get('player_name')}: {e}")
+            fail += 1
+    log.info(f"Game-log seed: {ok} players, {rows} rows, {fail} failed")
+    return {"status": "ok", "players": ok, "rows": rows, "failed": fail}
 
 
 def upsert_game_logs(player_name: str, player_id: int, logs: list) -> int:

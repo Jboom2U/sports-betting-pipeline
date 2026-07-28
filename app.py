@@ -731,17 +731,27 @@ def admin_refresh_gamelogs():
         return redirect("/admin/login?next=/admin/refresh-gamelogs")
     def _worker():
         try:
-            from scrapers.mlb_player_gamelog_scraper import run as run_gl
-            res = run_gl()
-            log.info(f"Manual game-log refresh: {res}")
+            from model.mlb_props_model import score_all_props
+            from scrapers.mlb_player_gamelog_scraper import run_for_players
+            today = datetime.now(ET).strftime("%Y-%m-%d")
+            players = {}
+            for p in score_all_props(today):
+                pid = p.get("player_id")
+                if not pid:
+                    continue
+                players[int(pid)] = {"player_id": int(pid),
+                                     "player_name": p.get("player_name", ""),
+                                     "is_pitcher": p.get("side") == "pitcher"}
+            res = run_for_players(list(players.values()))
+            log.info(f"Manual game-log refresh (from props): {res}")
         except Exception as e:
             log.warning(f"Manual game-log refresh failed: {e}")
     threading.Thread(target=_worker, daemon=True).start()
     return Response(
         "<body style='background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:40px'>"
         "<h2>Player game-log refresh started</h2>"
-        "<p>Pulling season logs for today's lineup players (~1-2 min). Needs lineups "
-        "posted — if it comes back empty, lineups aren't confirmed yet.</p>"
+        "<p>Pulling season logs for every player in today's props (~1-2 min, works "
+        "even before lineups confirm). Refresh the Players page shortly.</p>"
         "<p><a href='/players' style='color:#58a6ff'>&rarr; Players</a></p></body>",
         mimetype="text/html")
 
@@ -850,7 +860,11 @@ a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
 </div>
 <script>
 const GAMES = __GAMES__;   // oldest-first
-const STATS = [["h","Hits"],["tb","Total Bases"],["hr","Home Runs"],["rbi","RBIs"],["k","Strikeouts"],["sb","Stolen Bases"]];
+// Pitchers have 0 at-bats; show pitching charts (strikeouts thrown, etc.).
+const IS_PITCHER = GAMES.length && GAMES.every(x=>(+x.ab||0)===0) && GAMES.some(x=>(+x.k||0)>0);
+const STATS = IS_PITCHER
+  ? [["k","Strikeouts (thrown)"],["h","Hits allowed"],["bb","Walks"],["hr","HR allowed"]]
+  : [["h","Hits"],["tb","Total Bases"],["hr","Home Runs"],["rbi","RBIs"],["k","Strikeouts"],["sb","Stolen Bases"]];
 let N = 10;
 function render(){
   const box=document.getElementById("charts");

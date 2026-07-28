@@ -857,6 +857,21 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Fixed 2026-07-27 — game logs seed from props (not confirmed lineups) + pitcher logs
+
+- **Root cause of empty Players data:** gamelog scraper only pulled CONFIRMED
+  lineup players, and lineups often aren't confirmed when it runs -> 0 rows forever.
+  FIX: new `run_for_players(players)` seeds from an explicit list; the admin route
+  `/admin/refresh-gamelogs` and run_afternoon step 3d now build that list from
+  today's PROPS (score_all_props -> player_id + side), which ALWAYS exist. So the
+  table fills regardless of lineup state — hit /admin/refresh-gamelogs anytime.
+- **Pitchers now get real logs.** `fetch_game_log(pid, group="pitching")` pulls the
+  pitching game log; `k`=strikeouts THROWN (the useful chart for K props), h/hr/bb
+  = allowed. Player page auto-detects pitchers (all ab==0) and shows pitching
+  charts (Strikeouts thrown / Hits allowed / Walks / HR allowed) with correct labels.
+- **Prop-card links fixed on the REAL card** (`renderProps` #propsGrid `.prop-player`),
+  not just the top-props card. Face + name link to /player/<id>.
+
 ## Fixed 2026-07-27 — Players section wiring (clicks + empty search)
 
 - **Prop-card links were on the WRONG card.** The face/link were added to the
