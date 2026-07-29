@@ -723,6 +723,39 @@ document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter'&&
     return Response(html, mimetype="text/html")
 
 
+@app.route("/admin/rebuild-schedule")
+def admin_rebuild_schedule():
+    """Delete + freshly re-scrape the schedule master to repair the column-shift
+    corruption (home_team showing a pitcher id / blank). Rewrites clean, no quota."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/rebuild-schedule")
+    def _worker():
+        try:
+            sp = os.path.join(CLEAN_DIR, "mlb_schedule_master.csv")
+            if os.path.exists(sp):
+                os.remove(sp)
+                log.info("Deleted corrupt schedule master for clean rebuild")
+            from scrapers.mlb_scraper import run as scrape
+            scrape()
+            from normalize.mlb_normalize import run as normalize
+            normalize()
+            with _cache_lock:
+                _cache["generated_at"] = 0
+            _regenerate_in_background()
+            log.info("Schedule master rebuilt clean + dashboard regenerated")
+        except Exception as e:
+            log.warning(f"rebuild-schedule failed: {e}")
+    threading.Thread(target=_worker, daemon=True).start()
+    return Response(
+        "<body style='background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:40px'>"
+        "<h2>Rebuilding schedule from a fresh scrape…</h2>"
+        "<p>Deletes the corrupted master and re-scrapes clean (~30-60s), then rebuilds "
+        "the dashboard. Team names will be correct after it finishes. No Odds API used.</p>"
+        "<p><a href='/' style='color:#58a6ff'>&rarr; Dashboard</a> "
+        "(hard-refresh in ~1 minute)</p></body>",
+        mimetype="text/html")
+
+
 @app.route("/admin/refresh-gamelogs")
 def admin_refresh_gamelogs():
     """Populate player_game_logs on demand (background). Powers the Players section.
@@ -743,9 +776,27 @@ def admin_refresh_gamelogs():
         except Exception as e:
             log.warning(f"gamelog index ensure failed (non-fatal): {e}")
         try:
-            from scrapers.mlb_player_gamelog_scraper import seed_all_players
-            res = seed_all_players()
-            log.info(f"Manual game-log refresh (all rosters): {res}")
+            from scrapers.mlb_player_gamelog_scraper import roster_players, run_for_players
+            players = {}
+            # 1. today's PROP players first — guarantees every prop-card player is
+            #    covered even if they're not on a standard roster (probable pitchers,
+            #    IL rehab, call-ups). These are what the user clicks through to.
+            try:
+                from model.mlb_props_model import score_all_props
+                today = datetime.now(ET).strftime("%Y-%m-%d")
+                for p in score_all_props(today):
+                    pid = p.get("player_id")
+                    if pid:
+                        players[int(pid)] = {"player_id": int(pid),
+                                             "player_name": p.get("player_name", ""),
+                                             "is_pitcher": p.get("side") == "pitcher"}
+            except Exception as _pe:
+                log.warning(f"props-player seed list failed: {_pe}")
+            # 2. all 40-man rosters (broad searchable directory)
+            for pl in roster_players("40Man"):
+                players.setdefault(pl["player_id"], pl)
+            res = run_for_players(list(players.values()))
+            log.info(f"Manual game-log refresh (props + 40-man): {res}")
         except Exception as e:
             log.warning(f"Manual game-log refresh failed: {e}")
     threading.Thread(target=_worker, daemon=True).start()

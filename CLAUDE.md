@@ -857,6 +857,32 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Fixed 2026-07-29 — CRITICAL: schedule column-shift corrupted team names
+
+- **Symptom:** every pick's `home_team` was blank or a player id ("656550"), so
+  Best Bets showed "Team @ " and RL cards "Team @ 666200". away_team was fine.
+- **Cause:** `append_to_master` (normalize/mlb_normalize.py) opened the master in
+  APPEND mode and only wrote a header if the file was absent. When the probable-
+  pitcher-ID columns were added (2026-07-27), it began appending 15-col rows under
+  the old 13-col header, so DictReader read `home_team` from the away pitcher's id
+  column (shift-by-one). CONFIRMED via live DATA_PICKS (43/43 picks bad).
+- **FIX:** `append_to_master` now detects a header change and REWRITES the whole
+  file with the union schema (old rows get "" for new cols), so columns can never
+  shift again on a schema change. Verified with a unit test.
+- **Repair route `/admin/rebuild-schedule`:** deletes the corrupt master + fresh
+  re-scrape + normalize + dashboard rebuild (no Odds API). **Run it once after
+  deploy** to fix the current board; the append fix prevents recurrence.
+
+## Improved 2026-07-27 — Players coverage (40-man + props, higher limit)
+
+- Prop-card players (Sandy Alcantara etc.) came up empty because `seed_all_players`
+  used rosterType="active" (excludes IL/rehab/some probables). FIX: `roster_players()`
+  now uses "40Man" (broadest standard roster), and `/admin/refresh-gamelogs` seeds
+  today's PROP players FIRST (exact IDs on cards) THEN all 40-man rosters, deduped.
+  So every prop-card player is guaranteed covered and searchable.
+- `search_players` LIMIT 60 -> 300 so the directory shows more.
+- **RE-RUN /admin/refresh-gamelogs after deploy** to pick up the broader set.
+
 ## Fixed 2026-07-27 — Players data ACTUAL root cause (empty game_date)
 
 - **THE bug (found via `/admin/gamelog-diag`):** `fetch_game_log` read the date

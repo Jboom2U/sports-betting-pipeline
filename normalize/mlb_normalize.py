@@ -199,22 +199,40 @@ def append_to_master(rows: list[dict], record_type: str, dedup_key: str):
         return
 
     fieldnames = list(rows[0].keys())
-    existing_keys = set()
+    existing_rows  = []
+    existing_header = None
 
-    # Load existing keys to dedup
     if os.path.exists(master_file):
         with open(master_file, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            for existing_row in reader:
-                key = (existing_row.get(dedup_key, ""), existing_row.get("game_date", ""))
-                existing_keys.add(key)
+            existing_header = reader.fieldnames or []
+            existing_rows   = list(reader)
 
-    new_rows = []
-    for row in rows:
-        key = (row.get(dedup_key, ""), row.get("game_date", ""))
-        if key not in existing_keys:
-            new_rows.append(row)
-            existing_keys.add(key)
+    existing_keys = {(r.get(dedup_key, ""), r.get("game_date", "")) for r in existing_rows}
+    new_rows = [r for r in rows
+                if (r.get(dedup_key, ""), r.get("game_date", "")) not in existing_keys]
+
+    # SCHEMA-CHANGE GUARD: if the master's header differs from the current row
+    # schema (e.g. new columns were added), appending would write rows under a
+    # stale header and every value after the new column shifts by one — that is
+    # what corrupted home_team into the away pitcher's id. When the header
+    # changed, REWRITE the whole file with the union schema so old + new rows
+    # align. Old rows just get "" for the new columns.
+    header_changed = existing_header is not None and existing_header != fieldnames
+
+    if header_changed:
+        all_fields = list(fieldnames)
+        for h in existing_header:
+            if h not in all_fields:
+                all_fields.append(h)
+        with open(master_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=all_fields, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(existing_rows)
+            writer.writerows(new_rows)
+        log.info(f"{record_type} master rewritten with updated schema "
+                 f"({len(all_fields)} cols, {len(new_rows)} new rows)")
+        return
 
     if not new_rows:
         log.info(f"No new rows for {record_type} — all already exist in master")
@@ -222,7 +240,7 @@ def append_to_master(rows: list[dict], record_type: str, dedup_key: str):
 
     write_header = not os.path.exists(master_file)
     with open(master_file, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         if write_header:
             writer.writeheader()
         writer.writerows(new_rows)
