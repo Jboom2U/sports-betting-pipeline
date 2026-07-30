@@ -857,6 +857,19 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Fixed 2026-07-30 — TOTALS overprojection (suppression cap)
+
+- **Root cause of 13-15 run totals + OVER bias:** `exp_runs` used
+  `suppression = blended_era / LEAGUE_era` UNBOUNDED. A spot starter's 8.00 ERA (or
+  a recent blow-up start getting 30% weight) pushed suppression past 1.5x -> 7+
+  projected runs/team -> every total an OVER. FIX (`mlb_model.py` exp_runs): clamp
+  suppression to [0.68, 1.30] before AND after the Statcast nudge. Verified: avg
+  game unchanged (9.2), ace duel unchanged (7.2), two-bad-SP 13.8->11.8, hitter-
+  park blowup 14.1->13.0. Only the extremes move.
+- The 0.74 total_conf cap was ALREADY trimmed to 0.68 (mlb_model.py:1118) earlier.
+- Validate on post-fix data before further totals changes — the overprojection was
+  structural (a projection bug), but whether TOTAL has edge still needs clean grades.
+
 ## Changed 2026-07-30 — analysis/trends floored at post-fix boundary
 
 - `analysis_report.build_data_pack` trend cutoff = `max(date-21d, "2026-07-25")` so

@@ -963,6 +963,12 @@ class MLBModel:
         BP_SHARE  = 0.40
         blended_era = SP_SHARE * era_sp + BP_SHARE * bp_era
         suppression = blended_era / LEAGUE["era"]
+        # Cap suppression to a realistic band. ERA is noisy — a spot starter's 8.00,
+        # or one recent blow-up start getting 30% weight — makes raw suppression
+        # blow past 1.5x and project 7+ runs per team (the 13-15 run totals that
+        # made every pick an OVER and bled value). In reality even the worst
+        # pitching yields ~1.30x league runs and the best ~0.68x.
+        suppression = max(0.68, min(1.30, suppression))
 
         # ── Pitcher Statcast stuff adjustment ─────────────────────────────────
         # xwOBA against is the most reliable contact-quality metric.
@@ -989,6 +995,8 @@ class MLBModel:
         # Cap total adjustment at ±15%
         stuff_mult = max(0.85, min(1.15, stuff_mult))
         suppression *= stuff_mult
+        # Re-clamp after the Statcast nudge so the final band stays realistic.
+        suppression = max(0.68, min(1.30, suppression))
 
         park_adj    = park_run_factor / 100.0
         loc_boost   = 1.02 if is_home else 1.0
