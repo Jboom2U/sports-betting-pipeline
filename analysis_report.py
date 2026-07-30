@@ -79,8 +79,17 @@ def build_data_pack(date: str) -> dict:
             GROUP BY prop_type ORDER BY prop_type
         """, (date,))
 
-        # ── Trends: last 21 days ────────────────────────────────────────────
-        cutoff = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=21)).strftime("%Y-%m-%d")
+        # ── Trends: last 21 days, but NEVER before the post-fix boundary ─────
+        # Before 2026-07-25 the model was a different animal: dead umpire/bullpen/
+        # platoon/Kalshi signals, the old always-favorite run line, HR/SB not yet
+        # suppressed, and a mixed 0-1 vs 0-100 confidence scale. Pooling that with
+        # the current model produces conclusions that are wrong about both, so we
+        # floor every trend query at the boundary. (Widen POSTFIX_CUTOFF's lookback
+        # naturally as more clean days accumulate.)
+        POSTFIX_CUTOFF = "2026-07-25"
+        _raw_cutoff = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=21)).strftime("%Y-%m-%d")
+        cutoff = max(_raw_cutoff, POSTFIX_CUTOFF)
+        pack["trend_cutoff"] = cutoff
 
         pack["trend_by_conf_band"] = _rows(cur, """
             SELECT width_bucket(conf, 0.50, 0.85, 7) AS band,
@@ -144,7 +153,7 @@ def _fmt_pack(pack: dict) -> str:
         out.append(f"  {r['prop_type']}: {r['hits']}/{r['total']}")
 
     out.append("")
-    out.append("=== TRENDS (last 21 days) ===")
+    out.append(f"=== TRENDS (POST-FIX ONLY, since {pack.get('trend_cutoff','2026-07-25')}) ===")
     out.append("ML/RL/TOTAL by confidence band:")
     for r in pack.get("trend_by_conf_band", []):
         out.append(f"  {float(r['lo'])*100:.0f}-{float(r['hi'])*100:.0f}%: {wl(r['w'], r['l'])}")
@@ -167,14 +176,18 @@ numbers — use only the data provided. Structure your answer with these section
 
 1. HOW THE DAY WENT — a short, honest paragraph on the day's record.
 2. WHAT UNDERPERFORMED — call out the specific tiers/types/props that lost, with numbers.
-3. TRENDS WORTH KNOWING — the highest-signal patterns in the 21-day data that Justin
-   would not notice himself. Only cite a pattern if it has a usable sample (n>=20 for
-   game picks, n>=10 for props) and is clearly above or below break-even. Flag thin
-   samples explicitly. Prefer actionable, specific patterns.
-4. IDEAS TO IMPROVE — concrete next steps: model tweaks, data/resources to add, or
-   which bet types to lean on or suppress. Tie each idea to a number in the data.
+3. TRENDS WORTH KNOWING — the highest-signal patterns in the POST-FIX data (only
+   picks since the model was repaired; older picks are deliberately excluded).
+   Only cite a pattern if it has a usable sample (n>=20 game picks, n>=10 props)
+   and is clearly above or below break-even. This window is SMALL and recent, so
+   samples will be thin — say so explicitly and do NOT over-conclude from n<20.
+4. IDEAS TO IMPROVE — concrete next steps tied to a number in the data. Note that
+   the run line was rebuilt, HR/SB props are already suppressed, and confidence
+   was recalibrated — do NOT recommend those as if they're outstanding.
 
-Keep it tight. No hedging filler. If a section has no signal, say so in one line."""
+CONTEXT: the run line, totals, and confidence engines were changed recently, so
+this post-fix window is the FIRST clean read on them. Treat it as an early signal,
+not a verdict. Keep it tight. No hedging filler. If a section has no signal, say so."""
 
 
 def build_report(date: str = None) -> dict:

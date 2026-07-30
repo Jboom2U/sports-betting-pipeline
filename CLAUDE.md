@@ -857,6 +857,20 @@ consensus worker — verify CONSENSUS still parses picks after deploy.**
   projections + bad prices). RL already excluded from Best Bets. Un-mute once the
   scraper price fix lands and ~2 weeks of graded RL results exist.
 
+## Changed 2026-07-30 — analysis/trends floored at post-fix boundary
+
+- `analysis_report.build_data_pack` trend cutoff = `max(date-21d, "2026-07-25")` so
+  trends/calibration NEVER pool pre-fix (blind-model) picks with the current model.
+  System prompt updated: window is post-fix, small-sample, first clean read on the
+  rebuilt RL/totals/confidence — don't over-conclude, and don't recommend RL/HR/SB/
+  conf changes that are already done. Stats & Trends tab inherits this via build_data_pack.
+- **Model-tweak brief triage (2026-07-30):** most points in the user's brief + the
+  model's own "ideas" were reading the CONTAMINATED 21-day pool. Already done: RL
+  rebuilt, HR/SB suppressed, conf-scale fixed, chalk faded, Best Bets = prune-the-
+  middle. Needs clean data (~300 post-fix picks, ~2-3 wks): isotonic recalibration,
+  K-model. Genuinely actionable NOW (structural, data-independent): TOTALS
+  overprojection (exp_total runs hot + the min(0.74) cap at mlb_model.py:972).
+
 ## Fixed 2026-07-29 — CRITICAL: schedule column-shift corrupted team names
 
 - **Symptom:** every pick's `home_team` was blank or a player id ("656550"), so
