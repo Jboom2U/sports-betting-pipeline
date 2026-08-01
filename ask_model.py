@@ -256,7 +256,7 @@ def answer_question(question: str, date: str = None) -> dict:
                 f"BOARD DATA:\n{pack}\n\nQUESTION: {question}\n\n"
                 f"STATALIZER BOT'S ANSWER:\n{answer}\n\n"
                 "Give your own read from the data, then debate the bot.",
-                max_tokens=800)
+                max_tokens=1400)
     except Exception as e:
         log.warning(f"ask_model Gemini call failed: {e}")
         gemini = ""

@@ -38,10 +38,16 @@ def call_gemini(system: str, user: str, max_tokens: int = 1400,
                 "(free key from Google AI Studio) to enable the Gemini second opinion.]")
     model = os.environ.get("GEMINI_MODEL", _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    gen_cfg = {"maxOutputTokens": max_tokens, "temperature": temperature}
+    # Gemini 2.5 spends output-token budget on internal "thinking" FIRST, which can
+    # eat the whole budget and truncate the visible answer mid-sentence. Disable it
+    # on flash (which supports budget 0) so the full budget goes to the real answer.
+    if "flash" in model.lower():
+        gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
     payload = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
-        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature},
+        "generationConfig": gen_cfg,
     }
     try:
         req = urllib.request.Request(

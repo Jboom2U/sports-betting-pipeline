@@ -89,6 +89,13 @@ use his existing **Gemini Pro** sub instead of buying Cursor ($20 saved).
   Where they agree → trust; a real split → the day's flag. Verified graceful
   without a key in the sandbox; will call live on Railway where the key is set.
   NOTE: do NOT call the Gemini API from the dev sandbox — no key here by design.
+  - **GEMINI 2.5 THINKING GOTCHA (fixed 2026-08-01):** Gemini 2.5 spends the
+    `maxOutputTokens` budget on internal "thinking" FIRST, so a small budget (was
+    800) returned a truncated answer cut mid-sentence ("...interesting totals and").
+    Fix: `gemini_client.call_gemini` now sets `generationConfig.thinkingConfig.
+    thinkingBudget = 0` when the model name contains "flash" (flash allows 0; pro
+    does not, so it's left thinking + relies on the raised token budget), and the
+    bot call was bumped 800→1400 tokens. Full answers now.
 - **Best Bets disclaimer (#2, NOT a bug):** behavior is correct (re-ranks off live
   40-min Pinnacle pulls as EV changes). Added `.bb-note` explaining it tracks the
   closing market and locks at first pitch. Did NOT change the logic.
