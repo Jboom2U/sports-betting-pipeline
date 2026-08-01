@@ -1,5 +1,18 @@
 # Statalizers — Project Context for Claude
 
+## Added 2026-08-01 — season stat line on player pages (/player/<id>)
+
+The Players section had per-game trend charts but no SEASON line (Justin's ask when
+the Stats & Trends tab, which is model-level, got built). `player_data.get_player_season
+(player_id)` now returns a season line: pitchers from `mlb_pitcher_stats_master.csv`
+(matched by MLBAM player_id, carries the SEASON year), batters aggregated from this
+season's `player_game_logs` (AVG/OBP/SLG/OPS/HR/RBI/SB/K). The `/player/<id>` route
+renders it above the charts. KEY: a pitcher whose latest season < current year shows an
+amber badge + "no current-season line" warning — so the stale-ERA bug (Tyler Phillips
+2024) is visible on the page, not hidden. Batter OBP is (H+BB)/(AB+BB) approx from logs.
+
+---
+
 ## Fixed 2026-08-01 — probable starter scored on STALE season (wrong ERA 6.87→7.77)
 
 **Symptom:** Tyler Phillips card showed ERA 7.77; his real 2026 ERA is 3.52.

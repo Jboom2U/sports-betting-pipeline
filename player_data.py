@@ -23,7 +23,7 @@ STAT_COLS = [
 ]
 
 
-def search_players(query: str = "", team: str = "", limit: int = 60) -> list:
+def search_players(query: str = "", team: str = "", limit: int = 300) -> list:
     """Distinct players from the logs, most-recently-seen first, name/team filtered."""
     from db.connection import db_conn
     out = []
@@ -54,6 +54,70 @@ def search_players(query: str = "", team: str = "", limit: int = 60) -> list:
     except Exception as e:
         log.warning(f"search_players failed: {e}")
     return out
+
+
+def get_player_season(player_id) -> dict:
+    """Compact SEASON stat line to show above the per-game trends.
+    Pitchers come from the pitcher stats master (keyed by MLBAM player_id) and carry
+    the SEASON year, so stale data is visible at a glance (the Tyler-Phillips-2024 bug).
+    Batters are aggregated from this season's game logs. Returns {} if nothing found."""
+    import os
+    pid = str(player_id)
+    # 1) Pitcher — look up the stats master by player_id (shows the season year).
+    try:
+        path = os.path.join(os.path.dirname(__file__), "data", "clean",
+                            "mlb_pitcher_stats_master.csv")
+        prows = []
+        if os.path.exists(path):
+            import csv as _csv
+            with open(path, encoding="utf-8-sig") as f:
+                for r in _csv.DictReader(f):
+                    if str(r.get("player_id", "")).strip() == pid:
+                        prows.append(r)
+        if prows:
+            latest = max(prows, key=lambda r: str(r.get("season", "")))
+            def _f(k):
+                try:
+                    return round(float(latest.get(k)), 2)
+                except Exception:
+                    return None
+            return {"type": "pitcher", "season": str(latest.get("season", "")),
+                    "era": _f("era"), "whip": _f("whip"), "k_per_9": _f("k_per_9"),
+                    "fip": _f("fip"), "gs": latest.get("games_started"),
+                    "ip": latest.get("innings_pitched"),
+                    "w": latest.get("wins"), "l": latest.get("losses")}
+    except Exception as e:
+        log.warning(f"get_player_season pitcher lookup failed: {e}")
+    # 2) Batter — aggregate this season's game logs.
+    try:
+        from db.connection import db_conn
+        from datetime import datetime
+        yr = str(datetime.now().year)
+        with db_conn() as conn:
+            if conn is None:
+                return {}
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT COUNT(*), COALESCE(SUM(ab),0), COALESCE(SUM(h),0),
+                       COALESCE(SUM(hr),0), COALESCE(SUM(rbi),0), COALESCE(SUM(bb),0),
+                       COALESCE(SUM(k),0), COALESCE(SUM(tb),0), COALESCE(SUM(sb),0)
+                FROM player_game_logs
+                WHERE player_id::text = %s AND game_date >= %s
+            """, (pid, yr + "-01-01"))
+            row = cur.fetchone()
+        if row and row[0]:
+            games, ab, h, hr, rbi, bb, k, tb, sb = row
+            ab, h, tb, bb = float(ab), float(h), float(tb), float(bb)
+            avg = h / ab if ab else 0.0
+            obp = (h + bb) / (ab + bb) if (ab + bb) else 0.0
+            slg = tb / ab if ab else 0.0
+            return {"type": "batter", "season": yr, "games": games,
+                    "avg": round(avg, 3), "obp": round(obp, 3), "slg": round(slg, 3),
+                    "ops": round(obp + slg, 3), "hr": int(hr), "rbi": int(rbi),
+                    "sb": int(sb), "k": int(k), "ab": int(ab)}
+    except Exception as e:
+        log.warning(f"get_player_season batter agg failed: {e}")
+    return {}
 
 
 def get_player(player_id: int) -> dict:

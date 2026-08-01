@@ -1206,12 +1206,44 @@ a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
 def player_page(pid):
     """Per-game trend charts for one player (hits/TB/HR/RBI/K/SB, L5/L10/L20)."""
     import html as _h, json as _json
-    from player_data import get_player
+    from datetime import datetime as _dtp
+    from player_data import get_player, get_player_season
     p = get_player(pid)
     name = _h.escape(p.get("player_name") or f"Player {pid}")
     team = _h.escape(p.get("team") or "")
     games_json = _json.dumps(p.get("games") or [], default=str)
     face = f"https://img.mlbstatic.com/mlb-photos/image/upload/w_180,q_100/v1/people/{pid}/headshot/67/current"
+
+    # ── Season stat line (sits above the per-game trends) ────────────────────
+    ssn = get_player_season(pid)
+    cur_year = str(_dtp.now().year)
+    def _st(lbl, val):
+        v = "—" if val is None or val == "" else val
+        return f'<div class="pstat"><div class="pstat-v">{_h.escape(str(v))}</div><div class="pstat-l">{lbl}</div></div>'
+    season_html = ""
+    if ssn.get("type") == "pitcher":
+        stale = bool(ssn.get("season")) and ssn["season"] < cur_year
+        badge = f'<span class="pssn{" stale" if stale else ""}">{_h.escape(ssn.get("season",""))} season</span>'
+        cells = (_st("ERA", ssn.get("era")) + _st("WHIP", ssn.get("whip")) +
+                 _st("K/9", ssn.get("k_per_9")) + _st("FIP", ssn.get("fip")) +
+                 _st("GS", ssn.get("gs")) + _st("IP", ssn.get("ip")) +
+                 _st("W-L", f'{ssn.get("w","—")}-{ssn.get("l","—")}'))
+        warn = ('<div class="pstale">⚠ No current-season line on file — showing the most '
+                'recent season we have. This pitcher may be a recent callup/spot starter.</div>'
+                if stale else "")
+        season_html = (f'<div class="season"><div class="season-h">Season stats {badge}</div>'
+                       f'<div class="pstat-grid">{cells}</div>{warn}</div>')
+    elif ssn.get("type") == "batter":
+        badge = f'<span class="pssn">{_h.escape(ssn.get("season",""))} season · {ssn.get("games",0)} G</span>'
+        def _avg(x):
+            try: return f'{float(x):.3f}'
+            except Exception: return "—"
+        cells = (_st("AVG", _avg(ssn.get("avg"))) + _st("OBP", _avg(ssn.get("obp"))) +
+                 _st("SLG", _avg(ssn.get("slg"))) + _st("OPS", _avg(ssn.get("ops"))) +
+                 _st("HR", ssn.get("hr")) + _st("RBI", ssn.get("rbi")) +
+                 _st("SB", ssn.get("sb")) + _st("K", ssn.get("k")))
+        season_html = (f'<div class="season"><div class="season-h">Season stats {badge}</div>'
+                       f'<div class="pstat-grid">{cells}</div></div>')
     html = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>__NAME__ — Statalizers</title>
 <style>
@@ -1235,12 +1267,22 @@ def player_page(pid):
 .pbar.zero{background:#30363d}
 .pbar-lbl{font-size:.6rem;color:var(--sub);text-align:center;margin-top:5px;line-height:1.25}
 .pl-empty{color:var(--sub);padding:24px;text-align:center}
+.season{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:14px 0}
+.season-h{font-weight:800;margin-bottom:10px;font-size:.9rem}
+.pssn{font-weight:600;font-size:.7rem;color:var(--sub);background:#1f2d40;padding:2px 8px;border-radius:6px;margin-left:6px}
+.pssn.stale{background:#3d2b1f;color:#ffa726}
+.pstat-grid{display:flex;flex-wrap:wrap;gap:8px}
+.pstat{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:60px;text-align:center;flex:1}
+.pstat-v{font-weight:800;font-size:1.05rem}
+.pstat-l{font-size:.6rem;color:var(--sub);text-transform:uppercase;margin-top:2px;letter-spacing:.03em}
+.pstale{color:#ffa726;font-size:.72rem;margin-top:10px;line-height:1.4}
 a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
 </style></head><body><div class="wrap">
 <div class="phead">
   <img src="__FACE__" onerror="this.style.visibility='hidden'" alt="">
   <div><h1>__NAME__</h1><div class="team">__TEAM__</div></div>
 </div>
+__SEASON__
 <div class="toggle">
   <button data-n="5">Last 5</button>
   <button data-n="10" class="active">Last 10</button>
@@ -1284,7 +1326,8 @@ document.querySelectorAll(".toggle button").forEach(b=>b.onclick=()=>{
 render();
 </script></body></html>"""
     html = (html.replace("__GAMES__", games_json).replace("__NAME__", name)
-                .replace("__TEAM__", team).replace("__FACE__", face))
+                .replace("__TEAM__", team).replace("__FACE__", face)
+                .replace("__SEASON__", season_html))
     return Response(html, mimetype="text/html")
 
 
