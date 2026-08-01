@@ -268,3 +268,71 @@ def _call_claude_report(data_text: str) -> str:
     except Exception as e:
         log.warning(f"analysis report Claude call failed: {e}")
         return f"[Claude call failed: {e}]\n\n{data_text}"
+
+
+# ── Claude-vs-Gemini debate over the same data ───────────────────────────────
+_GEMINI_SYSTEM = """You are a skeptical quant reviewing another analyst's take on a
+data-driven MLB betting model (Statalizers). Break-even vs -110 juice is 52.38%. You
+get the raw performance data AND Claude's written analysis of it. RED-TEAM Claude — do
+not just agree. Use ONLY the numbers provided; never invent data.
+
+Hunt specifically for the mistakes a Claude-style model tends to make: over-smoothing a
+thin calibration curve into a tidy story, treating a small-sample streak (n<20) as real
+signal, ignoring vigorish when comparing model prob to market price, confusing
+confidence with value, and drawing verdicts from the post-fix window that is too new to
+support them.
+
+Structure: (1) WHERE CLAUDE IS RIGHT — briefly. (2) WHERE CLAUDE IS OVERREACHING — the
+specific claims the sample does not support, with the numbers. (3) WHAT CLAUDE MISSED —
+a pattern or risk in the data it skipped. Be direct and quantitative. If the data
+genuinely backs Claude, say so rather than manufacturing disagreement."""
+
+_DEBATE_SYSTEM = """You are the Statalizers analyst who wrote the first analysis. A
+skeptical second reviewer has challenged it. You get the raw data, your original
+analysis, and their rebuttal. Respond honestly: CONCEDE the points where they are right,
+DEFEND the ones where the data backs you and explain why, and end with a BOTTOM LINE on
+what to actually believe from this window. Use only the data provided. Tight, no filler."""
+
+
+def _call_claude(system: str, user: str, max_tokens: int = 1200) -> str:
+    """Generic Claude call (the debate response uses this; the report uses its own)."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return "[ANTHROPIC_API_KEY not set]"
+    import urllib.request
+    payload = {"model": "claude-haiku-4-5-20251001", "max_tokens": max_tokens,
+               "system": system, "messages": [{"role": "user", "content": user}]}
+    try:
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=json.dumps(payload).encode(),
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read())
+        return body["content"][0]["text"].strip()
+    except Exception as e:
+        log.warning(f"claude debate call failed: {e}")
+        return f"[Claude call failed: {e}]"
+
+
+def build_debate(data_text: str, claude_narrative: str) -> dict:
+    """One-round debate on the SAME data: Gemini challenges Claude's analysis, then
+    Claude responds. Returns {'enabled', 'gemini_challenge', 'claude_response'}.
+    Degrades gracefully when GEMINI_API_KEY is missing."""
+    from gemini_client import gemini_available, call_gemini
+    if not gemini_available():
+        return {"enabled": False,
+                "gemini_challenge": ("[GEMINI_API_KEY not set — add it in Railway env "
+                                     "vars (free key from Google AI Studio) to turn on "
+                                     "the Claude-vs-Gemini debate.]"),
+                "claude_response": ""}
+    challenge = call_gemini(
+        _GEMINI_SYSTEM,
+        f"RAW DATA:\n{data_text}\n\nCLAUDE'S ANALYSIS:\n{claude_narrative}\n\n"
+        "Red-team Claude's analysis now.", max_tokens=1200)
+    response = _call_claude(
+        _DEBATE_SYSTEM,
+        f"RAW DATA:\n{data_text}\n\nYOUR ORIGINAL ANALYSIS:\n{claude_narrative}\n\n"
+        f"THE REVIEWER'S REBUTTAL:\n{challenge}\n\nRespond.")
+    return {"enabled": True, "gemini_challenge": challenge, "claude_response": response}

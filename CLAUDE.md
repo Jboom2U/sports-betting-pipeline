@@ -22,9 +22,51 @@ Part of the 08/01 9-item list (DASHBOARD scope). Shipped:
   `_TEAM_LOGOS` name→MLBAM-id map (static, ids stable) → `mlbstatic.com/team-logos/
   <id>.svg`. Added to pick cards, TOSSUP cards, game cards, Best Bets, Daily Summary,
   Yesterday cards. Matches by nickname substring (white sox/red sox handled).
-  Plus `teamEmblem(p.team)` — large 74px logo of the PICKED team in the pick
-  card's empty top-right corner (`.pick-team-emblem`, absolute, opacity .9).
-  Skipped on TOTAL picks (no single team) and TOSSUP cards (two-team layout).
+  Plus `teamEmblem(p.team)` — logo of the PICKED team in the pick card's
+  top-right corner (`.pick-team-emblem`, absolute, 44px, opacity .6; was 74px
+  and colliding with the conf %, shrunk 2026-08-01). Skipped on TOTAL picks
+  (no single team) and TOSSUP cards (two-team layout).
+
+---
+
+## 🤝 AI ASSIST STRATEGY (decided 2026-08-01) — adding Gemini as a second brain
+
+Justin is capped on Cowork/Claude usage and wants (a) coding hands when blocked
+here and (b) an independent second opinion to keep the model honest. Decision:
+use his existing **Gemini Pro** sub instead of buying Cursor ($20 saved).
+
+- **Coding hands = Gemini CLI** on the local Windows repo. Guardrail file
+  `GEMINI.md` (repo root) points it at CLAUDE.md + restates the hard rules
+  (no git/railway from agent, diff-only edits on the 221KB file, post-fix data
+  boundary, no Odds API in dev, verify SQL vs schema.py, run predeploy_check).
+  Gemini CLI auto-loads GEMINI.md on startup. Safety backstop: Justin runs ALL
+  git/railway himself and reviews `git diff` before committing, so a bad Gemini
+  edit never reaches Railway.
+- **Red-team second opinion = Gemini 2.5 Pro.** Different model family = errors
+  uncorrelated with Claude's. Audits the MODEL/CODE (calibration, probability
+  math), a layer above the Daily Consensus worker which reviews the PICKS.
+  Gemini named the failure modes to hunt: over-smoothed calibration curves, vig
+  removal across skewed ML distributions, feature/target leakage in backtests,
+  logit transforms breaking near boundaries, Brier gains that cost EV at extremes.
+- **BUILT 2026-08-01: Claude-vs-Gemini DEBATE (not just parallel reads).**
+  `GEMINI_API_KEY` is set in Railway. New `gemini_client.py` = thin REST client
+  (`call_gemini`, `gemini_available`; model via `GEMINI_MODEL` env, default
+  `gemini-2.5-flash`, key sent as `x-goog-api-key` header not URL; degrades to a
+  bracketed notice if key/call fails). Two surfaces:
+  1. **`/admin/analysis` page:** `analysis_report.build_debate(data_text,
+     narrative)` runs a 1-round debate on the SAME data pack — Gemini red-teams
+     Claude's nightly read (`_GEMINI_SYSTEM`), then Claude answers back
+     (`_DEBATE_SYSTEM` via generic `_call_claude`). Rendered as "🔵 Claude's read"
+     → "🟠 Gemini challenges" → "🔵 Claude responds". Only on page view (not
+     download/email) to save calls.
+  2. **Statalizer Bot (`/ask`):** `ask_model.answer_question` now returns
+     `{answer, gemini, used_pack}`. Claude answers first (`_call_claude_bot`),
+     then Gemini gives its OWN read + debates the bot (`_GEMINI_BOT_SYSTEM`).
+     `/ask/answer` returns both; the page shows a green Claude block + an orange
+     Gemini block (hidden if key missing).
+  Where they agree → trust; a real split → the day's flag. Verified graceful
+  without a key in the sandbox; will call live on Railway where the key is set.
+  NOTE: do NOT call the Gemini API from the dev sandbox — no key here by design.
 - **Best Bets disclaimer (#2, NOT a bug):** behavior is correct (re-ranks off live
   40-min Pinnacle pulls as EV changes). Added `.bb-note` explaining it tracks the
   closing market and locks at first pitch. Did NOT change the logic.

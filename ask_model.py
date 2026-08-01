@@ -171,16 +171,23 @@ is NOT value (chalk can be a bad price); the run line is newly rebuilt and unpro
 Be direct and tight - a few short paragraphs, opinion clearly distinct from the model."""
 
 
-def answer_question(question: str, date: str = None) -> dict:
-    question = (question or "").strip()
-    if not question:
-        return {"answer": "Ask me about a game, matchup, team, or prop on today's board.",
-                "used_pack": ""}
-    pack = build_board_pack()
+# Gemini's role on the bot: its OWN independent read from the raw data, then a debate
+# with Statalizer Bot's (Claude's) answer — a different model family, uncorrelated errors.
+_GEMINI_BOT_SYSTEM = """You are a second, independent MLB analyst debating Statalizer Bot
+(a Claude-based analyst) about today's board. You get the raw board data, the user's
+question, and Statalizer Bot's answer. Do TWO things: (1) give YOUR OWN read from the raw
+data — starters/ERA, bullpen, offense RPG/OPS, park, weather, market price, your own take
+on edge and value; (2) DEBATE the bot — state clearly where you AGREE and where you
+DISAGREE and why, and push back on any overconfident or unsupported claim. Use ONLY the
+data provided; never invent numbers, lines, or games. Apply the calibration truths: the
+model is well-calibrated only at 85%+ and overconfident at 75-84%; confidence is not
+value; the run line is unproven. Be direct and tight."""
+
+
+def _call_claude_bot(pack: str, question: str) -> str:
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        return {"answer": "[ANTHROPIC_API_KEY not set — showing the raw board data instead]\n\n" + pack,
-                "used_pack": pack}
+        return "[ANTHROPIC_API_KEY not set — showing the raw board data instead]\n\n" + pack
     import urllib.request
     payload = {
         "model": "claude-haiku-4-5-20251001",
@@ -198,7 +205,32 @@ def answer_question(question: str, date: str = None) -> dict:
             method="POST")
         with urllib.request.urlopen(req, timeout=40) as resp:
             body = json.loads(resp.read())
-        return {"answer": body["content"][0]["text"].strip(), "used_pack": pack}
+        return body["content"][0]["text"].strip()
     except Exception as e:
         log.warning(f"ask_model Claude call failed: {e}")
-        return {"answer": f"[model call failed: {e}]", "used_pack": pack}
+        return f"[model call failed: {e}]"
+
+
+def answer_question(question: str, date: str = None) -> dict:
+    question = (question or "").strip()
+    if not question:
+        return {"answer": "Ask me about a game, matchup, team, or prop on today's board.",
+                "gemini": "", "used_pack": ""}
+    pack = build_board_pack()
+    # 1) Statalizer Bot (Claude) answers first.
+    answer = _call_claude_bot(pack, question)
+    # 2) Gemini gives its own read and debates the bot (different model family).
+    gemini = ""
+    try:
+        from gemini_client import gemini_available, call_gemini
+        if gemini_available():
+            gemini = call_gemini(
+                _GEMINI_BOT_SYSTEM,
+                f"BOARD DATA:\n{pack}\n\nQUESTION: {question}\n\n"
+                f"STATALIZER BOT'S ANSWER:\n{answer}\n\n"
+                "Give your own read from the data, then debate the bot.",
+                max_tokens=800)
+    except Exception as e:
+        log.warning(f"ask_model Gemini call failed: {e}")
+        gemini = ""
+    return {"answer": answer, "gemini": gemini, "used_pack": pack}

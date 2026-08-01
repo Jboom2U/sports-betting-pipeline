@@ -640,7 +640,7 @@ def ask_answer():
     try:
         from ask_model import answer_question
         res = answer_question(q)
-        return {"answer": res.get("answer", "")}
+        return {"answer": res.get("answer", ""), "gemini": res.get("gemini", "")}
     except Exception as e:
         import traceback
         log.warning(f"/ask/answer failed: {traceback.format_exc()}")
@@ -679,8 +679,11 @@ textarea{width:100%;min-height:80px;background:var(--card);border:1px solid var(
 .chip{background:var(--card);border:1px solid var(--border);color:var(--sub);border-radius:20px;
   padding:6px 12px;font-size:.8rem;cursor:pointer}
 .chip:hover{color:var(--text);border-color:var(--blue)}
-.answer{margin-top:20px;background:var(--card);border:1px solid var(--border);border-left:3px solid var(--green);
+.answer{margin-top:8px;background:var(--card);border:1px solid var(--border);border-left:3px solid var(--green);
   border-radius:10px;padding:16px 18px;white-space:pre-wrap;display:none}
+.gemini-answer{border-left-color:#f0883e}
+.ans-label{font-weight:700;font-size:.85rem;margin-top:20px;display:none}
+#al{color:var(--green)} #gl{color:#f0883e}
 .loading{color:var(--sub);font-style:italic;margin-top:20px;display:none}
 a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
 </style></head><body><div class="wrap">
@@ -697,7 +700,10 @@ model's own reads and is honest about where it's calibrated and where it isn't.<
   <span class="chip" onclick="fill('Which favorites are overpriced chalk to avoid?')">Chalk to avoid</span>
 </div>
 <div class="loading" id="load">Reading the board…</div>
+<div class="ans-label" id="al">🔵 Statalizer Bot (Claude)</div>
 <div class="answer" id="a"></div>
+<div class="ans-label" id="gl">🟠 Second Opinion — Gemini (its own read + debate)</div>
+<div class="answer gemini-answer" id="g"></div>
 </div>
 <script>
 function fill(t){document.getElementById('q').value=t;}
@@ -705,13 +711,20 @@ async function ask(){
   const q=document.getElementById('q').value.trim();
   if(!q)return;
   const go=document.getElementById('go'),load=document.getElementById('load'),a=document.getElementById('a');
-  go.disabled=true;load.style.display='block';a.style.display='none';
+  const al=document.getElementById('al'),gl=document.getElementById('gl'),g=document.getElementById('g');
+  go.disabled=true;load.style.display='block';
+  a.style.display='none';al.style.display='none';gl.style.display='none';g.style.display='none';
   try{
     const r=await fetch('/ask/answer',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'q='+encodeURIComponent(q)});
     const txt=await r.text();
     let d;
     try{ d=JSON.parse(txt); }catch(_){ d=null; }
-    if(d && d.answer){ a.textContent=d.answer; }
+    if(d && d.answer){
+      a.textContent=d.answer; al.style.display='block';
+      if(d.gemini && d.gemini.trim() && d.gemini.indexOf('[GEMINI_API_KEY not set')!==0){
+        g.textContent=d.gemini; g.style.display='block'; gl.style.display='block';
+      }
+    }
     else if(!r.ok || d===null){
       a.textContent="Statalizer Bot is still warming up the day's data (first question after a while can take a moment). Give it 15 seconds and ask again.";
     } else { a.textContent='No answer.'; }
@@ -2540,10 +2553,30 @@ def admin_analysis():
 
     # simple markdown-ish -> HTML (headings + line breaks)
     import re as _re
-    body = _h.escape(narrative)
-    body = _re.sub(r'(?m)^(\d+\.\s+[A-Z][^\n]*)$',
-                   r'<h3 style="color:#58a6ff;margin:18px 0 6px">\1</h3>', body)
-    body = body.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    def _fmt(t):
+        t = _h.escape(t or "")
+        t = _re.sub(r'(?m)^(\d+\.\s+[A-Z][^\n]*)$',
+                    r'<h3 style="color:#58a6ff;margin:14px 0 6px">\1</h3>', t)
+        return t.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    body = _fmt(narrative)
+
+    # ── Claude-vs-Gemini debate over the same data ───────────────────────────
+    debate_html = ""
+    try:
+        from analysis_report import build_debate
+        deb = build_debate(data_text, narrative)
+        gem = _fmt(deb.get("gemini_challenge", ""))
+        resp = deb.get("claude_response", "")
+        debate_html = (
+            "<h2 style='margin-top:30px'>🔴 Second Opinion — Claude vs Gemini</h2>"
+            "<div style='color:#6e7681;font-size:.82rem;margin-bottom:10px'>Same data, two model "
+            "families. Gemini red-teams Claude's read; Claude answers back. Agreement = trust it; "
+            "a real split = your flag for the day.</div>"
+            f"<div class='voice v-gemini'><div class='voice-h'>🟠 Gemini challenges the read</div><p>{gem}</p></div>"
+            + (f"<div class='voice v-claude'><div class='voice-h'>🔵 Claude responds</div><p>{_fmt(resp)}</p></div>" if resp else ""))
+    except Exception as e:
+        debate_html = f"<h2 style='margin-top:30px'>🔴 Second Opinion</h2><p style='color:#f85149'>Debate unavailable: {_h.escape(str(e))}</p>"
+
     html = f"""<!doctype html><html><head><meta charset=utf-8><title>Analysis {date_str}</title>
 <style>body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:24px;
 max-width:820px;margin:0 auto;line-height:1.55}}h2{{color:#58a6ff}}
@@ -2552,7 +2585,11 @@ a,button{{font-family:inherit}} .bar{{display:flex;gap:10px;align-items:center;m
 font-weight:700;cursor:pointer;text-decoration:none;font-size:.9rem}}
 .date{{background:#161b22;border:1px solid #30363d;color:#c9d1d9;border-radius:8px;padding:7px 10px}}
 pre{{background:#161b22;padding:14px;border-radius:8px;overflow:auto;font-size:12px;color:#8b949e}}
-p{{margin:6px 0}}</style></head><body>
+p{{margin:6px 0}}
+.voice{{border-left:3px solid #30363d;padding:12px 16px;margin:10px 0;background:#161b22;border-radius:8px}}
+.voice-h{{font-weight:700;font-size:.85rem;margin-bottom:6px}}
+.v-claude{{border-left-color:#58a6ff}} .v-claude .voice-h{{color:#58a6ff}}
+.v-gemini{{border-left-color:#f0883e}} .v-gemini .voice-h{{color:#f0883e}}</style></head><body>
 <h2>Statalizers Analysis — {date_str}</h2>
 <div style="color:#6e7681;font-size:.82rem">Generated {gen}</div>
 <form class="bar" method="get" action="/admin/analysis">
@@ -2563,7 +2600,9 @@ p{{margin:6px 0}}</style></head><body>
   <a class="btn" style="background:#8957e5"
      href="/admin/analysis?date={date_str}&email=1">✉ Email me</a>
 </form>
+<h2 style="margin-top:24px">🔵 Claude's read</h2>
 <p>{body}</p>
+{debate_html}
 <details style="margin-top:24px"><summary style="cursor:pointer;color:#8b949e">Raw data</summary>
 <pre>{_h.escape(data_text)}</pre></details>
 <p style="margin-top:20px"><a href="/admin" style="color:#58a6ff">&larr; Admin</a></p>

@@ -1389,7 +1389,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .tb-TOSSUP{background:rgba(127,119,221,.12);color:#a09ae0;border:1px solid rgba(127,119,221,.3)}
 
 .pick-label{font-size:1.08rem;font-weight:700;color:var(--text);margin-bottom:4px}
-.pick-team-emblem{position:absolute;top:46px;right:14px;width:74px;height:74px;object-fit:contain;opacity:.9;pointer-events:none;z-index:0;filter:drop-shadow(0 2px 5px rgba(0,0,0,.45))}
+.pick-team-emblem{position:absolute;top:40px;right:10px;width:44px;height:44px;object-fit:contain;opacity:.6;pointer-events:none;z-index:0}
 .pick-game{font-size:.78rem;color:var(--sub);margin-bottom:12px}
 
 .conf-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
