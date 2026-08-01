@@ -868,6 +868,32 @@ def props_diag():
                     + _h.escape("\n".join(str(x) for x in out)) + "</pre>", mimetype="text/html")
 
 
+@app.route("/admin/gemini-test")
+def gemini_test():
+    """Confirm the RUNNING process actually sees GEMINI_API_KEY, and do a live ping.
+    If this says 'not visible' but the var is in Railway, the deployment predates the
+    variable — redeploy so the container boots with it."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/gemini-test")
+    import html as _h
+    key = os.environ.get("GEMINI_API_KEY", "")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    out = [
+        f"GEMINI_API_KEY visible to this process: {'YES' if key.strip() else 'NO'}",
+        f"  key length: {len(key.strip())} chars" if key.strip() else "  (empty — redeploy so the container picks up the Railway variable)",
+        f"GEMINI_MODEL: {model}",
+        "",
+    ]
+    try:
+        from gemini_client import call_gemini
+        ping = call_gemini("You are a test.", "Reply with exactly: PONG", max_tokens=20)
+        out.append(f"Live call result: {ping[:200]}")
+    except Exception as e:
+        out.append(f"Live call error: {e}")
+    return Response("<pre style='color:#c9d1d9;background:#0d1117;padding:20px;white-space:pre-wrap'>"
+                    + _h.escape("\n".join(out)) + "</pre>", mimetype="text/html")
+
+
 @app.route("/admin/loss-analysis")
 def loss_analysis():
     """Reverse-engineer losses: where is the model actually leaking?
