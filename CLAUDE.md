@@ -22,6 +22,9 @@ Part of the 08/01 9-item list (DASHBOARD scope). Shipped:
   `_TEAM_LOGOS` name→MLBAM-id map (static, ids stable) → `mlbstatic.com/team-logos/
   <id>.svg`. Added to pick cards, TOSSUP cards, game cards, Best Bets, Daily Summary,
   Yesterday cards. Matches by nickname substring (white sox/red sox handled).
+  Plus `teamEmblem(p.team)` — large 74px logo of the PICKED team in the pick
+  card's empty top-right corner (`.pick-team-emblem`, absolute, opacity .9).
+  Skipped on TOTAL picks (no single team) and TOSSUP cards (two-team layout).
 - **Best Bets disclaimer (#2, NOT a bug):** behavior is correct (re-ranks off live
   40-min Pinnacle pulls as EV changes). Added `.bb-note` explaining it tracks the
   closing market and locks at first pitch. Did NOT change the logic.

@@ -1389,6 +1389,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .tb-TOSSUP{background:rgba(127,119,221,.12);color:#a09ae0;border:1px solid rgba(127,119,221,.3)}
 
 .pick-label{font-size:1.08rem;font-weight:700;color:var(--text);margin-bottom:4px}
+.pick-team-emblem{position:absolute;top:46px;right:14px;width:74px;height:74px;object-fit:contain;opacity:.9;pointer-events:none;z-index:0;filter:drop-shadow(0 2px 5px rgba(0,0,0,.45))}
 .pick-game{font-size:.78rem;color:var(--sub);margin-bottom:12px}
 
 .conf-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
@@ -2357,6 +2358,11 @@ function teamLogo(name, size){
   const s=size||18;
   return `<img src="${u}" alt="" loading="lazy" style="width:${s}px;height:${s}px;vertical-align:middle;margin-right:3px;object-fit:contain" onerror="this.style.display='none'">`;
 }
+// Large emblem of the PICKED team, anchored in the card's empty top-right corner.
+function teamEmblem(name){
+  const u=teamLogoUrl(name); if(!u) return "";
+  return `<img class="pick-team-emblem" src="${u}" alt="" loading="lazy" onerror="this.style.display='none'">`;
+}
 
 function renderBestBets(){
   const box = document.getElementById("bestBets");
@@ -2827,6 +2833,7 @@ function renderPicks(){
     const _legIdx = pickData.length - 1;
     _tg.innerHTML += `
       <div class="pick-card tier-${p.tier}${_isFinal(_findScore(p))?' pick-done':''}${_isHighConf(p)?' pick-highconf':''}" data-type="${p.type}" data-tier="${p.tier}" data-highconf="${_isHighConf(p)?'1':'0'}">
+        ${teamEmblem(p.team)}
         <div class="pick-top">
           <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
           ${_isHighConf(p)?`<span class="hc-badge" title="${_highConfTitle(p)}">🔥 HIGH CONFIDENCE</span>`:""}
