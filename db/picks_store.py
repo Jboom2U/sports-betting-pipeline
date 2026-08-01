@@ -227,7 +227,22 @@ def get_graded_detail(pick_date: str) -> list:
             )
             cols = [d[0] for d in cur.description]
             for row in cur.fetchall():
-                rows.append(dict(zip(cols, row)))
+                d = dict(zip(cols, row))
+                # Coerce Postgres numerics to JSON-safe types. conf comes back as a
+                # Decimal, which json.dumps cannot serialize — left raw it throws and
+                # takes the ENTIRE dashboard render down with it.
+                if d.get("conf") is not None:
+                    try:
+                        d["conf"] = float(d["conf"])
+                    except Exception:
+                        d["conf"] = 0
+                for _k in ("away_final", "home_final"):
+                    if d.get(_k) is not None:
+                        try:
+                            d[_k] = int(d[_k])
+                        except Exception:
+                            d[_k] = None
+                rows.append(d)
         except Exception as e:
             log.warning(f"get_graded_detail failed: {e}")
     return rows

@@ -1,5 +1,27 @@
 # Statalizers — Project Context for Claude
 
+## ⚠️ CRITICAL FIX 2026-08-01 — Decimal broke the WHOLE dashboard render
+
+**Symptom:** statalizers.com went to a stripped, unstyled list (picks present but no
+nav/Best Bets/badges/value, 0×0 viewport, NO client JS errors). The `/ask` bot and
+`/admin/analysis` still worked. Classic server-side render failure.
+
+**Cause:** `get_graded_detail` (added same day for the Yesterday tab) returns the
+`conf` column straight from Postgres as a **Decimal**. `run_picks_html.py:5228`
+did `json.dumps(yesterday_data)` with no `default=`, so once grading populated a
+recent day and `graded_picks` carried a Decimal, `json.dumps` raised
+`Object of type Decimal is not JSON serializable` and the ENTIRE dashboard render
+threw. It broke with NO new deploy — the DATA changed (grading ran) and tripped a
+latent bug. This is why it "worked, then broke."
+
+**Fix (two layers):** (1) `get_graded_detail` now coerces `conf`→float and
+`away_final/home_final`→int at the source; (2) the yesterday serialize is now
+`json.dumps(yesterday_data, default=str)` so no stray Decimal/date/NaN from the DB
+can ever take the whole page down again. **LESSON: any json.dumps of raw DB rows
+must use default=str.** Verified the Decimal repro fails raw and passes both ways.
+
+---
+
 ## Fixed/Added 2026-08-01 — Yesterday detail, team logos, loss tool, diagnostics
 
 Part of the 08/01 9-item list (DASHBOARD scope). Shipped:

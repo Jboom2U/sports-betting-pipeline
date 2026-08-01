@@ -5225,7 +5225,9 @@ def main(date=None, no_open=False):
                 yesterday_data["props_yesterday"] = {"wins": _pw, "losses": _pl, "top": _top}
     except Exception as _pe:
         log.debug(f"Yesterday props query failed: {_pe}")
-    yesterday_json = json.dumps(yesterday_data)
+    # default=str so a stray Decimal/date from the DB can never break the whole
+    # dashboard render again (it silently degrades that one value to a string).
+    yesterday_json = json.dumps(yesterday_data, default=str)
 
     # Serialize projected lineups (loaded earlier for props; reuse here for JS injection)
     proj_lineups_json = json.dumps(proj_lineups_data)

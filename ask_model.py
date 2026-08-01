@@ -32,9 +32,9 @@ def _today_et() -> str:
     return datetime.now(ET).strftime("%Y-%m-%d")
 
 
-def _get_model():
+def _get_model(force: bool = False):
     now = time.time()
-    if _model_cache["model"] is None or now - _model_cache["loaded_at"] > _MODEL_TTL:
+    if force or _model_cache["model"] is None or now - _model_cache["loaded_at"] > _MODEL_TTL:
         from model.mlb_model import MLBModel
         m = MLBModel()
         m.load()
@@ -65,56 +65,83 @@ def build_board_pack(force: bool = False) -> str:
         from model.mlb_picks import generate_picks
 
         m = _get_model()
-        # Score EVERY game on today's slate — including finished, in-progress, and
-        # games the model passed on — so the bot can analyze ANY matchup the user
-        # asks about. score_today() drops finished/in-progress games, which is why
-        # the bot used to go silent on games with no pick.
-        sched, seen = [], set()
-        for g in m.schedule:
-            if g.get("game_date") != today:
-                continue
-            gid = g.get("game_id")
-            if gid in seen:
-                continue
-            seen.add(gid)
-            sched.append(g)
+
+        def _slate(model):
+            # Group the schedule by date and pick the ACTIVE slate: today if it has
+            # games, otherwise the next upcoming date (in the evening, that's
+            # tomorrow's card — same auto-switch the dashboard does).
+            dates = {}
+            for g in model.schedule:
+                d = g.get("game_date")
+                if d:
+                    dates.setdefault(d, []).append(g)
+            if not dates:
+                return None, []
+            future = sorted(d for d in dates if d >= today)
+            sd = today if today in dates else (future[0] if future else max(dates))
+            seen, games = set(), []
+            for g in dates.get(sd, []):
+                gid = g.get("game_id")
+                if gid in seen:
+                    continue
+                seen.add(gid)
+                games.append(g)
+            return sd, games
+
+        slate_date, sched = _slate(m)
+        if not sched:
+            # Stale/empty cached model — force ONE fresh load and retry before
+            # ever telling the user there's nothing here.
+            m = _get_model(force=True)
+            slate_date, sched = _slate(m)
+
         scored = []
         for g in sched:
             try:
                 scored.append(m.score_game(g))
             except Exception:
                 pass
+        has_games = bool(scored)
         picks = generate_picks(scored)
         by_game = defaultdict(list)
         for p in picks:
             by_game[p.get("game", "")].append(p)
 
-        out.append("=== GAMES (full raw data for YOUR analysis + the model's read) ===")
-        for g in scored:
-            gl = f"{g.get('away_team','')} @ {g.get('home_team','')}"
-            out.append(f"\n{gl}  ({g.get('venue','')})")
-            out.append(f"  Starters: {g.get('away_sp','TBD')} (ERA {g.get('away_sp_era_adj','?')}) "
-                       f"vs {g.get('home_sp','TBD')} (ERA {g.get('home_sp_era_adj','?')})")
-            out.append(f"  Bullpen ERA: away {g.get('away_bp_era','?')} / home {g.get('home_bp_era','?')}")
-            out.append(f"  Offense: away {g.get('away_rpg','?')} RPG (OPS {g.get('away_ops','?')}) / "
-                       f"home {g.get('home_rpg','?')} RPG (OPS {g.get('home_ops','?')})")
-            out.append(f"  Park runs factor {g.get('park_runs','?')} | "
-                       f"weather {g.get('weather_flag','')} {g.get('temp_f','?')}F {g.get('wind_label','')}")
-            out.append(f"  MODEL: win% away {g.get('away_wp')} / home {g.get('home_wp')} | "
-                       f"exp total {g.get('exp_total')} vs line {g.get('total_line')} | "
-                       f"sharp {g.get('sharp_side','')} {g.get('ml_signal','')}")
-            out.append(f"  MARKET: ML away {g.get('ml_away_odds')} / home {g.get('ml_home_odds')}")
-            ph = by_game.get(gl, [])
-            if ph:
-                for p in ph:
-                    v = p.get("value", {}) or {}
-                    out.append(f"  MODEL PICK {p.get('type')}: {p.get('label')} | conf "
-                               f"{p.get('conf',0):.0%} | tier {p.get('tier')} | value {v.get('tag','')} "
-                               f"| EV {_fmt_ev(v)} | model {p.get('conf',0):.0%} vs market "
-                               f"{'' if v.get('market_prob') is None else round(v['market_prob']*100)}%")
-            else:
-                out.append("  MODEL PICK: none — the model passed here (no qualifying edge or TBD "
-                           "starters). Give YOUR OWN read from the data above.")
+        if slate_date and slate_date != today:
+            out.append(f"(Today's games are finished — showing the next slate: {slate_date}.)")
+        if not has_games:
+            out.append("=== GAMES ===")
+            out.append("(The board has no games loaded this second — it is still refreshing. "
+                       "Tell the user the board is loading and to ask again in a few seconds. "
+                       "Do NOT say they didn't provide games or ask them to paste a slate — this "
+                       "is an MLB board and the games are always supplied here once loaded.)")
+        else:
+            out.append(f"=== GAMES on {slate_date} (full raw data for YOUR analysis + the model's read) ===")
+            for g in scored:
+                gl = f"{g.get('away_team','')} @ {g.get('home_team','')}"
+                out.append(f"\n{gl}  ({g.get('venue','')})")
+                out.append(f"  Starters: {g.get('away_sp','TBD')} (ERA {g.get('away_sp_era_adj','?')}) "
+                           f"vs {g.get('home_sp','TBD')} (ERA {g.get('home_sp_era_adj','?')})")
+                out.append(f"  Bullpen ERA: away {g.get('away_bp_era','?')} / home {g.get('home_bp_era','?')}")
+                out.append(f"  Offense: away {g.get('away_rpg','?')} RPG (OPS {g.get('away_ops','?')}) / "
+                           f"home {g.get('home_rpg','?')} RPG (OPS {g.get('home_ops','?')})")
+                out.append(f"  Park runs factor {g.get('park_runs','?')} | "
+                           f"weather {g.get('weather_flag','')} {g.get('temp_f','?')}F {g.get('wind_label','')}")
+                out.append(f"  MODEL: win% away {g.get('away_wp')} / home {g.get('home_wp')} | "
+                           f"exp total {g.get('exp_total')} vs line {g.get('total_line')} | "
+                           f"sharp {g.get('sharp_side','')} {g.get('ml_signal','')}")
+                out.append(f"  MARKET: ML away {g.get('ml_away_odds')} / home {g.get('ml_home_odds')}")
+                ph = by_game.get(gl, [])
+                if ph:
+                    for p in ph:
+                        v = p.get("value", {}) or {}
+                        out.append(f"  MODEL PICK {p.get('type')}: {p.get('label')} | conf "
+                                   f"{p.get('conf',0):.0%} | tier {p.get('tier')} | value {v.get('tag','')} "
+                                   f"| EV {_fmt_ev(v)} | model {p.get('conf',0):.0%} vs market "
+                                   f"{'' if v.get('market_prob') is None else round(v['market_prob']*100)}%")
+                else:
+                    out.append("  MODEL PICK: none — the model passed here (no qualifying edge or TBD "
+                               "starters). Give YOUR OWN read from the data above.")
     except Exception as e:
         out.append(f"[board scoring failed: {e}]")
 
