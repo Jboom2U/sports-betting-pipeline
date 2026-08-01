@@ -1,5 +1,41 @@
 # Statalizers — Project Context for Claude
 
+## Fixed/Added 2026-08-01 — Yesterday detail, team logos, loss tool, diagnostics
+
+Part of the 08/01 9-item list (DASHBOARD scope). Shipped:
+- **Sharp vs Model empty (#7):** `get_sharp_vs_model` (db/picks_store.py) WHERE was
+  `ml_signal='STEAM' AND sharp_side<>p.team` (contradictions only). Broadened to
+  `ml_signal IN ('STEAM','DRIFT') AND sharp_side IS NOT NULL AND <>''` so the
+  "line movement" section actually populates. Still needs scored_games to carry
+  movement for graded days.
+- **`/admin/props-diag` (#1 diagnostic):** scores today's props (save side) + counts
+  `player_prop_history` per date graded/ungraded (grade side). Pinpoints whether
+  props 0-0 is a SAVE failure (no rows) or GRADE failure (rows, no result). Run it
+  and read before touching prop code. Linked in /admin Diagnostics.
+- **Yesterday tab = Daily Summary detail (#5):** new `get_graded_detail(date)` in
+  picks_store.py (LEFT JOIN scored_games for ml_signal/sharp_side + market_signal).
+  Attached as `graded_picks` in BOTH yesterday load paths (`_build_yesterday_from_db`
+  + JSON path in `load_yesterday_analysis`). `renderYesterday()` now leads with
+  per-pick graded cards (result badge, score, conf, tier, market signal, sharp
+  agree/fade) above the tier/type tables.
+- **Team logos on cards (#6):** JS `teamLogo(name,size)` helper +
+  `_TEAM_LOGOS` name→MLBAM-id map (static, ids stable) → `mlbstatic.com/team-logos/
+  <id>.svg`. Added to pick cards, TOSSUP cards, game cards, Best Bets, Daily Summary,
+  Yesterday cards. Matches by nickname substring (white sox/red sox handled).
+- **Best Bets disclaimer (#2, NOT a bug):** behavior is correct (re-ranks off live
+  40-min Pinnacle pulls as EV changes). Added `.bb-note` explaining it tracks the
+  closing market and locks at first pitch. Did NOT change the logic.
+- **Loss analysis tool (#8):** `/admin/loss-analysis?days=N` — reverse-engineers
+  graded losses by bet type / tier / confidence band / market signal + sharp
+  divergence, worst high-conf beats, plain-English leak read. Post-fix floored at
+  2026-07-25 (never pools pre-fix). Linked in /admin Analysis section.
+
+**Still open from the 9-item list:** #1 root fix (pending props-diag output), #3
+HRR/batter-prop real lines, #4 player props in thematic parlays. #9 (ERAs this-year)
+CONFIRMED already correct: `get_pitcher` uses `sorted(keys)[-1]` = single latest season.
+
+---
+
 ## 📍 Which System Am I In? — Session Scope Map
 
 This folder holds **three related but separate systems**. Confirm which one the session is

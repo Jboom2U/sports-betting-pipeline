@@ -198,6 +198,41 @@ def get_picks(pick_date: str) -> list:
     return rows
 
 
+def get_graded_detail(pick_date: str) -> list:
+    """
+    Per-pick graded detail for one date, joined with scored_games for sharp/signal.
+    Used by the Yesterday tab to render full pick cards (result, score, sharp) —
+    the same detail level as the Daily Summary, but for a completed prior day.
+    """
+    rows = []
+    with db_conn() as conn:
+        if conn is None:
+            return []
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT p.game, p.pick_type, p.label, p.team, p.conf, p.tier,
+                       p.actual_result, p.away_final, p.home_final,
+                       p.market_signal, sg.ml_signal, sg.sharp_side
+                FROM picks p
+                LEFT JOIN scored_games sg
+                  ON sg.score_date = p.pick_date
+                 AND sg.game_id    = p.game_id
+                WHERE p.pick_date = %s
+                  AND p.actual_result IN ('WIN', 'LOSS', 'PUSH')
+                ORDER BY p.conf DESC
+                """,
+                (pick_date,)
+            )
+            cols = [d[0] for d in cur.description]
+            for row in cur.fetchall():
+                rows.append(dict(zip(cols, row)))
+        except Exception as e:
+            log.warning(f"get_graded_detail failed: {e}")
+    return rows
+
+
 def get_pending_picks(max_age_days: int = 7) -> list:
     """
     Return picks with actual_result = 'PENDING' from the last max_age_days days.
@@ -628,10 +663,9 @@ def get_sharp_vs_model(days: int = 3) -> list:
                   ON sg.score_date = p.pick_date
                  AND sg.game_id    = p.game_id
                 WHERE p.pick_type = 'ML'
-                  AND sg.ml_signal = 'STEAM'
+                  AND sg.ml_signal IN ('STEAM', 'DRIFT')
                   AND sg.sharp_side IS NOT NULL
                   AND sg.sharp_side <> ''
-                  AND sg.sharp_side <> p.team
                   AND p.pick_date >= %s
                   AND p.actual_result IN ('WIN', 'LOSS', 'PUSH')
                 ORDER BY p.pick_date DESC

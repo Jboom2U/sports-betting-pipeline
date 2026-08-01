@@ -908,8 +908,13 @@ def _build_yesterday_from_db(date: str) -> dict:
         }
         findings = [f"Overall: {wins}-{losses} ({wr*100:.1f}% WR) via DB fallback" if wr else f"Overall: {wins}-{losses} via DB fallback"]
         log.info(f"Yesterday panel: built from DB for {check_date} ({wins}W-{losses}L)")
+        try:
+            from db.picks_store import get_graded_detail
+            graded_detail = get_graded_detail(check_date)
+        except Exception:
+            graded_detail = []
         return {"date": check_date, "metrics": {"overall": overall, "by_tier": {}, "by_type": {}},
-                "findings": findings, "recommendations": [], "graded_picks": []}
+                "findings": findings, "recommendations": [], "graded_picks": graded_detail}
     except Exception as _e:
         log.debug(f"DB yesterday fallback failed: {_e}")
         return {}
@@ -934,6 +939,15 @@ def load_yesterday_analysis(date: str) -> dict:
                 # Verify it has real graded picks (not empty)
                 if data.get("metrics") and data["metrics"].get("overall", {}).get("total", 0) > 0:
                     log.info(f"Yesterday's analysis loaded: {path}")
+                    data.setdefault("date", check)
+                    # Always overlay per-pick graded detail from the DB so the
+                    # Yesterday tab can render full cards (JSON only carries metrics).
+                    if not data.get("graded_picks"):
+                        try:
+                            from db.picks_store import get_graded_detail
+                            data["graded_picks"] = get_graded_detail(data.get("date", check))
+                        except Exception:
+                            data["graded_picks"] = []
                     return data
             except Exception:
                 pass
@@ -1309,6 +1323,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .bb-head{font-size:1.02rem;font-weight:800;color:var(--gold);margin-bottom:10px}
 .bb-sub{font-size:.68rem;font-weight:500;color:var(--sub);margin-left:6px;letter-spacing:.02em}
 .bb-empty{font-size:.82rem;color:var(--sub);line-height:1.5}
+.bb-note{font-size:.7rem;color:var(--sub);line-height:1.45;margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
 .bb-row{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--border)}
 .bb-row:first-of-type{border-top:none}
 .bb-main{display:flex;align-items:center;gap:10px}
@@ -2321,6 +2336,28 @@ function bestBetEval(p){
   return { ev, trueP, gapPts };
 }
 
+// ── Team logo helper (MLBAM stable team ids) ─────────────────────────────────
+const _TEAM_LOGOS = [
+  ["diamondbacks",109],["d-backs",109],["braves",144],["orioles",110],
+  ["red sox",111],["white sox",145],["cubs",112],["reds",113],
+  ["guardians",114],["rockies",115],["tigers",116],["astros",117],
+  ["royals",118],["angels",108],["dodgers",119],["marlins",146],
+  ["brewers",158],["twins",142],["mets",121],["yankees",147],
+  ["athletics",133],["phillies",143],["pirates",134],["padres",135],
+  ["giants",137],["mariners",136],["cardinals",138],["rays",139],
+  ["rangers",140],["blue jays",141],["nationals",120]
+];
+function teamLogoUrl(name){
+  const n=(name||"").toLowerCase();
+  for(const [k,id] of _TEAM_LOGOS){ if(n.includes(k)) return `https://www.mlbstatic.com/team-logos/${id}.svg`; }
+  return "";
+}
+function teamLogo(name, size){
+  const u=teamLogoUrl(name); if(!u) return "";
+  const s=size||18;
+  return `<img src="${u}" alt="" loading="lazy" style="width:${s}px;height:${s}px;vertical-align:middle;margin-right:3px;object-fit:contain" onerror="this.style.display='none'">`;
+}
+
 function renderBestBets(){
   const box = document.getElementById("bestBets");
   if(!box) return;
@@ -2345,13 +2382,14 @@ function renderBestBets(){
       <div class="bb-meta">
         <span class="bb-ev">+${(e.ev*100).toFixed(1)}% EV</span>
         <span class="bb-win">${Math.round(e.trueP*100)}% fair win</span>
-        <span class="bb-game">${p.game}</span>
+        <span class="bb-game">${teamLogo(p.away,14)}${teamLogo(p.home,14)}${p.game}</span>
       </div>
     </div>`;
   }).join("");
   box.innerHTML = `<div class="bb-wrap">
     <div class="bb-head">⭐ Best Bets <span class="bb-sub">ranked by honest value · ML · no worse than ${BEST_BET_PRICE_FLOOR} · overconfidence stripped out</span></div>
     ${rows}
+    <div class="bb-note">ℹ️ This list re-ranks through the day. Best Bets is scored off live Pinnacle prices, which we re-pull every ~40 min until first pitch. When a line moves, a pick's value (EV) changes, so the order shifts and picks can drop on or off. That's the list tracking the real closing market, not a bug — it locks once games start.</div>
   </div>`;
 }
 
@@ -2756,7 +2794,7 @@ function renderPicks(){
             <span class="pick-type-badge badge-${p.type}">${typeLabel}</span>
             <span class="tier-badge tb-TOSSUP">≈ TOSS UP</span>
           </div>
-          <div class="pick-label">${p.game}</div>
+          <div class="pick-label">${teamLogo(p.away,16)}${teamLogo(p.home,16)}${p.game}</div>
           <div class="pick-game">Model has no clear edge — shown for coverage</div>
           <div class="tossup-split">
             <div class="tossup-side favored">
@@ -2797,7 +2835,7 @@ function renderPicks(){
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}${p.tier==="LEAN"?" — thin edge":""}</span>
         </div>
         <div class="pick-label">${p.label}</div>
-        <div class="pick-game">${p.game}</div>
+        <div class="pick-game">${teamLogo(p.away,16)}${teamLogo(p.home,16)}${p.game}</div>
         ${(()=>{ const st=_statusFor(p.away, p.home); return st ? `<div class="gs-banner">${st.badge} <span>This game is ${st.detail.toLowerCase()} — the bet may not stand.</span></div>` : ""; })()}
         <div class="conf-row">
           <div class="conf-bar-wrap">
@@ -3174,8 +3212,66 @@ function renderYesterday(){
       <div style="font-size:.78rem;color:var(--sub)">${r.action}</div>
     </div>`).join("");
 
+  // ── Per-pick graded cards (Daily-Summary-style detail for the completed day) ──
+  const TIER_COLOR_Y = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a",TOSSUP:"#a09ae0"};
+  const gp = d.graded_picks || [];
+  let gradedCardsHtml = "";
+  if(gp.length){
+    let gw=0, gl=0, gpsh=0;
+    const cards = gp.map(p => {
+      const res = (p.actual_result||"").toUpperCase();
+      if(res==="WIN") gw++; else if(res==="LOSS") gl++; else if(res==="PUSH") gpsh++;
+      const border = res==="WIN"?"#3fb950":res==="LOSS"?"#f85149":"#8b949e";
+      const badgeBg = res==="WIN"?"rgba(63,185,80,.15)":res==="LOSS"?"rgba(248,81,73,.15)":"rgba(139,148,158,.1)";
+      const badgeCol= res==="WIN"?"#3fb950":res==="LOSS"?"#f85149":"#8b949e";
+      const badgeTxt= res==="WIN"?"WIN ✓":res==="LOSS"?"LOSS ✗":"PUSH";
+      const tc = TIER_COLOR_Y[p.tier]||"#8b949e";
+      let conf = +p.conf||0; if(conf<=1) conf*=100;
+      const typeLbl = p.pick_type==="TOTAL"?"Total":p.pick_type==="ML"?"Moneyline":p.pick_type==="RL"?"Run Line":(p.pick_type||"");
+      const sc = (p.away_final!=null && p.home_final!=null) ? `${p.away_final} – ${p.home_final}` : "";
+      // Market signal + sharp context
+      const ms = (p.market_signal||"").toUpperCase();
+      const msBadge = ms==="CONFIRM" ? `<span style="background:rgba(63,185,80,.12);color:#3fb950;font-size:.64rem;font-weight:700;padding:2px 7px;border-radius:4px">CONFIRM</span>`
+                    : ms==="DIVERGE" ? `<span style="background:rgba(255,167,38,.12);color:#ffa726;font-size:.64rem;font-weight:700;padding:2px 7px;border-radius:4px">DIVERGE</span>`
+                    : "";
+      let sharpTxt = "";
+      if(p.sharp_side){
+        const sig = (p.ml_signal==="STEAM"||p.ml_signal==="DRIFT") ? p.ml_signal : "MOVE";
+        const sn  = (p.sharp_side||"").split(" ").slice(-1)[0];
+        const pn  = (p.team||"").split(" ").slice(-1)[0].toLowerCase();
+        const agrees = sn.toLowerCase()===pn;
+        sharpTxt = `<span style="font-size:.66rem;color:${agrees?"#3fb950":"#ffa726"}">💰 ${sig} → ${sn}${agrees?" ✓ agrees":" ⚡ vs pick"}</span>`;
+      }
+      // away/home for logos come from the "game" string ("Away @ Home")
+      const parts = (p.game||"").split(" @ ");
+      const aLogo = parts[0]?teamLogo(parts[0],14):"";
+      const hLogo = parts[1]?teamLogo(parts[1],14):"";
+      return `
+      <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid ${border};border-radius:10px;padding:11px 15px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="flex:1;min-width:180px">
+          <div style="font-size:.72rem;color:#8b949e;margin-bottom:3px">${aLogo}${hLogo}${p.game||""}</div>
+          <div style="font-size:.9rem;font-weight:700"><span style="color:${tc}">${p.tier||""}</span> <span style="color:#8b949e;font-weight:500;font-size:.72rem">${typeLbl}</span> ${p.label||""}</div>
+          <div style="font-size:.66rem;color:#8b949e;margin-top:3px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">${conf.toFixed(0)}% conf ${msBadge} ${sharpTxt}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          ${sc?`<div style="font-size:.75rem;color:#e6edf3;font-weight:600">${sc}</div>`:""}
+          <span style="background:${badgeBg};color:${badgeCol};font-size:.76rem;font-weight:700;padding:3px 12px;border-radius:6px">${badgeTxt}</span>
+        </div>
+      </div>`;
+    }).join("");
+    const gwr = (gw+gl)>0 ? Math.round(gw/(gw+gl)*100) : 0;
+    gradedCardsHtml = `
+      <div style="display:flex;align-items:center;gap:12px;margin:4px 0 12px">
+        <span style="font-size:1.2rem;font-weight:800;color:${gw>gl?"#3fb950":gw<gl?"#f85149":"#e6edf3"}">${gw}–${gl}${gpsh?` (${gpsh} push)`:""}</span>
+        <span style="font-size:.8rem;color:#8b949e">${(gw+gl)>0?gwr+"% win rate":""} · every graded pick</span>
+      </div>
+      <div style="margin-bottom:22px">${cards}</div>`;
+  }
+
   document.getElementById("yesterdayFull").innerHTML = `
     <div class="section-title">📈 Yesterday's Performance — ${d.date}</div>
+    ${gradedCardsHtml}
+    ${gp.length ? `<div class="section-title" style="font-size:.78rem">Breakdown</div>` : ""}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">
       <div>
         <div class="section-title" style="font-size:.78rem">By Tier</div>
@@ -3355,7 +3451,7 @@ function renderGames(){
     grid.innerHTML += `
       <div class="game-card">
         <div class="game-header">
-          <span class="matchup">${g.away} @ ${g.home}</span>
+          <span class="matchup">${teamLogo(g.away,18)}${g.away} @ ${teamLogo(g.home,18)}${g.home}</span>
           <span class="game-time">${g.time}</span>
         </div>
         <div class="lineup-status">
@@ -4679,7 +4775,7 @@ function renderDailySummary(){
     html += `
     <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid ${borderColor};border-radius:10px;padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <div style="flex:1;min-width:160px">
-        <div style="font-size:.72rem;color:#8b949e;margin-bottom:3px">${p.away||""} @ ${p.home||""}</div>
+        <div style="font-size:.72rem;color:#8b949e;margin-bottom:3px">${teamLogo(p.away,14)}${p.away||""} @ ${teamLogo(p.home,14)}${p.home||""}</div>
         <div style="font-size:.9rem;font-weight:700"><span style="color:${tc}">${p.tier}</span> ${p.label}</div>
         <div style="font-size:.68rem;color:#8b949e;margin-top:3px">${p.conf}% conf${p.kelly_pct!==undefined?" &nbsp;|&nbsp; Kelly: "+p.kelly_pct+"%":""}</div>
       </div>

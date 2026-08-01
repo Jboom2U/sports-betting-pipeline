@@ -810,6 +810,217 @@ def admin_refresh_gamelogs():
         mimetype="text/html")
 
 
+@app.route("/admin/props-diag")
+def props_diag():
+    """Diagnose props 0-0: shows how many props score today (save side) and how
+    many are saved+graded per date in player_prop_history (grade side)."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/props-diag")
+    import html as _h, traceback as _tb
+    from datetime import timedelta as _td
+    out = []
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    try:
+        from scrapers.mlb_pinnacle_scraper import save_strikeout_lines, load_strikeout_lines
+        try:
+            save_strikeout_lines(today)
+        except Exception:
+            pass
+        klines = load_strikeout_lines(today)
+        out.append(f"Pinnacle K lines file for {today}: {len(klines)} pitchers")
+        from model.mlb_props_model import score_all_props
+        props = score_all_props(today)
+        nonproj = [p for p in props if not p.get("projected")]
+        kp = [p for p in props if p.get("prop_type") == "K"]
+        out.append(f"score_all_props: {len(props)} total | {len(nonproj)} non-projected (saveable) | {len(kp)} K props")
+    except Exception:
+        out.append("score ERROR:\n" + _tb.format_exc())
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cutoff = (datetime.now(ET) - _td(days=6)).strftime("%Y-%m-%d")
+            cur.execute("SELECT game_date, COUNT(*), COUNT(*) FILTER (WHERE result IS NOT NULL) "
+                        "FROM player_prop_history WHERE game_date >= %s GROUP BY game_date ORDER BY game_date DESC",
+                        (cutoff,))
+            out.append("\nplayer_prop_history (game_date: saved / graded):")
+            rows = cur.fetchall()
+            if not rows:
+                out.append("  (no rows in last 6 days — props are NOT being SAVED)")
+            for r in rows:
+                out.append(f"  {r[0]}: {r[1]} saved, {r[2]} graded")
+    except Exception:
+        out.append("count ERROR:\n" + _tb.format_exc())
+    return Response("<pre style='color:#c9d1d9;background:#0d1117;padding:20px;white-space:pre-wrap'>"
+                    + _h.escape("\n".join(str(x) for x in out)) + "</pre>", mimetype="text/html")
+
+
+@app.route("/admin/loss-analysis")
+def loss_analysis():
+    """Reverse-engineer losses: where is the model actually leaking?
+    Breaks graded losses down by bet type, tier, confidence band, market signal,
+    and sharp divergence, plus the worst high-confidence beats. Post-fix window only
+    (>= 2026-07-25) so contaminated pre-fix picks never skew the read.
+    ?days=N to widen the window (still floored at the boundary)."""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/loss-analysis")
+    import html as _h, traceback as _tb
+    from datetime import timedelta as _td
+    POSTFIX = "2026-07-25"
+    try:
+        days = int(request.args.get("days", 21))
+    except Exception:
+        days = 21
+    start = (datetime.now(ET) - _td(days=days)).strftime("%Y-%m-%d")
+    if start < POSTFIX:
+        start = POSTFIX
+
+    def _c(v):
+        try:
+            c = float(v or 0)
+        except Exception:
+            c = 0.0
+        return c * 100 if c <= 1.5 else c
+
+    def _band(c):
+        if c >= 80: return "80%+"
+        if c >= 70: return "70-80%"
+        if c >= 60: return "60-70%"
+        return "<60%"
+
+    rows = []
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT p.pick_date, p.game, p.pick_type, p.label, p.team, p.conf,
+                       p.tier, p.actual_result, p.market_signal,
+                       p.away_final, p.home_final, sg.ml_signal, sg.sharp_side
+                FROM picks p
+                LEFT JOIN scored_games sg
+                  ON sg.score_date = p.pick_date AND sg.game_id = p.game_id
+                WHERE p.pick_date >= %s
+                  AND p.actual_result IN ('WIN','LOSS','PUSH')
+                ORDER BY p.pick_date DESC
+                """,
+                (start,))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    except Exception:
+        return Response("<pre style='color:#f85149;background:#0d1117;padding:20px'>"
+                        + _h.escape(_tb.format_exc()) + "</pre>", mimetype="text/html")
+
+    graded = [r for r in rows if (r["actual_result"] or "").upper() in ("WIN", "LOSS")]
+    W = sum(1 for r in graded if r["actual_result"].upper() == "WIN")
+    L = sum(1 for r in graded if r["actual_result"].upper() == "LOSS")
+    n = W + L
+    wr = (W / n * 100) if n else 0
+
+    def _grp(keyfn):
+        agg = {}
+        for r in graded:
+            k = keyfn(r)
+            if k is None:
+                continue
+            a = agg.setdefault(k, [0, 0])
+            if r["actual_result"].upper() == "WIN":
+                a[0] += 1
+            else:
+                a[1] += 1
+        out = []
+        for k, (w, l) in agg.items():
+            tot = w + l
+            out.append((k, w, l, tot, (l / tot * 100) if tot else 0))
+        return sorted(out, key=lambda x: x[4], reverse=True)
+
+    by_type = _grp(lambda r: r["pick_type"] or "?")
+    by_tier = _grp(lambda r: r["tier"] or "?")
+    by_band = _grp(lambda r: _band(_c(r["conf"])))
+    by_sig = _grp(lambda r: (r["market_signal"] or "NONE").upper())
+
+    # Sharp divergence among losses: did the model's ML/RL loss go against sharp money?
+    sharp_div_loss = sharp_agree_loss = 0
+    for r in graded:
+        if r["actual_result"].upper() != "LOSS":
+            continue
+        if (r["pick_type"] not in ("ML", "RL")) or not r.get("sharp_side"):
+            continue
+        pn = (r["team"] or "").split(" ")[-1].lower()
+        sn = (r["sharp_side"] or "").split(" ")[-1].lower()
+        if pn and sn:
+            if pn == sn:
+                sharp_agree_loss += 1
+            else:
+                sharp_div_loss += 1
+
+    # Worst beats: highest-confidence losses
+    losses = [r for r in graded if r["actual_result"].upper() == "LOSS"]
+    losses.sort(key=lambda r: _c(r["conf"]), reverse=True)
+    worst = losses[:20]
+
+    # Plain-English leak read
+    leaks = []
+    for label, data in (("bet type", by_type), ("tier", by_tier), ("confidence band", by_band)):
+        worst_grp = [g for g in data if g[3] >= 5]
+        if worst_grp and worst_grp[0][4] >= 55:
+            k, w, l, tot, lr = worst_grp[0]
+            leaks.append(f"Biggest {label} leak: <b>{_h.escape(str(k))}</b> is {w}-{l} ({lr:.0f}% losses, n={tot}).")
+    if n and wr < 52.4:
+        leaks.append(f"Overall {W}-{L} ({wr:.1f}%) is below the {'-110'} break-even of 52.4% — the book edge is still winning over this window.")
+    elif n:
+        leaks.append(f"Overall {W}-{L} ({wr:.1f}%) is above the 52.4% break-even for this window.")
+    if sharp_div_loss + sharp_agree_loss >= 5:
+        leaks.append(f"Of ML/RL losses with sharp data, {sharp_div_loss} came fading sharp money vs {sharp_agree_loss} agreeing — "
+                     + ("fading sharps is a leak." if sharp_div_loss > sharp_agree_loss else "not a sharp-divergence problem."))
+
+    # ── Render ──
+    css = ("body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,Segoe UI,sans-serif;margin:0;padding:26px}"
+           "h1{font-size:1.3rem;margin:0 0 4px}h2{font-size:.9rem;color:#8b949e;text-transform:uppercase;letter-spacing:.05em;margin:26px 0 10px}"
+           "table{border-collapse:collapse;width:100%;max-width:760px;margin-bottom:8px}"
+           "th,td{padding:7px 12px;text-align:left;border-bottom:1px solid #21262d;font-size:.82rem}"
+           "th{color:#8b949e;font-size:.68rem;text-transform:uppercase}"
+           ".bad{color:#f85149;font-weight:700}.good{color:#3fb950;font-weight:700}"
+           ".card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px 20px;max-width:760px;margin-bottom:10px}"
+           ".leak{background:#161b22;border-left:3px solid #ffa726;border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:.85rem;max-width:760px}"
+           "a{color:#58a6ff}")
+
+    def _tbl(title, data, kname):
+        h = [f"<h2>{title}</h2><table><tr><th>{kname}</th><th>W-L</th><th>Loss rate</th><th>n</th></tr>"]
+        for k, w, l, tot, lr in data:
+            cls = "bad" if lr >= 52 else "good"
+            h.append(f"<tr><td>{_h.escape(str(k))}</td><td>{w}-{l}</td>"
+                     f"<td class='{cls}'>{lr:.0f}%</td><td>{tot}</td></tr>")
+        h.append("</table>")
+        return "".join(h)
+
+    worst_rows = "".join(
+        f"<tr><td>{_h.escape(str(r['pick_date']))}</td><td>{_h.escape((r['game'] or '')[:34])}</td>"
+        f"<td>{_h.escape(str(r['pick_type'] or ''))}</td><td>{_h.escape((r['label'] or '')[:34])}</td>"
+        f"<td>{_c(r['conf']):.0f}%</td>"
+        f"<td>{('' if r['away_final'] is None else str(r['away_final'])+'-'+str(r['home_final']))}</td></tr>"
+        for r in worst)
+
+    leaks_html = "".join(f"<div class='leak'>{x}</div>" for x in leaks) or "<div class='leak'>Not enough graded data in this window to call a leak yet.</div>"
+
+    body = (f"<h1>🔍 Loss Analysis — where the model is leaking</h1>"
+            f"<div style='color:#8b949e;font-size:.82rem;margin-bottom:6px'>Window: {start} → today (post-fix only) · "
+            f"{n} graded picks · <a href='/admin/loss-analysis?days=45'>widen to 45d</a></div>"
+            f"<div class='card'><b style='font-size:1.1rem;' class='{'good' if wr>=52.4 else 'bad'}'>{W}-{L} ({wr:.1f}%)</b> "
+            f"<span style='color:#8b949e'>vs 52.4% break-even</span></div>"
+            f"<h2>What the losses are telling us</h2>{leaks_html}"
+            + _tbl("Loss rate by bet type", by_type, "Type")
+            + _tbl("Loss rate by tier", by_tier, "Tier")
+            + _tbl("Loss rate by confidence band", by_band, "Band")
+            + _tbl("Loss rate by market signal", by_sig, "Signal")
+            + f"<h2>Worst beats — highest-confidence losses</h2><table>"
+              f"<tr><th>Date</th><th>Game</th><th>Type</th><th>Pick</th><th>Conf</th><th>Final</th></tr>{worst_rows}</table>")
+
+    return Response(f"<html><head><meta charset='utf-8'><style>{css}</style></head><body>{body}</body></html>",
+                    mimetype="text/html")
+
+
 @app.route("/admin/gamelog-diag")
 def gamelog_diag():
     """Test the game-log pipeline end-to-end on ONE player + report where it breaks."""
@@ -1322,6 +1533,9 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
     <a class="card" href="/admin/signal-audit"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Signal audit</div>
       <div class="card-desc">Which model inputs actually vary across the slate</div></a>
+    <a class="card" href="/admin/loss-analysis"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">🔍 Loss analysis</div>
+      <div class="card-desc">Reverse-engineers losses: leak by type, tier, band, sharp</div></a>
     <a class="card" href="/analytics"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Analytics dashboard</div>
       <div class="card-desc">Natural-language DB queries over pick history</div></a>
@@ -1338,6 +1552,9 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
     <a class="card" href="/admin/pinnacle-k-test"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Pinnacle K-line test</div>
       <div class="card-desc">Live strikeout lines + prices parse check</div></a>
+    <a class="card" href="/admin/props-diag"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Props diagnostic</div>
+      <div class="card-desc">Props scored today vs saved/graded per date (0-0 debug)</div></a>
     <a class="card" href="/status"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Pipeline status</div>
       <div class="card-desc">Last run, DB, R2 health</div></a>
