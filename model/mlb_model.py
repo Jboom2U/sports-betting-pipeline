@@ -58,6 +58,11 @@ RECENT_WEIGHT     = 0.35
 SEASON_WEIGHT     = 0.65
 SPLIT_WEIGHT      = 0.30
 SEASON_ERA_WEIGHT = 0.70
+# A home/away split ERA/FIP more than this many runs off the season number is
+# almost always a tiny-sample blowup (e.g. one bad away start), not a real split.
+# Blending it in at 30% weight was distorting the DISPLAYED adjusted ERA — a 3.52
+# pitcher with a 17-ERA 1-start away split showed 7.77. Skip the split past this.
+SPLIT_MAX_DEV     = 3.0
 
 # Weather adjustment constants
 WIND_RUNS_PER_MPH = 0.04   # each 1 mph blowing OUT adds ~0.04 expected runs to total
@@ -438,10 +443,15 @@ class MLBModel:
         if split_row:
             era_sp  = sf(split_row.get("era"))
             fip_sp  = sf(split_row.get("fip"))
+            # Only blend the split when it's within a believable distance of the
+            # season number. A split >3 runs off is a small-sample artifact and
+            # would distort the adjusted ERA (the 3.52 -> 7.77 Tyler Phillips bug).
+            use_era_split = era_sp is not None and abs(era_sp - era_s) <= SPLIT_MAX_DEV
+            use_fip_split = fip_sp is not None and abs(fip_sp - fip_s) <= SPLIT_MAX_DEV
             era_adj = (SEASON_ERA_WEIGHT * era_s + SPLIT_WEIGHT * era_sp
-                       if era_sp is not None else era_s)
+                       if use_era_split else era_s)
             fip_adj = (SEASON_ERA_WEIGHT * fip_s + SPLIT_WEIGHT * fip_sp
-                       if fip_sp is not None else fip_s)
+                       if use_fip_split else fip_s)
         else:
             era_adj = era_s
             fip_adj = fip_s

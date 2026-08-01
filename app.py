@@ -868,6 +868,47 @@ def props_diag():
                     + _h.escape("\n".join(str(x) for x in out)) + "</pre>", mimetype="text/html")
 
 
+@app.route("/admin/pitcher-diag")
+def pitcher_diag():
+    """Dump a pitcher's stored ERA data so we can see WHERE a wrong ERA comes from:
+    the season stats master, a small-sample home/away split, or the adjusted blend.
+    Usage: /admin/pitcher-diag?name=Tyler Phillips"""
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/pitcher-diag")
+    import html as _h, traceback as _tb
+    name = (request.args.get("name") or "").strip()
+    out = []
+    try:
+        from model.mlb_model import MLBModel
+        m = MLBModel(); m.load()
+        if not name:
+            out.append("Pass ?name=Firstname Lastname (exact, as it appears in the data).")
+        else:
+            seasons = sorted((m.pitchers.get(name) or {}).keys())
+            out.append(f"Pitcher: {name}")
+            out.append(f"Seasons in stats master: {seasons or 'NONE — name not found / no match'}")
+            for s in seasons:
+                r = m.pitchers[name][s]
+                out.append(f"  season {s}: era={r.get('era')} fip={r.get('fip')} "
+                           f"whip={r.get('whip')} gs={r.get('games_started')}")
+            sp = m.pitcher_splits.get(name, {})
+            if not sp:
+                out.append("  (no home/away split rows)")
+            for s, buckets in sp.items():
+                for b, row in buckets.items():
+                    out.append(f"  SPLIT {s} {b}: era={row.get('era')} fip={row.get('fip')} "
+                               f"ip={row.get('ip') or row.get('innings_pitched') or '?'}")
+            out.append("  --- get_pitcher() result (era_adj is what the card shows) ---")
+            for is_home in (False, True):
+                gp = m.get_pitcher(name, is_home)
+                out.append(f"  is_home={is_home}: era={gp.get('era')} "
+                           f"era_adj={gp.get('era_adj')} split_used={gp.get('split_used')}")
+    except Exception:
+        out.append(_tb.format_exc())
+    return Response("<pre style='color:#c9d1d9;background:#0d1117;padding:20px;white-space:pre-wrap'>"
+                    + _h.escape("\n".join(str(x) for x in out)) + "</pre>", mimetype="text/html")
+
+
 @app.route("/admin/gemini-test")
 def gemini_test():
     """Confirm the RUNNING process actually sees GEMINI_API_KEY, and do a live ping.

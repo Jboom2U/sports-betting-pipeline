@@ -1,5 +1,24 @@
 # Statalizers — Project Context for Claude
 
+## Fixed 2026-08-01 — small-sample split inflated displayed ERA (3.52 → 7.77)
+
+**Symptom:** Tyler Phillips card showed ERA 7.77; his real 2026 ERA is 3.52 (and it
+showed 3.52 earlier in the day, before a re-scrape populated his away split).
+
+**Cause:** the card shows `era_adj` (`mlb_picks.py` narrative reads `away_sp_era_adj`),
+which `get_pitcher` blends `0.70*season_era + 0.30*split_era`. His AWAY split was a
+tiny-sample blowup (~17.7 ERA, likely one bad start). 0.70*3.52 + 0.30*17.7 = **7.77**,
+exactly the wrong number. The split had no sample guard.
+
+**Fix:** `SPLIT_MAX_DEV = 3.0` in mlb_model.py — `get_pitcher` now only blends the
+home/away split when it's within 3.0 runs of the season ERA/FIP; a split further off
+is treated as noise and the season number is used. Verified: 3.52+17.7 split → 3.52
+(split skipped); a real 4.10 away split still blends → 3.69. New `/admin/pitcher-diag
+?name=` dumps season rows + split rows + get_pitcher era_adj so a wrong ERA can be
+traced to season-data vs split vs blend in one look.
+
+---
+
 ## ⚠️ CRITICAL FIX 2026-08-01 — Decimal broke the WHOLE dashboard render
 
 **Symptom:** statalizers.com went to a stripped, unstyled list (picks present but no
