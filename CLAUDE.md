@@ -1,21 +1,29 @@
 # Statalizers — Project Context for Claude
 
-## Fixed 2026-08-01 — small-sample split inflated displayed ERA (3.52 → 7.77)
+## Fixed 2026-08-01 — probable starter scored on STALE season (wrong ERA 6.87→7.77)
 
-**Symptom:** Tyler Phillips card showed ERA 7.77; his real 2026 ERA is 3.52 (and it
-showed 3.52 earlier in the day, before a re-scrape populated his away split).
+**Symptom:** Tyler Phillips card showed ERA 7.77; his real 2026 ERA is 3.52.
 
-**Cause:** the card shows `era_adj` (`mlb_picks.py` narrative reads `away_sp_era_adj`),
-which `get_pitcher` blends `0.70*season_era + 0.30*split_era`. His AWAY split was a
-tiny-sample blowup (~17.7 ERA, likely one bad start). 0.70*3.52 + 0.30*17.7 = **7.77**,
-exactly the wrong number. The split had no sample guard.
+**REAL root cause (found via new `/admin/pitcher-diag?name=`):** his stats-master had
+**only 2024** (`['2024']`, era 6.87) — no 2025/2026. `mlb_pitcher_scraper.fetch_season_stats`
+skipped any pitcher with `gs < 3` ("skip relievers"), which also dropped probable
+starters with 1-2 starts this season (callups/spot starters). So `get_pitcher` took the
+latest season it HAD = 2024, and the card's `era_adj` = 0.70*6.87 + 0.30*9.87(2024 away
+split) = **7.77**. The season number itself was two years stale.
 
-**Fix:** `SPLIT_MAX_DEV = 3.0` in mlb_model.py — `get_pitcher` now only blends the
-home/away split when it's within 3.0 runs of the season ERA/FIP; a split further off
-is treated as noise and the season number is used. Verified: 3.52+17.7 split → 3.52
-(split skipped); a real 4.10 away split still blends → 3.69. New `/admin/pitcher-diag
-?name=` dumps season rows + split rows + get_pitcher era_adj so a wrong ERA can be
-traced to season-data vs split vs blend in one look.
+**Fix (two layers):**
+1. `mlb_pitcher_scraper.py`: `gs < 3` → `gs < 1` — keep spot starters/callups so a
+   probable starter isn't scored on a stale prior season. **Re-run the pitcher scrape
+   after deploy (`/admin/refresh-signals`, free) then check `/admin/pitcher-diag?name=
+   Tyler Phillips` — his 2026 line should appear.** Caveat: a pitcher making his literal
+   season debut (0 prior starts) still has no current-season row and will show his last
+   season until he logs a start.
+2. `mlb_model.py SPLIT_MAX_DEV = 3.0` — `get_pitcher` only blends the home/away split
+   when within 3.0 runs of the season ERA/FIP (a wilder split is a small-sample artifact).
+   Secondary defense so a noisy split can't distort era_adj even when season data is fine.
+
+`/admin/pitcher-diag?name=` dumps season rows + split rows + get_pitcher era_adj so a
+wrong ERA can be traced to stale-season vs noisy-split vs blend in one look.
 
 ---
 

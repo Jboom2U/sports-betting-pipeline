@@ -94,8 +94,12 @@ def fetch_season_stats(season: int) -> list:
             team   = split.get("team", {})
 
             gs = int(stat.get("gamesStarted") or 0)
-            if gs < 3:
-                continue   # skip relievers
+            if gs < 1:
+                continue   # skip pure relievers (0 starts), but KEEP spot starters
+                           # and callups. gs<3 filtered out probable starters with
+                           # only 1-2 starts this season, so the model fell back to
+                           # their stale prior season — the Tyler Phillips 2024-vs-2026
+                           # ERA bug (showed 6.87/blended 7.77 instead of 3.52).
 
             ip = safe_float(stat.get("inningsPitched"))
             hr = safe_float(stat.get("homeRuns"))
