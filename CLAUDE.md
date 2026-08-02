@@ -1,5 +1,20 @@
 # Statalizers — Project Context for Claude
 
+## Fixed 2026-08-01 — Yesterday tab showed all PUSH / 0-0
+
+The new per-pick Yesterday cards read `p.actual_result` / `p.pick_type` (the
+`get_graded_detail` DB schema). But `load_yesterday_analysis` loads the analysis JSON
+FIRST, and `save_analysis` (run_analysis.py:677) stores graded picks with DIFFERENT
+keys: `result` (not actual_result), `type` (not pick_type), `conf` 0-100 (not 0-1),
+and no team/score. Since the JSON already had a `graded_picks` key, the DB overlay was
+skipped, so every card read `actual_result`=undefined → PUSH default, record 0-0. Fix:
+(1) JS reads `actual_result||result` and `pick_type||type`; (2) `load_yesterday_analysis`
+now ALWAYS prefers `get_graded_detail` when the DB has rows (richer: score + sharp),
+JSON only as fallback. LESSON: the yesterday panel has TWO pick schemas (JSON vs DB) —
+any field the card reads must be handled for both.
+
+---
+
 ## Added 2026-08-01 — season stat line on player pages (/player/<id>)
 
 The Players section had per-game trend charts but no SEASON line (Justin's ask when

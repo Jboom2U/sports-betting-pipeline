@@ -940,14 +940,18 @@ def load_yesterday_analysis(date: str) -> dict:
                 if data.get("metrics") and data["metrics"].get("overall", {}).get("total", 0) > 0:
                     log.info(f"Yesterday's analysis loaded: {path}")
                     data.setdefault("date", check)
-                    # Always overlay per-pick graded detail from the DB so the
-                    # Yesterday tab can render full cards (JSON only carries metrics).
-                    if not data.get("graded_picks"):
-                        try:
-                            from db.picks_store import get_graded_detail
-                            data["graded_picks"] = get_graded_detail(data.get("date", check))
-                        except Exception:
-                            data["graded_picks"] = []
+                    # Prefer the DB detail (it carries result, final score, sharp_side
+                    # and market_signal). The analysis JSON's own graded_picks use a
+                    # thinner/older schema (result/type, conf 0-100, no score) — the JS
+                    # tolerates both, but the DB version renders the fuller card. Only
+                    # keep the JSON's list if the DB has nothing for that date.
+                    try:
+                        from db.picks_store import get_graded_detail
+                        _gd = get_graded_detail(data.get("date", check))
+                        if _gd:
+                            data["graded_picks"] = _gd
+                    except Exception:
+                        pass
                     return data
             except Exception:
                 pass
@@ -3226,7 +3230,9 @@ function renderYesterday(){
   if(gp.length){
     let gw=0, gl=0, gpsh=0;
     const cards = gp.map(p => {
-      const res = (p.actual_result||"").toUpperCase();
+      // Handle BOTH schemas: DB detail uses actual_result/pick_type; the analysis
+      // JSON uses result/type. Missing this made every card default to PUSH (0-0).
+      const res = (p.actual_result||p.result||"").toUpperCase();
       if(res==="WIN") gw++; else if(res==="LOSS") gl++; else if(res==="PUSH") gpsh++;
       const border = res==="WIN"?"#3fb950":res==="LOSS"?"#f85149":"#8b949e";
       const badgeBg = res==="WIN"?"rgba(63,185,80,.15)":res==="LOSS"?"rgba(248,81,73,.15)":"rgba(139,148,158,.1)";
@@ -3234,7 +3240,8 @@ function renderYesterday(){
       const badgeTxt= res==="WIN"?"WIN ✓":res==="LOSS"?"LOSS ✗":"PUSH";
       const tc = TIER_COLOR_Y[p.tier]||"#8b949e";
       let conf = +p.conf||0; if(conf<=1) conf*=100;
-      const typeLbl = p.pick_type==="TOTAL"?"Total":p.pick_type==="ML"?"Moneyline":p.pick_type==="RL"?"Run Line":(p.pick_type||"");
+      const _pt = p.pick_type||p.type||"";
+      const typeLbl = _pt==="TOTAL"?"Total":_pt==="ML"?"Moneyline":_pt==="RL"?"Run Line":_pt;
       const sc = (p.away_final!=null && p.home_final!=null) ? `${p.away_final} – ${p.home_final}` : "";
       // Market signal + sharp context
       const ms = (p.market_signal||"").toUpperCase();
