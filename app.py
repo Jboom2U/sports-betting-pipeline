@@ -1207,7 +1207,7 @@ def player_page(pid):
     """Per-game trend charts for one player (hits/TB/HR/RBI/K/SB, L5/L10/L20)."""
     import html as _h, json as _json
     from datetime import datetime as _dtp
-    from player_data import get_player, get_player_season, get_player_statcast
+    from player_data import get_player, get_player_season, get_player_statcast, get_player_bvp
     p = get_player(pid)
     name = _h.escape(p.get("player_name") or f"Player {pid}")
     team = _h.escape(p.get("team") or "")
@@ -1256,12 +1256,37 @@ def player_page(pid):
             f'<div class="pstat-grid">{sc_cells}</div>'
             f'<div class="pnote">Visual reference only — a number here may jog a read the '
             f'model can\'t. Not part of the pick math.</div></div>')
+
+    # ── Batter vs today's confirmed pitcher (career split, display only) ──────
+    bvp_html = ""
+    try:
+        is_batter = any((g.get("ab") or 0) > 0 for g in (p.get("games") or []))
+        bvp = get_player_bvp(pid, p.get("team", "")) if is_batter else {}
+    except Exception:
+        bvp = {}
+    if bvp.get("pitcher") and not bvp.get("error"):
+        if bvp.get("empty"):
+            body = f'<div class="pnote">No career at-bats vs {_h.escape(bvp["pitcher"])} yet.</div>'
+        else:
+            body = ('<div class="pstat-grid">'
+                    + _st("AB", bvp["ab"]) + _st("H", bvp["h"]) + _st("HR", bvp["hr"])
+                    + _st("RBI", bvp["rbi"]) + _st("BB", bvp["bb"]) + _st("K", bvp["k"])
+                    + _st("AVG", bvp.get("avg") or "—") + _st("OPS", bvp.get("ops") or "—")
+                    + '</div><div class="pnote">Career vs this pitcher. Small samples — '
+                      'color, not a model input.</div>')
+        bvp_html = (f'<div class="season"><div class="season-h">🆚 vs Today\'s Pitcher '
+                    f'<span class="pssn">{_h.escape(bvp["pitcher"])}</span></div>{body}</div>')
     html = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>__NAME__ — Statalizers</title>
 <style>
 :root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--sub:#8b949e;--blue:#58a6ff;--green:#3fb950}
 *{box-sizing:border-box}body{background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Arial;margin:0;padding:24px}
-.wrap{max-width:900px;margin:0 auto}
+.wrap{max-width:1180px;margin:0 auto}
+.pcols{display:flex;gap:16px;align-items:flex-start;margin-top:14px}
+.pmain{flex:1 1 auto;min-width:0}
+.pside{flex:0 0 310px;position:sticky;top:14px}
+.pside .season{margin-top:0}
+@media(max-width:820px){.pcols{flex-direction:column}.pside{flex:1 1 auto;width:100%;position:static}}
 .phead{display:flex;align-items:center;gap:16px;margin-bottom:8px}
 .phead img{width:66px;height:66px;border-radius:50%;object-fit:cover;background:var(--card);border:1px solid var(--border)}
 .phead h1{color:var(--blue);font-size:1.5rem;margin:0}
@@ -1296,13 +1321,17 @@ a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
   <div><h1>__NAME__</h1><div class="team">__TEAM__</div></div>
 </div>
 __SEASON__
-__STATCAST__
-<div class="toggle">
-  <button data-n="5">Last 5</button>
-  <button data-n="10" class="active">Last 10</button>
-  <button data-n="20">Last 20</button>
+<div class="pcols">
+  <div class="pmain">
+    <div class="toggle">
+      <button data-n="5">Last 5</button>
+      <button data-n="10" class="active">Last 10</button>
+      <button data-n="20">Last 20</button>
+    </div>
+    <div id="charts"></div>
+  </div>
+  <aside class="pside">__BVP__ __STATCAST__</aside>
 </div>
-<div id="charts"></div>
 <p style="margin-top:6px"><a class="back" href="/players">&larr; All players</a> &nbsp; <a class="back" href="/">Dashboard</a></p>
 </div>
 <script>
@@ -1341,7 +1370,8 @@ render();
 </script></body></html>"""
     html = (html.replace("__GAMES__", games_json).replace("__NAME__", name)
                 .replace("__TEAM__", team).replace("__FACE__", face)
-                .replace("__SEASON__", season_html).replace("__STATCAST__", statcast_html))
+                .replace("__SEASON__", season_html).replace("__STATCAST__", statcast_html)
+                .replace("__BVP__", bvp_html))
     return Response(html, mimetype="text/html")
 
 

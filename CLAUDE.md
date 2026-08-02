@@ -1,5 +1,18 @@
 # Statalizers — Project Context for Claude
 
+## Added 2026-08-02 — batter vs today's pitcher (BvP) on player pages
+
+`/player/<id>` now shows a "vs Today's Pitcher" block for batters:
+`player_data.get_player_bvp(pid, team)` finds today's game in `mlb_schedule_master.csv`
+by the player's team (nickname match, red/white sox disambiguated), takes the OTHER
+side's `*_probable_pitcher_id`, and hits MLB `people/<id>/stats?stats=vsPlayerTotal&
+opposingPlayerId=` for the career line (AB/H/HR/RBI/BB/K/AVG/OPS). Live statsapi call
+on page load, only when the batter has a game today; graceful {} otherwise. DISPLAY
+ONLY + labeled small-sample — BvP has near-zero predictive value, it's color not a
+model input. Follow-up: could cache today's BvP in a scrape step instead of live-on-load.
+
+---
+
 ## 2026-08-02 — props prune + advanced Statcast visual on player pages
 
 **Props prune (calibration):** `SUPPRESS_BETTABLE_PROPS` (run_picks_html.py) went from
