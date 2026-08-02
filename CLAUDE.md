@@ -1,5 +1,19 @@
 # Statalizers — Project Context for Claude
 
+## Changed 2026-08-02 — suppressed props stay VISIBLE in Player Props tab
+
+Justin: pruned props shouldn't vanish, he wants to research them even if not bet.
+`prep_props` no longer `continue`-skips `SUPPRESS_BETTABLE_PROPS` types — it keeps them
+with `projection_only=True`. `renderProps` shows them with a 📋 PROJECTION badge + note
+("graded vs the model's own 0.5 line, not a play"), sorted AFTER the bettable K/HITS.
+So the Player Props tab is now a full research surface; only the Best-Bets/bettable
+surface stays pruned. STILL OPEN (bigger builds): real Pinnacle lines for batter props
+(hits still on the fictional 0.5 line — the keystone fix), an all-starters pitcher-K
+projections view for research, and the batter-Statcast-empty + bat-tracking (swing velo)
+data gap so the Advanced Statcast block fills for every batter.
+
+---
+
 ## Added 2026-08-02 — batter vs today's pitcher (BvP) on player pages
 
 `/player/<id>` now shows a "vs Today's Pitcher" block for batters:

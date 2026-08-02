@@ -653,8 +653,10 @@ def prep_props(props: list) -> list:
     for p in props:
         conf_raw = p["confidence"]
         ptype    = p["prop_type"]
-        if ptype in SUPPRESS_BETTABLE_PROPS:
-            continue   # keep off the bet surface; HR Watch + grading unaffected
+        # Suppressed types stay OFF the bettable/Best-Bets surface, but remain VISIBLE
+        # in the Player Props tab as research PROJECTIONS (flagged, not hidden) so they
+        # can still be looked at and researched. They're graded vs a fictional 0.5x line.
+        projection_only = ptype in SUPPRESS_BETTABLE_PROPS
 
         # Lineup/starter flags (carried from score_all_props if present)
         unconfirmed = p.get("lineup_unconfirmed", False)
@@ -685,6 +687,7 @@ def prep_props(props: list) -> list:
 
         out.append({
             "prop_type":    ptype,
+            "projection_only": projection_only,
             "player_name":  p["player_name"],
             "player_id":    p.get("player_id"),
             "line":         p["line"],
@@ -1581,6 +1584,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
   padding:16px;transition:transform .15s,border-color .15s;position:relative;overflow:hidden;
 }
+.proj-only-badge{background:rgba(139,148,158,.15);color:var(--sub);font-size:.62rem;font-weight:700;padding:2px 7px;border-radius:5px;letter-spacing:.03em}
+.proj-note{font-size:.66rem;color:var(--sub);line-height:1.4;margin:6px 0 2px;padding:6px 8px;background:rgba(139,148,158,.06);border-radius:6px}
 .prop-card:hover{transform:translateY(-2px)}
 .prop-card.tier-LOCK  {border-top:3px solid var(--gold)}
 .prop-card.tier-STRONG{border-top:3px solid var(--blue)}
@@ -3989,7 +3994,8 @@ function renderProps(){
     const timeEl = document.getElementById("propsRefreshTime");
     if(timeEl && window._schedRefreshTime) timeEl.textContent = window._schedRefreshTime;
   }
-  DATA_PROPS.forEach(p=>{
+  // Bettable props first, research-only projections after.
+  [...DATA_PROPS].sort((a,b)=>(a.projection_only?1:0)-(b.projection_only?1:0)).forEach(p=>{
     const show = (propFilterType==="all" || p.prop_type===propFilterType)
               && (propFilterTier==="all" || p.tier===propFilterTier);
     if(!show) return;
@@ -4039,8 +4045,10 @@ function renderProps(){
         ${projBanner}
         <div class="prop-top">
           <span class="prop-type-badge badge-${p.prop_type}">${propIcon(p.prop_type)} ${p.prop_type}</span>
+          ${p.projection_only ? `<span class="proj-only-badge">📋 PROJECTION</span>` : ""}
           <span class="tier-badge tb-${p.tier}">${tierIcon(p.tier)} ${p.tier}</span>
         </div>
+        ${p.projection_only ? `<div class="proj-note">Research projection — graded against the model's own 0.5 line, not a sportsbook number, so it's not a play. Shown so you can still look at it.</div>` : ""}
         <div class="prop-name-row">
           ${p.player_id ? `<a href="/player/${p.player_id}" title="View ${p.player_name}'s trends"><img class="prop-face" alt="" loading="lazy" src="https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_100/v1/people/${p.player_id}/headshot/67/current" onerror="this.style.display='none'"></a>` : ""}
           <div class="prop-player">${p.player_id ? `<a href="/player/${p.player_id}" class="prop-link">${p.player_name}</a>` : p.player_name}${sideStr}</div>
