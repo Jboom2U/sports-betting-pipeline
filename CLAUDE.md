@@ -1,5 +1,30 @@
 # Statalizers — Project Context for Claude
 
+## 2026-08-02 — props prune + advanced Statcast visual on player pages
+
+**Props prune (calibration):** `SUPPRESS_BETTABLE_PROPS` (run_picks_html.py) went from
+`{HR,SB}` to `{HR,SB,RBI,R,TB}`. These are OVER-only fixed-0.5x-projection batter props
+graded against a FICTIONAL line (not a book), so the record measures beating a made-up
+number and they structurally lose (HR ~7%, SB ~17%, RBI ~26%, R ~32%; overall props were
+62-102). KEPT bettable: K (real Pinnacle line + EV, K UNDER ~62%) and HITS (only batter
+prop with a positive read, 15/19, small sample, on watch). DISPLAY-ONLY suppression —
+grading + HR Watch still read raw props. Real fix = a free batter-prop LINE source; then
+they become real bets and come off the list. K OVER still weak (~50% vs UNDER 62%) —
+tightening K OVER pricing is a follow-up.
+
+**Advanced Statcast visual (display only):** `/player/<id>` now shows an "Advanced
+Statcast" block under the season line. `player_data.get_player_statcast(pid)` reads
+`mlb_pitcher_statcast_master.csv` (pitchers: velo, whiff%, xwOBA, exit velo, barrel%,
+hard-hit%, K%, BB%) or `mlb_statcast_master.csv` (batters: barrel%, hard-hit%, exit velo,
+xwOBA, xBA, xSLG, launch°, K%), matched by player_id, normalizing 0-1 vs 0-100 rates.
+Explicitly labeled "not part of the pick math" — it's visual context so the eye can catch
+a number that jogs a read. NOTE: IVB / horizontal break / spin / extension / bat-tracking
+(bat speed, squared-up) are NOT scraped yet — the pitcher Statcast scraper only pulls
+expected-stats + arsenal whiff/velo. Adding movement/bat-tracking = a Savant scraper
+extension, follow-up.
+
+---
+
 ## Fixed 2026-08-01 — Yesterday tab showed all PUSH / 0-0
 
 The new per-pick Yesterday cards read `p.actual_result` / `p.pick_type` (the

@@ -1207,7 +1207,7 @@ def player_page(pid):
     """Per-game trend charts for one player (hits/TB/HR/RBI/K/SB, L5/L10/L20)."""
     import html as _h, json as _json
     from datetime import datetime as _dtp
-    from player_data import get_player, get_player_season
+    from player_data import get_player, get_player_season, get_player_statcast
     p = get_player(pid)
     name = _h.escape(p.get("player_name") or f"Player {pid}")
     team = _h.escape(p.get("team") or "")
@@ -1244,6 +1244,18 @@ def player_page(pid):
                  _st("SB", ssn.get("sb")) + _st("K", ssn.get("k")))
         season_html = (f'<div class="season"><div class="season-h">Season stats {badge}</div>'
                        f'<div class="pstat-grid">{cells}</div></div>')
+
+    # ── Advanced Statcast visual (display only, not used by the model) ────────
+    scd = get_player_statcast(pid)
+    statcast_html = ""
+    if scd.get("metrics") and any(v is not None for _, v in scd["metrics"]):
+        sc_cells = "".join(_st(lbl, v) for lbl, v in scd["metrics"])
+        statcast_html = (
+            f'<div class="season"><div class="season-h">📊 Advanced Statcast '
+            f'<span class="pssn">{_h.escape(scd.get("label",""))}</span></div>'
+            f'<div class="pstat-grid">{sc_cells}</div>'
+            f'<div class="pnote">Visual reference only — a number here may jog a read the '
+            f'model can\'t. Not part of the pick math.</div></div>')
     html = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>__NAME__ — Statalizers</title>
 <style>
@@ -1276,6 +1288,7 @@ def player_page(pid):
 .pstat-v{font-weight:800;font-size:1.05rem}
 .pstat-l{font-size:.6rem;color:var(--sub);text-transform:uppercase;margin-top:2px;letter-spacing:.03em}
 .pstale{color:#ffa726;font-size:.72rem;margin-top:10px;line-height:1.4}
+.pnote{color:var(--sub);font-size:.7rem;margin-top:10px;line-height:1.4}
 a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
 </style></head><body><div class="wrap">
 <div class="phead">
@@ -1283,6 +1296,7 @@ a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
   <div><h1>__NAME__</h1><div class="team">__TEAM__</div></div>
 </div>
 __SEASON__
+__STATCAST__
 <div class="toggle">
   <button data-n="5">Last 5</button>
   <button data-n="10" class="active">Last 10</button>
@@ -1327,7 +1341,7 @@ render();
 </script></body></html>"""
     html = (html.replace("__GAMES__", games_json).replace("__NAME__", name)
                 .replace("__TEAM__", team).replace("__FACE__", face)
-                .replace("__SEASON__", season_html))
+                .replace("__SEASON__", season_html).replace("__STATCAST__", statcast_html))
     return Response(html, mimetype="text/html")
 
 

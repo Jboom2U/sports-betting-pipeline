@@ -633,13 +633,18 @@ def compute_high_conf_rule() -> dict:
             "rule_wide": rule_wide, "record_wide": record_wide}
 
 
-# Prop types suppressed from the BETTABLE Player Props surface. These are
-# OVER-only, fixed-0.5-line, no-real-price bets that have been structural losers
-# (HR OVER ~15%, SB OVER ~17% over 20+ pick samples). Suppression is display-only:
-# HR Watch (built from raw props) is unaffected, and grading continues (the DB
-# save loops read raw props too), so we keep collecting the record to revisit.
-# Clear this set to un-suppress, or once they run on real lines + EV like K props.
-SUPPRESS_BETTABLE_PROPS = {"HR", "SB"}
+# Prop types suppressed from the BETTABLE Player Props surface. These are the
+# OVER-only, fixed-0.5x-projection, no-real-price batter props — they are graded
+# against a FICTIONAL line (0.5x the model's own projection), not a sportsbook
+# number, so the record measures beating a made-up line and they structurally lose
+# (HR ~7%, SB ~17%, RBI ~26%, R ~32% over the post-fix window). Pruned 2026-08-02.
+# KEPT bettable: K (real Pinnacle line + EV, K UNDER 62%) and HITS (the one batter
+# prop showing a positive read, 15/19 — small sample, on watch).
+# Suppression is DISPLAY-ONLY: HR Watch (raw props) is unaffected and grading
+# continues (save loops read raw props), so the record keeps accruing to revisit.
+# The real fix is a free/affordable batter-prop LINE source; then these become real
+# bets we can price + calibrate like K props, and can come off this list.
+SUPPRESS_BETTABLE_PROPS = {"HR", "SB", "RBI", "R", "TB"}
 
 
 def prep_props(props: list) -> list:

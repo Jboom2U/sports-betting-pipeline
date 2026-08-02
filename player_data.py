@@ -120,6 +120,61 @@ def get_player_season(player_id) -> dict:
     return {}
 
 
+def get_player_statcast(player_id) -> dict:
+    """Advanced Statcast metrics for the DISPLAY-ONLY visual block on the player page.
+    Pitchers from mlb_pitcher_statcast_master.csv (contact quality allowed); batters
+    from mlb_statcast_master.csv. Matched by MLBAM player_id. Returns {} if none.
+    NOTE: purely visual context — the eye may catch a number that jogs a read. It does
+    NOT feed the pick model (the model uses its own xwOBA/whiff/barrel internally)."""
+    import os
+    import csv as _csv
+    pid = str(player_id)
+    clean = os.path.join(os.path.dirname(__file__), "data", "clean")
+
+    def _row(fname):
+        path = os.path.join(clean, fname)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, encoding="utf-8-sig") as f:
+                for r in _csv.DictReader(f):
+                    if str(r.get("player_id", "")).strip() == pid:
+                        return r
+        except Exception as e:
+            log.warning(f"statcast read {fname} failed: {e}")
+        return None
+
+    def _f(r, k):
+        try:
+            return round(float(r.get(k)), 3)
+        except Exception:
+            return None
+
+    def _pct(r, k):
+        # Some Savant rates come as 0-1, some as 0-100 — normalize to a % number.
+        v = _f(r, k)
+        if v is None:
+            return None
+        return round(v * 100, 1) if v <= 1 else round(v, 1)
+
+    pr = _row("mlb_pitcher_statcast_master.csv")
+    if pr:
+        return {"type": "pitcher", "label": "contact quality allowed", "metrics": [
+            ("Velo mph", _f(pr, "avg_velocity")), ("Whiff %", _pct(pr, "whiff_percent")),
+            ("xwOBA", _f(pr, "xwoba")), ("Exit Velo", _f(pr, "exit_velocity_avg")),
+            ("Barrel %", _pct(pr, "barrel_batted_rate")), ("Hard-Hit %", _pct(pr, "hard_hit_percent")),
+            ("K %", _pct(pr, "k_percent")), ("BB %", _pct(pr, "bb_percent"))]}
+
+    br = _row("mlb_statcast_master.csv")
+    if br:
+        return {"type": "batter", "label": "contact quality", "metrics": [
+            ("Barrel %", _pct(br, "barrel_batted_rate")), ("Hard-Hit %", _pct(br, "hard_hit_percent")),
+            ("Exit Velo", _f(br, "exit_velocity_avg")), ("xwOBA", _f(br, "xwoba")),
+            ("xBA", _f(br, "xba")), ("xSLG", _f(br, "xslg")),
+            ("Launch °", _f(br, "launch_angle_avg")), ("K %", _pct(br, "k_percent"))]}
+    return {}
+
+
 def get_player(player_id: int) -> dict:
     """Player header + last-20 game logs (most recent first)."""
     from db.connection import db_conn
