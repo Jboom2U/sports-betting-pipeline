@@ -1401,7 +1401,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .tb-TOSSUP{background:rgba(127,119,221,.12);color:#a09ae0;border:1px solid rgba(127,119,221,.3)}
 
 .pick-label{font-size:1.08rem;font-weight:700;color:var(--text);margin-bottom:4px;padding-right:60px}
-.pick-team-emblem{position:absolute;top:40px;right:10px;width:44px;height:44px;object-fit:contain;opacity:.6;pointer-events:none;z-index:0}
+.pick-team-emblem{position:absolute;top:40px;right:10px;width:44px;height:44px;object-fit:contain;opacity:.6;pointer-events:none;z-index:0;filter:drop-shadow(0 0 1px rgba(255,255,255,.5))}
 .pick-game{font-size:.78rem;color:var(--sub);margin-bottom:12px;padding-right:60px}
 
 .conf-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
@@ -2370,7 +2370,8 @@ function teamLogoUrl(name){
 function teamLogo(name, size){
   const u=teamLogoUrl(name); if(!u) return "";
   const s=size||18;
-  return `<img src="${u}" alt="" loading="lazy" style="width:${s}px;height:${s}px;vertical-align:middle;margin-right:3px;object-fit:contain" onerror="this.style.display='none'">`;
+  // Faint white outline so dark logos (Yankees navy, Brewers) stay visible on the dark bg.
+  return `<img src="${u}" alt="" loading="lazy" style="width:${s}px;height:${s}px;vertical-align:middle;margin-right:3px;object-fit:contain;filter:drop-shadow(0 0 .6px rgba(255,255,255,.55))" onerror="this.style.display='none'">`;
 }
 // Large emblem of the PICKED team, anchored in the card's empty top-right corner.
 function teamEmblem(name){
