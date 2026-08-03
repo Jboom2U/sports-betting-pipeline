@@ -114,7 +114,8 @@ def get_player_season(player_id) -> dict:
             return {"type": "batter", "season": yr, "games": games,
                     "avg": round(avg, 3), "obp": round(obp, 3), "slg": round(slg, 3),
                     "ops": round(obp + slg, 3), "hr": int(hr), "rbi": int(rbi),
-                    "sb": int(sb), "k": int(k), "ab": int(ab)}
+                    "sb": int(sb), "k": int(k), "ab": int(ab),
+                    "h": int(h), "bb": int(bb), "tb": int(tb)}
     except Exception as e:
         log.warning(f"get_player_season batter agg failed: {e}")
     return {}
@@ -173,6 +174,73 @@ def get_player_statcast(player_id) -> dict:
             ("xBA", _f(br, "xba")), ("xSLG", _f(br, "xslg")),
             ("Launch °", _f(br, "launch_angle_avg")), ("K %", _pct(br, "k_percent"))]}
     return {}
+
+
+def get_player_bvp(player_id, team: str = "") -> dict:
+    """This hitter's CAREER line vs TODAY's opposing probable pitcher.
+    Finds today's game in the schedule master by the player's team, gets the other
+    side's probable pitcher, then hits the MLB vsPlayerTotal split. DISPLAY-ONLY:
+    batter-vs-pitcher is small-sample and low-signal, shown as color, never a model
+    input. Returns {} when the player has no game today or no matchup is found."""
+    import os
+    import csv as _csv
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    today = datetime.now(et).strftime("%Y-%m-%d")
+    tl = (team or "").lower()
+    tnick = tl.split(" ")[-1] if tl else ""
+    if not tnick:
+        return {}
+
+    def _match(sched_team):
+        s = (sched_team or "").lower()
+        if tnick == "sox":   # red sox vs white sox — nick alone is ambiguous
+            return ("red sox" in s and "red sox" in tl) or ("white sox" in s and "white sox" in tl)
+        return tnick in s
+
+    opp_pid, opp_name = "", ""
+    try:
+        path = os.path.join(os.path.dirname(__file__), "data", "clean", "mlb_schedule_master.csv")
+        if not os.path.exists(path):
+            return {}
+        with open(path, encoding="utf-8-sig") as f:
+            for r in _csv.DictReader(f):
+                if r.get("game_date") != today:
+                    continue
+                if _match(r.get("away_team", "")):
+                    opp_pid = r.get("home_probable_pitcher_id", "")
+                    opp_name = r.get("home_probable_pitcher", "")
+                    break
+                if _match(r.get("home_team", "")):
+                    opp_pid = r.get("away_probable_pitcher_id", "")
+                    opp_name = r.get("away_probable_pitcher", "")
+                    break
+    except Exception as e:
+        log.warning(f"bvp schedule read failed: {e}")
+        return {}
+    if not opp_pid:
+        return {}
+
+    try:
+        import requests
+        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
+        params = {"stats": "vsPlayerTotal", "group": "hitting", "opposingPlayerId": opp_pid}
+        resp = requests.get(url, params=params,
+                            headers={"User-Agent": "mlb-betting-pipeline/1.0"}, timeout=8)
+        resp.raise_for_status()
+        splits = ((resp.json().get("stats") or [{}])[0].get("splits") or [])
+        if not splits:
+            return {"pitcher": opp_name, "ab": 0, "empty": True}
+        st = splits[0].get("stat", {})
+        return {"pitcher": opp_name, "ab": int(st.get("atBats", 0) or 0),
+                "h": int(st.get("hits", 0) or 0), "hr": int(st.get("homeRuns", 0) or 0),
+                "rbi": int(st.get("rbi", 0) or 0), "bb": int(st.get("baseOnBalls", 0) or 0),
+                "k": int(st.get("strikeOuts", 0) or 0),
+                "avg": st.get("avg", ""), "ops": st.get("ops", "")}
+    except Exception as e:
+        log.warning(f"bvp api failed: {e}")
+        return {"pitcher": opp_name, "error": True}
 
 
 def get_player(player_id: int) -> dict:

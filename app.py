@@ -1240,8 +1240,10 @@ def player_page(pid):
             except Exception: return "—"
         cells = (_st("AVG", _avg(ssn.get("avg"))) + _st("OBP", _avg(ssn.get("obp"))) +
                  _st("SLG", _avg(ssn.get("slg"))) + _st("OPS", _avg(ssn.get("ops"))) +
+                 _st("AB", ssn.get("ab")) + _st("H", ssn.get("h")) +
                  _st("HR", ssn.get("hr")) + _st("RBI", ssn.get("rbi")) +
-                 _st("SB", ssn.get("sb")) + _st("K", ssn.get("k")))
+                 _st("BB", ssn.get("bb")) + _st("K", ssn.get("k")) +
+                 _st("TB", ssn.get("tb")) + _st("SB", ssn.get("sb")))
         season_html = (f'<div class="season"><div class="season-h">Season stats {badge}</div>'
                        f'<div class="pstat-grid">{cells}</div></div>')
 
@@ -1320,9 +1322,9 @@ a.back{color:var(--blue);text-decoration:none;font-size:.85rem}
   <img src="__FACE__" onerror="this.style.visibility='hidden'" alt="">
   <div><h1>__NAME__</h1><div class="team">__TEAM__</div></div>
 </div>
-__SEASON__
 <div class="pcols">
   <div class="pmain">
+    __SEASON__
     <div class="toggle">
       <button data-n="5">Last 5</button>
       <button data-n="10" class="active">Last 10</button>
