@@ -300,9 +300,12 @@ def _fmt_era(val) -> str:
 def _ml_reasoning(g: dict) -> str:
     parts = []
 
-    # Pitcher matchup + recent form trend
-    away_era = g.get("away_sp_era_adj")
-    home_era = g.get("home_sp_era_adj")
+    # Pitcher matchup + recent form trend. DISPLAY the raw SEASON ERA (what the user
+    # verifies online), not the model's split-adjusted era_adj — showing the adjusted
+    # number made cards look "wrong" vs Baseball-Reference. The model still USES era_adj
+    # internally for scoring; this only changes what's shown.
+    away_era = g.get("away_sp_era", g.get("away_sp_era_adj"))
+    home_era = g.get("home_sp_era", g.get("home_sp_era_adj"))
     away_sp  = g.get("away_sp", "TBD")
     home_sp  = g.get("home_sp", "TBD")
     away_trend = g.get("away_sp_trend", "")

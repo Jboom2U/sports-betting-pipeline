@@ -120,8 +120,8 @@ def build_board_pack(force: bool = False) -> str:
             for g in scored:
                 gl = f"{g.get('away_team','')} @ {g.get('home_team','')}"
                 out.append(f"\n{gl}  ({g.get('venue','')})")
-                out.append(f"  Starters: {g.get('away_sp','TBD')} (ERA {g.get('away_sp_era_adj','?')}) "
-                           f"vs {g.get('home_sp','TBD')} (ERA {g.get('home_sp_era_adj','?')})")
+                out.append(f"  Starters: {g.get('away_sp','TBD')} (ERA {g.get('away_sp_era', g.get('away_sp_era_adj','?'))}) "
+                           f"vs {g.get('home_sp','TBD')} (ERA {g.get('home_sp_era', g.get('home_sp_era_adj','?'))})")
                 out.append(f"  Bullpen ERA: away {g.get('away_bp_era','?')} / home {g.get('home_bp_era','?')}")
                 out.append(f"  Offense: away {g.get('away_rpg','?')} RPG (OPS {g.get('away_ops','?')}) / "
                            f"home {g.get('home_rpg','?')} RPG (OPS {g.get('home_ops','?')})")

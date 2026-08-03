@@ -199,7 +199,7 @@ def get_player_bvp(player_id, team: str = "") -> dict:
             return ("red sox" in s and "red sox" in tl) or ("white sox" in s and "white sox" in tl)
         return tnick in s
 
-    opp_pid, opp_name = "", ""
+    opp_pid, opp_name, game_found = "", "", False
     try:
         path = os.path.join(os.path.dirname(__file__), "data", "clean", "mlb_schedule_master.csv")
         if not os.path.exists(path):
@@ -209,10 +209,12 @@ def get_player_bvp(player_id, team: str = "") -> dict:
                 if r.get("game_date") != today:
                     continue
                 if _match(r.get("away_team", "")):
+                    game_found = True
                     opp_pid = r.get("home_probable_pitcher_id", "")
                     opp_name = r.get("home_probable_pitcher", "")
                     break
                 if _match(r.get("home_team", "")):
+                    game_found = True
                     opp_pid = r.get("away_probable_pitcher_id", "")
                     opp_name = r.get("away_probable_pitcher", "")
                     break
@@ -220,7 +222,9 @@ def get_player_bvp(player_id, team: str = "") -> dict:
         log.warning(f"bvp schedule read failed: {e}")
         return {}
     if not opp_pid:
-        return {}
+        # Game today but the opposing starter isn't confirmed yet — tell the page to
+        # keep the block and show a "pending" state instead of vanishing.
+        return {"pending": True} if game_found else {}
 
     try:
         import requests

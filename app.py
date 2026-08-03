@@ -1266,7 +1266,12 @@ def player_page(pid):
         bvp = get_player_bvp(pid, p.get("team", "")) if is_batter else {}
     except Exception:
         bvp = {}
-    if bvp.get("pitcher") and not bvp.get("error"):
+    if bvp.get("pending"):
+        bvp_html = ('<div class="season"><div class="season-h">🆚 vs Today\'s Pitcher '
+                    '<span class="pssn">pending</span></div>'
+                    '<div class="pnote">Opposing starter not confirmed yet — this fills in with '
+                    'the career matchup once today\'s probable pitcher is set.</div></div>')
+    elif bvp.get("pitcher") and not bvp.get("error"):
         if bvp.get("empty"):
             body = f'<div class="pnote">No career at-bats vs {_h.escape(bvp["pitcher"])} yet.</div>'
         else:

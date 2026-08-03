@@ -1,5 +1,23 @@
 # Statalizers — Project Context for Claude
 
+## Changed 2026-08-02 — cards DISPLAY raw season ERA (not era_adj) + BvP pending state
+
+**ERA display:** cards/bot kept looking "wrong" vs Baseball-Reference because the
+narrative showed `era_adj` (model's split-adjusted ERA), not the raw season ERA. e.g.
+Sproat displayed 4.43 while B-Ref showed 5.05. `_ml_reasoning` (mlb_picks.py) + the bot
+(ask_model build_board_pack) now display `away_sp_era`/`home_sp_era` (raw season), falling
+back to era_adj. The MODEL still USES era_adj for scoring — this only changes what's shown
+so it matches what users verify. (Sproat's 4.43 was ALSO a stale dashboard cache: model
+had 5.05 after the pitcher re-scrape, cache still showed the old 2025-blended 4.43 —
+`/refresh` rebuilds it. Confirmed via /admin/pitcher-diag: 2026 era=5.05, era_adj=5.05.)
+
+**BvP pending:** `get_player_bvp` now returns `{"pending":True}` when the batter HAS a
+game today but the opposing starter is TBD (no probable_pitcher_id), instead of `{}`.
+The player page shows a "vs Today's Pitcher — pending" block ("fills in once the probable
+pitcher is set") instead of the block vanishing.
+
+---
+
 ## Changed 2026-08-02 — suppressed props stay VISIBLE in Player Props tab
 
 Justin: pruned props shouldn't vanish, he wants to research them even if not bet.
