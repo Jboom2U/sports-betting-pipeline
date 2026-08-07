@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS picks (
     tier            TEXT        NOT NULL,   -- LOCK | STRONG | LEAN
     reasoning       TEXT,
     market_signal   TEXT,                   -- CONFIRM | DIVERGE | NEUTRAL (Kalshi/Poly)
+    tier_locked     BOOLEAN     NOT NULL DEFAULT FALSE,  -- freezes conf/tier once lineups confirm
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Backtesting fields — filled by the grading step after game results are in
@@ -205,6 +206,10 @@ def create_all():
             # add it so a fresh create_all() DB matches production.
             cur.execute(
                 "ALTER TABLE picks ADD COLUMN IF NOT EXISTS market_signal TEXT")
+            # tier_locked freezes conf/tier once a game's lineups confirm (bet-time
+            # tier), so intraday re-scores can't downgrade a LOCK before grading.
+            cur.execute(
+                "ALTER TABLE picks ADD COLUMN IF NOT EXISTS tier_locked BOOLEAN NOT NULL DEFAULT FALSE")
             log.info("DB schema verified / created.")
         except Exception as e:
             log.warning(f"Schema creation failed (non-fatal): {e}")

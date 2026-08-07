@@ -1,5 +1,29 @@
 # Statalizers — Project Context for Claude
 
+## Changed 2026-08-04 — tier + conf FROZEN at LINEUP LOCK (Yesterday LOCK undercount)
+
+Yesterday tier record showed LOCK 0-1 when Justin had seen several locks. Root cause
+(confirmed via live DATA_YESTERDAY: both metrics.by_tier AND graded_picks agreed LOCK=1):
+`save_picks` ON CONFLICT did `tier = EXCLUDED.tier`, so every intraday re-score
+(afternoon lineup refresh, frequent odds pulls, chalk de-boost) OVERWROTE the tier. A
+morning LOCK that weakened by afternoon got graded as a STRONG → LOCKs undercounted.
+Fix: new `picks.tier_locked` BOOLEAN (schema.py CREATE + idempotent ADD COLUMN). In
+`save_picks`, `_lineups_set = game_data.lineup_confirmed`; INSERT passes it as tier_locked,
+and ON CONFLICT freezes conf/tier once locked: `tier = CASE WHEN picks.tier_locked THEN
+picks.tier ELSE EXCLUDED.tier END`, `tier_locked = (picks.tier_locked OR EXCLUDED.tier_locked)`.
+So conf/tier keep updating on re-score WHILE lineups are unconfirmed, then LOCK the first
+save with lineups confirmed (= realistic bet time + complete data), and no later re-score
+can downgrade it. NOT frozen at 6am (Justin flagged: first publish is pre-lineup). Both
+save_picks callers (run_pipeline 289, run_picks_html 5404) pass the raw generate_picks
+output which carries game_data.
+
+FUTURE (Justin's ask, not built): model-VERSION stamping so records segment per config
+version — pause/record-current, tweak, record new separately, revert + resume. Design:
+add nullable `model_version` col to picks, stamp at save from db/model_config active
+version, filter calibration by version. Generalizes the pre/post-2026-07-21 data boundary.
+
+---
+
 ## Changed 2026-08-02 — cards DISPLAY raw season ERA (not era_adj) + BvP pending state
 
 **ERA display:** cards/bot kept looking "wrong" vs Baseball-Reference because the

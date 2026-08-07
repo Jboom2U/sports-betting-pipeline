@@ -47,21 +47,29 @@ def save_picks(picks: list, pick_date: str) -> int:
         try:
             cur = conn.cursor()
             for p in picks:
+                # Freeze the tier at the LINEUP LOCK, not at 6am. conf/tier keep
+                # updating on re-score while the game's lineups are unconfirmed, then
+                # LOCK the first time we save it with lineups confirmed (= realistic bet
+                # time, complete data). Later re-scores (odds pulls, chalk de-boost)
+                # can't downgrade it after that. Fixes the Yesterday LOCK undercount
+                # without freezing a pre-lineup 6am tier.
+                _lineups_set = bool((p.get("game_data") or {}).get("lineup_confirmed"))
                 cur.execute(
                     """
                     INSERT INTO picks
                         (pick_date, game_id, game, pick_type, label, team,
-                         conf, tier, reasoning, market_signal, actual_result)
+                         conf, tier, reasoning, market_signal, tier_locked, actual_result)
                     VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
+                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
                     ON CONFLICT (pick_date, game_id, pick_type) DO UPDATE SET
                         label         = EXCLUDED.label,
                         team          = EXCLUDED.team,
                         game          = EXCLUDED.game,
-                        conf          = EXCLUDED.conf,
-                        tier          = EXCLUDED.tier,
                         reasoning     = EXCLUDED.reasoning,
-                        market_signal = COALESCE(picks.market_signal, EXCLUDED.market_signal)
+                        market_signal = COALESCE(picks.market_signal, EXCLUDED.market_signal),
+                        conf          = CASE WHEN picks.tier_locked THEN picks.conf ELSE EXCLUDED.conf END,
+                        tier          = CASE WHEN picks.tier_locked THEN picks.tier ELSE EXCLUDED.tier END,
+                        tier_locked   = (picks.tier_locked OR EXCLUDED.tier_locked)
                     """,
                     (
                         pick_date,
@@ -74,6 +82,7 @@ def save_picks(picks: list, pick_date: str) -> int:
                         p.get("tier", ""),
                         p.get("reasoning", ""),
                         _infer_market_signal(p.get("reasoning", "")),
+                        _lineups_set,
                     )
                 )
                 inserted += cur.rowcount
