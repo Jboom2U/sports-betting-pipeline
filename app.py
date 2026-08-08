@@ -2193,11 +2193,11 @@ def schedule_status():
             return None
         diff = (dt - now).total_seconds()
         if diff < 0:
-            return {"time": dt.strftime("%-I:%M %p ET"), "in_seconds": int(diff), "label": "passed"}
+            return {"time": dt.strftime("%I:%M %p ET").lstrip("0"), "in_seconds": int(diff), "label": "passed"}
         h = int(diff // 3600)
         m = int((diff % 3600) // 60)
         label = f"in {h}h {m}m" if h > 0 else f"in {m}m"
-        return {"time": dt.strftime("%-I:%M %p ET"), "in_seconds": int(diff), "label": label}
+        return {"time": dt.strftime("%I:%M %p ET").lstrip("0"), "in_seconds": int(diff), "label": label}
 
     return jsonify({
         "next_pipeline":   _fmt(_schedule_state.get("next_pipeline_et")),
@@ -2997,7 +2997,7 @@ def status():
         try:
             from datetime import timezone as _tz
             dt = datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tz.utc)
-            return dt.astimezone(ET).strftime("%-I:%M %p ET")
+            return dt.astimezone(ET).strftime("%I:%M %p ET").lstrip("0")
         except Exception:
             return t
 
@@ -3098,7 +3098,7 @@ body{{background:#07090f;color:#e2e8f0;font-family:'Inter',sans-serif;min-height
 <div class="wrap">
   <div class="hdr">
     <div class="title">⚾ Statalizers Status</div>
-    <div class="sub">As of {now.strftime("%-I:%M %p ET, %A %B %-d")}</div>
+    <div class="sub">As of {now.strftime("%I:%M %p ET, %A %B ").lstrip("0") + str(now.day)}</div>
   </div>
 
   <div class="card">
@@ -3594,7 +3594,8 @@ def performance_html():
     else:
         _yday_content = '<p style="color:#8b949e;font-size:.83rem">No graded picks for yesterday yet — grades post after games finish.</p>'
 
-    _yday_label = (datetime.now(ET) - timedelta(days=1)).strftime("%A, %b %-d") if yesterday_picks else "Yesterday"
+    _yd_dt = datetime.now(ET) - timedelta(days=1)
+    _yday_label = (_yd_dt.strftime("%A, %b ") + str(_yd_dt.day)) if yesterday_picks else "Yesterday"
     _yesterday_section_html = (
         '<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;' +
         'padding:16px 20px;margin-bottom:24px">' +
