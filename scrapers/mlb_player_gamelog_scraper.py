@@ -180,12 +180,9 @@ def upsert_game_logs(player_name: str, player_id: int, logs: list) -> int:
     return count
 
 
-def seed_all_players() -> dict:
-    """
-    Seed game logs for EVERY active MLB player (all 30 team rosters), so the
-    Players search covers everyone regardless of who's playing today. Background
-    job (~780 players). Pitchers get pitching logs, position players hitting.
-    """
+def roster_players(roster_type: str = "40Man") -> list:
+    """Every player on all 30 team rosters. Default 40Man (broadest standard
+    roster — includes IL/depth, so search covers more than just today's active)."""
     teams = _get(f"{BASE_URL}/teams", {"sportId": 1, "season": SEASON}).get("teams", [])
     players = []
     for t in teams:
@@ -193,7 +190,7 @@ def seed_all_players() -> dict:
         if not tid:
             continue
         roster = _get(f"{BASE_URL}/teams/{tid}/roster",
-                      {"season": SEASON, "rosterType": "active"}).get("roster", [])
+                      {"season": SEASON, "rosterType": roster_type}).get("roster", [])
         for r in roster:
             person = r.get("person", {}) or {}
             pos = (r.get("position", {}) or {}).get("abbreviation", "")
@@ -202,8 +199,13 @@ def seed_all_players() -> dict:
                 players.append({"player_id": pid,
                                 "player_name": person.get("fullName", ""),
                                 "is_pitcher": pos == "P"})
-    log.info(f"seed_all_players: {len(players)} players across {len(teams)} teams")
-    return run_for_players(players)
+    log.info(f"roster_players({roster_type}): {len(players)} across {len(teams)} teams")
+    return players
+
+
+def seed_all_players() -> dict:
+    """Seed logs for every player on all 30 (40-man) rosters. Background job."""
+    return run_for_players(roster_players("40Man"))
 
 
 def get_lineup_players() -> list:

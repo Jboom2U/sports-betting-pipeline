@@ -2378,6 +2378,22 @@ function teamEmblem(name){
   const u=teamLogoUrl(name); if(!u) return "";
   return `<img class="pick-team-emblem" src="${u}" alt="" loading="lazy" onerror="this.style.display='none'">`;
 }
+// Team name -> standard MLB abbreviation (nickname substring match, sox disambiguated).
+const _TEAM_ABBR = [
+  ["diamondbacks","ARI"],["d-backs","ARI"],["braves","ATL"],["orioles","BAL"],
+  ["red sox","BOS"],["white sox","CWS"],["cubs","CHC"],["reds","CIN"],
+  ["guardians","CLE"],["rockies","COL"],["tigers","DET"],["astros","HOU"],
+  ["royals","KC"],["angels","LAA"],["dodgers","LAD"],["marlins","MIA"],
+  ["brewers","MIL"],["twins","MIN"],["mets","NYM"],["yankees","NYY"],
+  ["athletics","ATH"],["phillies","PHI"],["pirates","PIT"],["padres","SD"],
+  ["giants","SF"],["mariners","SEA"],["cardinals","STL"],["rays","TB"],
+  ["rangers","TEX"],["blue jays","TOR"],["nationals","WSH"]
+];
+function teamAbbr(name){
+  const n=(name||"").toLowerCase();
+  for(const [k,a] of _TEAM_ABBR){ if(n.includes(k)) return a; }
+  return (name||"").split(" ").slice(-1)[0].slice(0,3).toUpperCase();
+}
 
 function renderBestBets(){
   const box = document.getElementById("bestBets");
@@ -3253,7 +3269,10 @@ function renderYesterday(){
       let conf = +p.conf||0; if(conf<=1) conf*=100;
       const _pt = p.pick_type||p.type||"";
       const typeLbl = _pt==="TOTAL"?"Total":_pt==="ML"?"Moneyline":_pt==="RL"?"Run Line":_pt;
-      const sc = (p.away_final!=null && p.home_final!=null) ? `${p.away_final} – ${p.home_final}` : "";
+      // away/home for logos + score abbreviations come from the "game" string ("Away @ Home")
+      const _sp = (p.game||"").split(" @ ");
+      const sc = (p.away_final!=null && p.home_final!=null)
+        ? `Final: ${teamAbbr(_sp[0]||"")} ${p.away_final} – ${teamAbbr(_sp[1]||"")} ${p.home_final}` : "";
       // Market signal + sharp context
       const ms = (p.market_signal||"").toUpperCase();
       const msBadge = ms==="CONFIRM" ? `<span style="background:rgba(63,185,80,.12);color:#3fb950;font-size:.64rem;font-weight:700;padding:2px 7px;border-radius:4px">CONFIRM</span>`

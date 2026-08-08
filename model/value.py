@@ -16,6 +16,12 @@ def american_to_decimal(american: float) -> float | None:
     if american in (None, 0, ""):
         return None
     a = float(american)
+    # American odds cannot sit strictly between -100 and +100. A value like -57
+    # is corrupt data (e.g. the odds scraper averaging a +180 and a -220 run-line
+    # price in a game where books split on the favorite). Reject it so no EV is
+    # built on a fake price.
+    if abs(a) < 100:
+        return None
     return 1 + (a / 100.0 if a > 0 else 100.0 / abs(a))
 
 
