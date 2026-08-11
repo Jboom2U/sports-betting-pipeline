@@ -303,8 +303,13 @@ def main(date=None):
         # the file score_all_props generates 0 K props (no line = no bet), so
         # nothing was ever saved to grade. Free (Pinnacle guest API), no quota.
         try:
-            from scrapers.mlb_pinnacle_scraper import save_strikeout_lines
+            from scrapers.mlb_pinnacle_scraper import save_strikeout_lines, save_prop_lines
             _nk = save_strikeout_lines(today_str2)
+            # Real batter prop lines (Total Bases, Home Runs) from the same free
+            # Pinnacle feed. Must be saved BEFORE props are scored or they fall
+            # back to the model's invented 0.5/1.5 lines.
+            _np = save_prop_lines()
+            log.info(f"Pinnacle prop lines saved: {_np}")
             log.info(f"Pinnacle K lines pulled for prop save: {_nk} pitcher(s)")
         except Exception as _pe:
             log.warning(f"Pinnacle K pull before prop save failed (non-fatal): {_pe}")

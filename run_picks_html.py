@@ -707,7 +707,16 @@ def prep_props(props: list) -> list:
         # Suppressed types stay OFF the bettable/Best-Bets surface, but remain VISIBLE
         # in the Player Props tab as research PROJECTIONS (flagged, not hidden) so they
         # can still be looked at and researched. They're graded vs a fictional 0.5x line.
-        projection_only = ptype in SUPPRESS_BETTABLE_PROPS
+        # CONDITIONAL on a real book line (2026-08-11), not on a static type list.
+        # HR and TB now have REAL Pinnacle lines and two-way prices, so when a
+        # given player is actually listed by the book that prop becomes a real
+        # bet and should be surfaced. When the book does not list him, the same
+        # prop type falls back to the model's invented line and stays a research
+        # projection. So suppression is per-PICK, not per-TYPE.
+        # `bettable` is set by reprice_prop_with_book only when a real line and
+        # both prices resolved AND it cleared the price floor and mirage guard.
+        _has_real_line = bool(p.get("book_line") is not None and p.get("bettable"))
+        projection_only = (ptype in SUPPRESS_BETTABLE_PROPS) and not _has_real_line
 
         # Lineup/starter flags (carried from score_all_props if present)
         unconfirmed = p.get("lineup_unconfirmed", False)
@@ -761,6 +770,13 @@ def prep_props(props: list) -> list:
             "over_price":   p.get("over_price"),
             "under_price":  p.get("under_price"),
             "ev":           p.get("ev"),
+            # Real-book-line fields (None when the book does not list this prop)
+            "book_line":    p.get("book_line"),
+            "model_line":   p.get("model_line"),
+            "market_prob":  p.get("market_prob"),
+            "bettable":     p.get("bettable", False),
+            "blocked":      p.get("blocked"),
+            "price":        p.get("price"),
         })
     return out
 
@@ -3116,10 +3132,18 @@ function renderSurfacedProps(){
   // it at, so this panel was ranking by how fake the line was. prep_props
   // already sets projection_only from SUPPRESS_BETTABLE_PROPS; the flag was on
   // the data and this renderer just ignored it. Now it does not.
-  const bettable = DATA_PROPS.filter(p => !p.projection_only);
+  // A prop reaches this surface only with a REAL book line that cleared the
+  // price floor and the mirage guard. projection_only is now per-pick, so a
+  // player Pinnacle lists gets through while the same prop type for an unlisted
+  // player stays a projection.
+  const bettable = DATA_PROPS.filter(p => !p.projection_only && p.bettable);
+  // Rank by EV, not confidence. On a real two-way line, a high probability at a
+  // heavily juiced price is worth less than a modest probability at a fair one —
+  // the same confidence-is-not-value trap that made the old board misleading.
+  // No confidence floor: EV already encodes whether it is worth betting.
   const topProps = bettable
-    .filter(p => p.conf >= 65)
-    .sort((a,b) => (b.conf||0)-(a.conf||0));
+    .filter(p => p.ev != null && p.ev > 0)
+    .sort((a,b) => (b.ev||0)-(a.ev||0));
 
   section.style.display = "block";
   if(!topProps.length){
@@ -3151,8 +3175,10 @@ function renderSurfacedProps(){
     const label     = propLabel(p.prop_type, p.line, overUnder);
     const projColor = overUnder === "OVER" ? "var(--green)" : "var(--blue)";
     const _bp       = overUnder === "UNDER" ? p.under_price : p.over_price;
-    const bookRow   = (p.line != null && _bp != null)
-      ? `<div class="prop-line-row"><span class="prop-line-label">📕 SPORTSBOOK (Pinnacle)</span><span class="prop-line-val">${label} &nbsp;${_bp>0?"+":""}${_bp}</span></div>`
+    const _price = (p.price != null) ? p.price : _bp;
+    const bookRow   = (p.line != null && _price != null)
+      ? `<div class="prop-line-row"><span class="prop-line-label">📕 REAL LINE (Pinnacle)</span><span class="prop-line-val">${label} &nbsp;${_price>0?"+":""}${_price}</span></div>`
+        + (p.ev != null ? `<div class="prop-line-row"><span class="prop-line-label">EV</span><span class="prop-line-val" style="color:${p.ev>0?'var(--green)':'var(--red)'}">${p.ev>0?"+":""}${(p.ev*100).toFixed(1)}%${p.market_prob!=null?` · model ${(p.conf).toFixed(0)}% vs market ${(p.market_prob*100).toFixed(0)}%`:""}</span></div>` : "")
       : "";
     const barPct    = Math.min(100, Math.max(0, (p.conf - 50) * 2));
     const projBanner = p.projected

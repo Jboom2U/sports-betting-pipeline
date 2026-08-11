@@ -754,6 +754,161 @@ def _knorm(n: str) -> str:
     return " ".join((n or "").strip().split()).lower()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# REAL BOOK LINES FOR BATTER PROPS  (added 2026-08-11)
+# ─────────────────────────────────────────────────────────────────────────────
+# Until now every batter prop was scored against a line the MODEL invented:
+# "line": 0.5 for HR/HITS/RBI/R/SB and 1.5 for TB, hardcoded, with no price at
+# all. So a 68% hit rate on Over 0.5 Hits was recorded as a win when real books
+# price that around -250 to -350, where 68% LOSES money. The record measured
+# beating a made-up number.
+#
+# Pinnacle's free guest feed carries real two-way markets. Verified live on
+# 2026-08-11 via /admin/pinnacle-props-scan, all 100% parseable:
+#     Bases 266 (0.5-1.5), Home Runs 120 (0.5), Strikeouts 29 (2.5-7.5),
+#     Hits Allowed 27 (3.5-6.5), Pitching Outs 24 (14.5-18.5)
+# There is NO batter "Hits" market. Do not synthesize one.
+#
+# A prop is only BETTABLE when it has a real line AND both prices. Everything
+# else stays a research projection. Missing means missing.
+
+
+def _poisson_p_over(lam: float, line: float) -> float:
+    """P(X > line) for Poisson(lam) on a half-integer line.
+
+    Over 0.5 means at least 1. Over 1.5 means at least 2. Over 2.5 means at
+    least 3. Works for any .5 line, which is all the book offers.
+    """
+    if lam <= 0:
+        return 0.0
+    k = int(math.floor(line)) + 1          # 0.5 -> 1, 1.5 -> 2, 2.5 -> 3
+    cum = 0.0                               # P(X <= k-1)
+    term = math.exp(-lam)
+    for i in range(0, k):
+        if i > 0:
+            term *= lam / i
+        cum += term
+    return max(0.0, min(1.0, 1.0 - cum))
+
+
+def _american_to_decimal(a):
+    if a in (None, 0, ""):
+        return None
+    a = float(a)
+    if abs(a) < 100:        # impossible American price = corrupt data
+        return None
+    return 1 + (a / 100.0 if a > 0 else 100.0 / abs(a))
+
+
+def _prop_ev(prob: float, american) -> float | None:
+    d = _american_to_decimal(american)
+    if d is None or prob is None:
+        return None
+    return prob * (d - 1.0) - (1.0 - prob)
+
+
+def _load_pinnacle_props(date: str) -> dict:
+    """Load persisted real prop lines: {prop_key: {normalized_name: {...}}}."""
+    out = {}
+    try:
+        from scrapers.mlb_pinnacle_scraper import load_prop_lines
+        raw = load_prop_lines(date) or {}
+        for key, players in raw.items():
+            out[key] = {_knorm(n): d for n, d in players.items()}
+    except Exception as _e:
+        log.warning(f"Pinnacle prop lines load failed (non-fatal): {_e}")
+    log.info("Pinnacle prop lines loaded: %s", {k: len(v) for k, v in out.items()})
+    return out
+
+
+# Model prop_type -> Pinnacle market key. Only these two batter markets exist
+# with real lines. HITS, RBI, R and SB have NO real market and stay projections.
+PROP_TYPE_TO_BOOK = {"HR": "HR", "TB": "TB"}
+
+# Never lay more than this on a prop. Props are the least reliable output in the
+# model, and heavy juice turns a small estimation error into a large loss.
+PROP_PRICE_FLOOR = -250
+
+# Largest tolerated disagreement with the de-vigged market before we assume the
+# MODEL is wrong rather than the market. Pinnacle prices props tightly.
+MAX_PROP_MARKET_GAP = 0.12
+
+
+def reprice_prop_with_book(prop: dict, book: dict) -> dict:
+    """
+    Re-score a prop against the REAL book line and prices.
+
+    The scorers compute a Poisson rate (`proj`) against their own invented line.
+    Given the real line we recompute P(over) from that same rate, price BOTH
+    directions, and take the side with positive EV. If neither side is +EV the
+    prop stays visible but is marked unbettable — that is a real answer, not a
+    failure.
+
+    Mutates and returns the prop dict. Adds:
+      book_line, over_price, under_price, pick_side, ev, bettable, model_line
+    """
+    lam = prop.get("proj")
+    line = book.get("line")
+    op, up = book.get("over_price"), book.get("under_price")
+    if lam is None or line is None or op is None or up is None:
+        return prop
+
+    p_over = _poisson_p_over(float(lam), float(line))
+    p_under = 1.0 - p_over
+    ev_o, ev_u = _prop_ev(p_over, op), _prop_ev(p_under, up)
+    if ev_o is None and ev_u is None:
+        return prop
+
+    if (ev_o or -9) >= (ev_u or -9):
+        side, prob, price, ev = "OVER", p_over, op, ev_o
+    else:
+        side, prob, price, ev = "UNDER", p_under, up, ev_u
+
+    # ── Guards. EV alone is not enough on props. ──────────────────────────────
+    # 1. PRICE FLOOR. Laying -514 on an 86.5% model estimate shows +3.3% EV, but
+    #    a 3-point model error there wipes it out and you lose 5 units to win 1.
+    #    Props are the least reliable part of this model; do not lay heavy juice
+    #    on it. (Real example: Corbin Carroll HR under at -514 on 2026-08-11.)
+    # 2. MIRAGE GUARD. If the model disagrees with the market by more than
+    #    MAX_PROP_MARKET_GAP, the model is far more likely to be wrong than the
+    #    market. That HR case had the model at 13.5% against a market implied
+    #    23% — a 9.5 point gap on a market Pinnacle prices tightly. Betting the
+    #    other side of your own large disagreement is not edge, it is a bug bet.
+    #    Same logic already protects the Best Bets surface.
+    mkt_prob = None
+    d_pick = _american_to_decimal(price)
+    d_other = _american_to_decimal(up if side == "OVER" else op)
+    if d_pick and d_other:
+        ip, io_ = 1.0 / d_pick, 1.0 / d_other
+        if ip + io_ > 0:
+            mkt_prob = ip / (ip + io_)          # de-vigged market probability
+
+    blocked = None
+    if price is not None and float(price) < PROP_PRICE_FLOOR:
+        blocked = f"price {price} below floor {PROP_PRICE_FLOOR}"
+    elif mkt_prob is not None and abs(prob - mkt_prob) > MAX_PROP_MARKET_GAP:
+        blocked = (f"model {prob*100:.0f}% vs market {mkt_prob*100:.0f}% "
+                   f"({abs(prob-mkt_prob)*100:.0f} pt gap, likely model error)")
+
+    prop["model_line"]  = prop.get("line")      # keep what it used to claim
+    prop["line"]        = float(line)
+    prop["book_line"]   = float(line)
+    prop["over_price"]  = op
+    prop["under_price"] = up
+    prop["pick_side"]   = side
+    prop["confidence"]  = round(prob, 4)
+    prop["ev"]          = round(ev, 4) if ev is not None else None
+    prop["price"]       = price
+    prop["market_prob"] = round(mkt_prob, 4) if mkt_prob is not None else None
+    prop["blocked"]     = blocked
+    prop["bettable"]    = bool(ev is not None and ev > 0 and blocked is None)
+    prop["reasoning"]   = (prop.get("reasoning", "") +
+                           f" | REAL Pinnacle line {line} {side} "
+                           f"{'+' if price > 0 else ''}{price}, EV "
+                           f"{ev*100:+.1f}%" if ev is not None else prop.get("reasoning", ""))
+    return prop
+
+
 def _load_pinnacle_k(date: str) -> dict:
     """Load persisted Pinnacle K lines keyed by normalized pitcher name. {} if none."""
     out = {}
@@ -893,6 +1048,7 @@ def score_all_props(target_date: str = None) -> list[dict]:
     #    pitcher name. Absent pitcher => no market line => no K bet (do NOT
     #    invent one; that was the 0.8x-projection bug). ────────────────────────
     pinnacle_k = _load_pinnacle_k(today)
+    pinnacle_props = _load_pinnacle_props(today)
 
     # ── Weather ───────────────────────────────────────────────────────────────
     weather_data: dict[int, dict] = {}
@@ -1039,6 +1195,18 @@ def score_all_props(target_date: str = None) -> list[dict]:
                     prop["tier"] = _tier(adj_conf)
                 if prop["tier"] == "SKIP":
                     return None
+            # ── REAL BOOK LINE (2026-08-11) ───────────────────────────────────
+            # If Pinnacle lists this player in this market, throw away the
+            # model's invented line and re-score against the real one, pricing
+            # both directions. Props without a real market keep their model line
+            # and stay research projections. Missing means missing.
+            _bk = PROP_TYPE_TO_BOOK.get(ptype)
+            if _bk:
+                _row = (pinnacle_props.get(_bk) or {}).get(_knorm(pname))
+                if _row:
+                    prop = reprice_prop_with_book(prop, _row)
+                    line = prop.get("line", line)
+
             # Apply trailing hit rate blend (non-fatal — returns base_conf unchanged if no history)
             final_conf, thr = _apply_trailing_hit_rate(pname, ptype, line, prop["confidence"])
             prop["confidence"] = final_conf
@@ -1165,6 +1333,7 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
     """
     today = target_date or _today_et()
     pinnacle_k = _load_pinnacle_k(today)
+    pinnacle_props = _load_pinnacle_props(today)
 
     if not projected_lineups:
         return []
@@ -1312,6 +1481,16 @@ def score_projected_props(projected_lineups: dict, target_date: str = None) -> l
             return None
         if sc_note:
             prop["reasoning"] = prop.get("reasoning", "") + f" | Statcast: {sc_note}"
+        # REAL BOOK LINE — same treatment as the confirmed-lineup path. This is
+        # the path that actually drives the visible board most of the day, since
+        # lineups are unconfirmed until a few hours before first pitch, so it
+        # must reprice too. Missing this is how the K-rate bug stayed live for
+        # weeks: score_projected_props had its own duplicate loader.
+        _bk = PROP_TYPE_TO_BOOK.get(prop.get("prop_type", ""))
+        if _bk:
+            _row = (pinnacle_props.get(_bk) or {}).get(_knorm(prop.get("player_name", "")))
+            if _row:
+                prop = reprice_prop_with_book(prop, _row)
         prop["projected"] = True
         return prop
 
