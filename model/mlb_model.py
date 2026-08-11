@@ -1244,18 +1244,36 @@ class MLBModel:
         # until the run-environment projection itself is reined in.
         RL_FAV_COVER_CAP = 0.55
         RL_DOG_COVER_CAP = 0.68
+        # PRICE LOOKUP BY ACTUAL LINE (fixed 2026-08-11).
+        # This used to read rl_home_price / rl_away_price, which the scraper
+        # populated according to the MARKET favorite. This block picks its sides
+        # from the MODEL favorite. When the two disagreed the model priced a
+        # "+1.5" bet with the same team's "-1.5" price, producing impossible
+        # numbers that surfaced as the highest-EV plays on the board (Dodgers
+        # +1.5 at -120 against a -267 moneyline; Pirates +1.5 at +154 against a
+        # -113 moneyline). The scraper now publishes all four explicit prices,
+        # so ask for the exact handicap being bet and never infer it.
+        def _rl_price(team_side: str, handicap: float):
+            key = f"rl_{team_side}_{'m15' if handicap < 0 else 'p15'}_price"
+            v = sf(odds_snap.get(key))
+            if v is None:      # fall back to the legacy field only if it matches
+                legacy_line = sf(odds_snap.get(f"rl_{team_side}_line"))
+                if legacy_line is not None and abs(legacy_line - handicap) < 1e-6:
+                    v = sf(odds_snap.get(f"rl_{team_side}_price"))
+            return v
+
         if home_wp >= away_wp:
             fav, dog       = home, away
             fav_cover      = min(p_home_by2, RL_FAV_COVER_CAP)        # home -1.5
             dog_cover      = min(1.0 - p_home_by2, RL_DOG_COVER_CAP)  # away +1.5
-            fav_price      = sf(odds_snap.get("rl_home_price"))
-            dog_price      = sf(odds_snap.get("rl_away_price"))
+            fav_price      = _rl_price("home", -1.5)
+            dog_price      = _rl_price("away",  1.5)
         else:
             fav, dog       = away, home
             fav_cover      = min(p_away_by2, RL_FAV_COVER_CAP)        # away -1.5
             dog_cover      = min(1.0 - p_away_by2, RL_DOG_COVER_CAP)  # home +1.5
-            fav_price      = sf(odds_snap.get("rl_away_price"))
-            dog_price      = sf(odds_snap.get("rl_home_price"))
+            fav_price      = _rl_price("away", -1.5)
+            dog_price      = _rl_price("home",  1.5)
 
         # Reject corrupt run-line prices (|p| < 100 is impossible American odds —
         # the near-even-game averaging bug). Treat as missing.
@@ -1405,6 +1423,10 @@ class MLBModel:
             "total_line_max":   sf(odds_snap.get("total_line_max")),
             "ml_signal":      movement.get("ml_signal", "NO_DATA"),
             "total_signal":   movement.get("total_signal", "NO_DATA"),
+            "rl_home_m15_price": sf(odds_snap.get("rl_home_m15_price")),
+            "rl_home_p15_price": sf(odds_snap.get("rl_home_p15_price")),
+            "rl_away_m15_price": sf(odds_snap.get("rl_away_m15_price")),
+            "rl_away_p15_price": sf(odds_snap.get("rl_away_p15_price")),
             "sharp_side":     movement.get("sharp_side", ""),
             "ml_move_away":   sf(movement.get("ml_away_move")),
             "ml_move_home":   sf(movement.get("ml_home_move")),

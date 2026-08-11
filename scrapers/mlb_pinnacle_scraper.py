@@ -116,6 +116,8 @@ SNAPSHOT_FIELDNAMES = [
     "away_team", "home_team",
     "ml_away", "ml_home",
     "rl_away_line", "rl_away_price", "rl_home_line", "rl_home_price",
+    "rl_home_m15_price", "rl_home_p15_price",
+    "rl_away_m15_price", "rl_away_p15_price",
     "total_line", "total_over_price", "total_under_price",
     "total_line_min", "total_line_max",
     "books_used",
@@ -632,6 +634,32 @@ def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str,
                     pt = _mk_points(dd[side])
                     if pt is not None and abs(pt) == 1.5:
                         store[pt] = _mk_price(dd[side])
+        # ── PUBLISH ALL FOUR RUN LINE PRICES (fixed 2026-08-11) ──────────────
+        # THE BUG: this used to decide which team got -1.5 from the MARKET
+        # favorite, then store exactly one price per team. But mlb_model.py picks
+        # its run line side from the MODEL favorite. When those two disagree, the
+        # model labels a pick "<team> +1.5" and reads a field that actually holds
+        # that team's -1.5 price.
+        #
+        # Live on 2026-08-11:
+        #   Dodgers ML -267 (market fav) so rl_home_price held Dodgers -1.5.
+        #   Model liked the Royals, published "Dodgers +1.5", and read -120 —
+        #   the Dodgers -1.5 price. Implied 54.5% on a bet that must be more
+        #   likely than their 72.8% moneyline. Best Bets showed it at +23.6% EV.
+        #   Pirates the same way: "Pirates +1.5" priced at the Pirates -1.5 (+154),
+        #   surfacing as a +71.2% EV play that no book would take.
+        #
+        # Both lines exist in the feed for both teams. Publish all four, keyed by
+        # the actual handicap, so a consumer can look up the price for the line it
+        # is really betting. Never infer a price from who the favorite is.
+        rl_home_m15_price = home_rl.get(-1.5)   # home -1.5
+        rl_home_p15_price = home_rl.get(1.5)    # home +1.5
+        rl_away_m15_price = away_rl.get(-1.5)   # away -1.5
+        rl_away_p15_price = away_rl.get(1.5)    # away +1.5
+
+        # Legacy fields kept so nothing downstream breaks. They still describe
+        # the STANDARD favorite -1.5 / dog +1.5 pairing, which is correct for
+        # display. Anything computing EV must use the four explicit fields above.
         home_fav = (ml_home is not None and ml_away is not None and ml_home < ml_away)
         rl_home_line = -1.5 if home_fav else 1.5
         rl_away_line = 1.5 if home_fav else -1.5
@@ -709,6 +737,11 @@ def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str,
             "rl_away_price":     rl_away_price,
             "rl_home_line":      rl_home_line,
             "rl_home_price":     rl_home_price,
+            # Explicit per-handicap prices. Use THESE for any EV calculation.
+            "rl_home_m15_price": rl_home_m15_price,
+            "rl_home_p15_price": rl_home_p15_price,
+            "rl_away_m15_price": rl_away_m15_price,
+            "rl_away_p15_price": rl_away_p15_price,
             "total_line":        total,
             "total_over_price":  over_p,
             "total_under_price": under_p,

@@ -104,10 +104,26 @@ def value_for_pick(pick: dict) -> dict:
         price_other = g.get("ml_home_odds") if picked_away else g.get("ml_away_odds")
 
     elif ptype == "RL":
+        # Price by the ACTUAL handicap (2026-08-11). rl_away_price/rl_home_price
+        # are keyed to the MARKET favorite, so on a game where the model and the
+        # market disagree they hand a "+1.5" pick the "-1.5" price. That produced
+        # impossible EV numbers at the top of Best Bets.
         away = g.get("away_team", "")
         picked_away = pick.get("team") == away
-        price_pick  = g.get("rl_away_price") if picked_away else g.get("rl_home_price")
-        price_other = g.get("rl_home_price") if picked_away else g.get("rl_away_price")
+        side  = "away" if picked_away else "home"
+        other = "home" if picked_away else "away"
+        hcap  = "p15" if "+1.5" in (pick.get("label", "") or "") else "m15"
+        opp   = "m15" if hcap == "p15" else "p15"
+        price_pick  = g.get(f"rl_{side}_{hcap}_price")
+        price_other = g.get(f"rl_{other}_{opp}_price")
+        if price_pick is None:      # legacy fallback, only when the line matches
+            legacy_line = g.get(f"rl_{side}_line")
+            want = 1.5 if hcap == "p15" else -1.5
+            try:
+                if legacy_line is not None and abs(float(legacy_line) - want) < 1e-6:
+                    price_pick = g.get(f"rl_{side}_price")
+            except (TypeError, ValueError):
+                pass
 
     elif ptype == "TOTAL":
         is_over = (pick.get("side") == "over") or ("OVER" in (pick.get("label", "").upper()))

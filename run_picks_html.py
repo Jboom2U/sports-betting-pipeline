@@ -246,8 +246,22 @@ def prep_picks(picks, kalshi_data: dict = None):
             _pa = (p.get("side") == "away") or (p["team"] == gd.get("away_team"))
             _pick_price = gd.get("ml_away_odds") if _pa else gd.get("ml_home_odds")
         elif ptype == "RL":
-            _pa = p["team"] == gd.get("away_team")
-            _pick_price = gd.get("rl_away_price") if _pa else gd.get("rl_home_price")
+            # Price by the ACTUAL handicap in the label, not by who the market
+            # thinks is favored. See the 2026-08-11 fix in mlb_model.py: reading
+            # rl_away_price/rl_home_price gave a "+1.5" pick its own "-1.5" price
+            # whenever the model and the market disagreed on the favorite.
+            _pa   = p["team"] == gd.get("away_team")
+            _side = "away" if _pa else "home"
+            _hcap = "p15" if "+1.5" in (p.get("label", "") or "") else "m15"
+            _pick_price = gd.get(f"rl_{_side}_{_hcap}_price")
+            if _pick_price is None:
+                _legacy_line = gd.get(f"rl_{_side}_line")
+                _want = 1.5 if _hcap == "p15" else -1.5
+                try:
+                    if _legacy_line is not None and abs(float(_legacy_line) - _want) < 1e-6:
+                        _pick_price = gd.get(f"rl_{_side}_price")
+                except (TypeError, ValueError):
+                    pass
         elif ptype == "TOTAL":
             _isover = "OVER" in (p.get("label", "").upper())
             _pick_price = gd.get("total_over_price") if _isover else gd.get("total_under_price")
