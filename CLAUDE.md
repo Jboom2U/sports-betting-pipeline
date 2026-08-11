@@ -1,5 +1,56 @@
 # Statalizers — Project Context for Claude
 
+## 2026-08-11: FULL MODEL REVIEW. Read this before touching pick logic.
+
+Measured on 661 graded picks since the 2026-07-21 boundary, via the new
+`/admin/calibration-fit` and `/admin/strategy-backtest` routes.
+
+**RUN LINE is the only validated edge.** Walk-forward (threshold chosen on the
+first half of the period, applied to the second half it never saw): **51-21,
+70.8%, p=0.0011**. It is a broad plateau across 55-65% confidence, not one lucky
+cut, which is what makes it credible. Usable band **57-65%**. It collapses at 68%
+(15-14) because that is the `RL_DOG_COVER_CAP` region. This is the one bet type
+already gated on positive EV against a real price, and that is not a coincidence.
+
+**MONEYLINE did NOT hold up.** Walk-forward 48-42, 53.3%, **p=0.47, noise**. And
+ML picks skew to favorites priced -130 to -160 where break-even is 56.5-61.5%, so
+it loses at real prices. The in-sample sweep looked good (62.9% at a 70% cut) but
+that threshold was chosen after seeing the data. Do not tune ML on the sweep.
+
+**TOTALS cannot clear break-even, structurally.** `total_conf_base` is capped at
+0.68 (`mlb_model.py`), which calibrates to 48.8% against a 52.38% break-even. No
+total the model can currently produce is +EV. The fitted slope is also nearly
+flat (A=0.179): 30 points of stated confidence map to under 7 points of real
+probability. Record 72-83. **Do not "fix" this by raising the cap**. That just
+relabels the same non-information. The run projection needs rebuilding.
+
+**Per-type calibration is live** in `model/mlb_picks.py CAL_COEFFS`:
+ML A=0.621123 B=-0.368625, TOTAL A=0.178915 B=-0.183981. **RL is deliberately
+absent**: its fit made out-of-sample Brier WORSE (0.2327 → 0.2573) because there
+is little miscalibration left to correct (stated 58.9% vs actual 55.0%). Only
+adopt a type whose out-of-sample Brier improves. Refit monthly at
+`/admin/calibration-fit`; override per type with `CAL_A_ML` / `CAL_B_ML` env vars.
+
+### Signals that are collected and then thrown away
+- **Platoon splits are dead.** Computed at `mlb_model.py:1064-1067`, written to
+  the output dict at 1359-1362 for DISPLAY ONLY. They never touch `exp_runs`,
+  `ml_conf`, or any adjustment. 3,492 scraped rows feeding a text label.
+- **Batter Statcast never reaches the game model.** `mlb_statcast_master.csv` is
+  loaded by `mlb_props_model.py` and `player_data.py` only. Every ML/RL/TOTAL is
+  scored with zero batter quality input beyond team season RPG and OPS.
+- **Only 2 of 7 pitcher Statcast fields are used** (xwOBA, whiff%). Velocity,
+  barrel%, exit velo and hard-hit% are scraped and ignored.
+- **Injuries are never used anywhere.** Zero references in `model/`.
+- `recent_form` is raw last-10 runs with no opponent or park adjustment, at 35%
+  of the offensive weight. Park factor is also partly double counted: season RPG
+  already contains that team's home games and is then multiplied by park again.
+
+### Full write-up
+`C:\Users\Jskel\Vault\02 - Statalizers\Model Review 2026-08-11.md` (3 parts) and
+`Betting Card 2026-08-11.md`.
+
+---
+
 ## Changed 2026-08-04 — tier + conf FROZEN at LINEUP LOCK (Yesterday LOCK undercount)
 
 Yesterday tier record showed LOCK 0-1 when Justin had seen several locks. Root cause
@@ -259,6 +310,70 @@ CONFIRMED already correct: `get_pitcher` uses `sorted(keys)[-1]` = single latest
 
 ---
 
+## Shipped 2026-08-11: what changed and where
+
+- **Sharp WITH/AGAINST label fixed** (`mlb_picks.py` `_ml_reasoning`,
+  `_total_reasoning`). It read the sign of `ml_adj`, which is the SUM of every
+  confidence adjustment, not a statement about which side the money took. Now
+  compares `sharp_side` to `ml_team`; totals compare move direction to
+  `total_pick`. The STEAM/DRIFT penalty keys off this, so it was being applied
+  backwards. Revisit the -5% vs -15% question only now that the sign is right.
+- **Pinnacle totals guard tightened** (`mlb_pinnacle_scraper.py` s;0;ou block).
+  Old guard `6.0 <= ln <= 13.0` plus "closest to even" selected ALT lines as the
+  game total when the main line was absent, producing four 6.5 lines on
+  2026-08-11 and phantom 3.0-run edges published as LOCKs. Now: floor 6.5,
+  half-numbers only, and price balance within `MAX_MAIN_TOTAL_PRICE_SKEW` (40).
+  The last one does the real work, since a main total is priced near even and an
+  alt is heavily skewed. If nothing survives, `total_line` stays None and the
+  pick is suppressed.
+- **Real prop lines wired** (`mlb_props_model.py` + `mlb_pinnacle_scraper.py`).
+  `fetch_prop_lines()` / `save_prop_lines()` / `load_prop_lines()` pull real
+  two-way markets: Bases 266, Home Runs 120, Strikeouts 29, Hits Allowed 27,
+  Pitching Outs 24, all verified 100% parseable via `/admin/pinnacle-props-scan`.
+  `reprice_prop_with_book()` recomputes P(over) from the Poisson rate against the
+  REAL line and prices both directions. Guards: `PROP_PRICE_FLOOR` -250 (never
+  lay heavy juice on the least reliable part of the model) and
+  `MAX_PROP_MARKET_GAP` 0.12 (a big disagreement with Pinnacle means the model is
+  wrong, not the market). **There is NO batter Hits market in the feed**. HITS,
+  RBI, R and SB stay projections permanently unless another line source is added.
+  The Odds API does carry them (`batter_hits`, `batter_rbis`,
+  `batter_runs_scored`, `batter_stolen_bases`) but costs credits per market per
+  event, so it needs an on-demand button, not a slate-wide pull.
+- **Prop suppression is now per-PICK, not per-TYPE** (`run_picks_html.py`
+  `prep_props`). A prop is bettable only when it has a real book line that
+  cleared both guards.
+- **EV gate built but OFF by default** (`mlb_picks.py`, `EV_GATE=1` to enable).
+  Ports the RL pattern to ML and TOTAL using calibrated probability. Preview with
+  `python3 scripts/ev_gate_preview.py` before enabling.
+- **Best Bets** now has a separate RL rule using the OBSERVED band record
+  (`RL_BAND_RATES`), not a fitted curve, since RL is uncalibrated by design. ML
+  uses the calibrated probability. The card states which basis applied.
+- **Lineup scheduler rewritten** (`app.py`). It used to poll hourly and **stop at
+  3pm ET**. Lineups post 2-3 hours before first pitch, so for a 6:40pm game
+  they land ~4:10pm and west coast games were missed entirely. That is why every
+  card read LINEUP NOT SET at first pitch. Now polls every 20 min until
+  `_last_first_pitch()`, rescores on ANY change in confirmed count, and has no
+  early exit so late scratches are caught. `_last_first_pitch()` was hoisted to
+  module scope: it was nested inside `_start_frequent_odds` and invisible to the
+  lineup loop.
+- **Stale board banner** (`/schedule-status` now returns `board_version` from
+  `_cache["generated_at"]`). Best Bets is computed at page render; the server
+  rescores on lineup changes and every 40-min price pull, so an open tab showed
+  stale picks. The page prompts a reload rather than half-updating, which would
+  mix EV from one snapshot with prices from another.
+- **New admin routes:** `/admin/calibration-fit` (per-type Platt fit with
+  out-of-sample validation), `/admin/strategy-backtest` (threshold rules,
+  walk-forward validated, weekly breakdown), `/admin/pinnacle-props-scan`
+  (which prop markets really exist, read-only).
+
+**Still open:** no `odds` column on `picks`, so EV and CLV cannot be measured or
+backfilled. This is the top blocker and it gates any real ML verdict. Platoon
+wiring needs `pitchHand` on the schedule scrape (batter `vs_lhp_*`/`vs_rhp_*`
+splits are already scraped and unused). Hits Allowed and Pitching Outs have real
+lines but no probability model.
+
+---
+
 ## 📍 Which System Am I In? — Session Scope Map
 
 This folder holds **three related but separate systems**. Confirm which one the session is
@@ -286,11 +401,34 @@ Anything worth keeping belongs in this file, not in a chat transcript.
 
 ---
 
-## ⚠️ CRITICAL: Never Run Git Commands From the Sandbox
-**The Cowork sandbox cannot delete lock files on the Windows-mounted repo.** Running `git add` or `git commit` from bash leaves `.git/index.lock` and `.git/HEAD.lock` stranded, breaking the next commit.
-- **Claude: make file edits only from the sandbox. Never run git add/commit/push from bash.**
+## ⚠️ CRITICAL: Never Run ANY Git Command From the Sandbox
+
+**The Cowork sandbox cannot delete lock files on the Windows-mounted repo.** A
+stranded `.git/index.lock` breaks the next commit until the user removes it by
+hand.
+
+**This includes commands that look read-only.** Tightened 2026-08-11 after
+`git status --porcelain` stranded a lock. The previous wording said "git
+add/commit", which reads as write-only and is how the mistake got rationalized.
+
+`git status`, `git diff` and `git ls-files` all refresh git's cached index of
+file stat data (size, mtime, inode) when it looks stale. To do that git creates
+`.git/index.lock`, writes a new index, renames it into place, then unlinks the
+lock. The sandbox can create that lock but has no permission to unlink it, so
+the cleanup fails and an empty lock file is left behind. It usually gets away
+with it; it fails exactly when many files are dirty, which is the end of a big
+session when it hurts most.
+
+- **Claude: make file edits only from the sandbox. Run NO git command from bash,
+  not even status/diff/log/ls-files.**
+- For verification use the file tools, plus `ls`, `wc -l`, `python3 -m py_compile`
+  and reading the file directly. That covers everything git status was being
+  used for.
 - Tell the user to run all git operations from their own PowerShell terminal.
-- Correct pattern: edit files in sandbox → "run `git commit` and `git push` from your terminal"
+- Correct pattern: edit files in sandbox → "run `git commit` and `git push` from
+  your terminal"
+- **Recovery if it happens anyway:** `Remove-Item .git\index.lock -Force` from
+  PowerShell. Nothing is lost; the lock is empty and only blocks the next write.
 
 ---
 
