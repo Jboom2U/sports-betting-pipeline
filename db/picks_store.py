@@ -24,6 +24,48 @@ log = logging.getLogger(__name__)
 
 # ── Write ─────────────────────────────────────────────────────────────────────
 
+def _pick_price(p: dict):
+    """American price on the side ACTUALLY picked, or None.
+
+    Added 2026-08-11. Prices must be looked up by the real handicap, not by who
+    the market favours: rl_home_price / rl_away_price are keyed to the MARKET
+    favourite, so on a game where the model disagrees they return the opposite
+    line's price. That produced impossible Best Bets (Dodgers +1.5 at -120
+    against a -267 moneyline). Same lookup rule as model/value.py.
+
+    Returns None rather than a guess. A missing price is recoverable later; a
+    wrong one silently corrupts every EV and CLV number computed from it.
+    """
+    g = p.get("game_data") or {}
+    t = p.get("type", "")
+    label = (p.get("label", "") or "")
+    try:
+        if t == "ML":
+            away = (p.get("side") == "away") or (p.get("team") == g.get("away_team"))
+            v = g.get("ml_away_odds") if away else g.get("ml_home_odds")
+        elif t == "TOTAL":
+            over = "OVER" in label.upper()
+            v = g.get("total_over_price") if over else g.get("total_under_price")
+        elif t == "RL":
+            side = "away" if p.get("team") == g.get("away_team") else "home"
+            hcap = "p15" if "+1.5" in label else "m15"
+            v = g.get(f"rl_{side}_{hcap}_price")
+            if v is None:   # legacy fallback, only when the stored line matches
+                legacy = g.get(f"rl_{side}_line")
+                want = 1.5 if hcap == "p15" else -1.5
+                if legacy is not None and abs(float(legacy) - want) < 1e-6:
+                    v = g.get(f"rl_{side}_price")
+        else:
+            return None
+        if v in (None, "", 0):
+            return None
+        v = float(v)
+        # American odds cannot sit strictly between -100 and +100.
+        return None if abs(v) < 100 else v
+    except (TypeError, ValueError):
+        return None
+
+
 def save_picks(picks: list, pick_date: str) -> int:
     """
     Upsert all picks for a given date into the picks table.
@@ -58,9 +100,10 @@ def save_picks(picks: list, pick_date: str) -> int:
                     """
                     INSERT INTO picks
                         (pick_date, game_id, game, pick_type, label, team,
-                         conf, tier, reasoning, market_signal, tier_locked, actual_result)
+                         conf, tier, reasoning, market_signal, tier_locked,
+                         odds, odds_at, actual_result)
                     VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
+                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), 'PENDING')
                     ON CONFLICT (pick_date, game_id, pick_type) DO UPDATE SET
                         label         = EXCLUDED.label,
                         team          = EXCLUDED.team,
@@ -69,7 +112,26 @@ def save_picks(picks: list, pick_date: str) -> int:
                         market_signal = COALESCE(picks.market_signal, EXCLUDED.market_signal),
                         conf          = CASE WHEN picks.tier_locked THEN picks.conf ELSE EXCLUDED.conf END,
                         tier          = CASE WHEN picks.tier_locked THEN picks.tier ELSE EXCLUDED.tier END,
-                        tier_locked   = (picks.tier_locked OR EXCLUDED.tier_locked)
+                        tier_locked   = (picks.tier_locked OR EXCLUDED.tier_locked),
+                        -- Keep the FIRST price captured (closest to when the pick
+                        -- was published), but fill it in if we never got one.
+                        -- Once tier_locked, the price is frozen alongside conf so
+                        -- the stored EV matches the bet-time board.
+                        odds          = CASE
+                                          WHEN picks.odds IS NULL THEN EXCLUDED.odds
+                                          WHEN picks.tier_locked THEN picks.odds
+                                          ELSE COALESCE(EXCLUDED.odds, picks.odds)
+                                        END,
+                        odds_at       = CASE
+                                          WHEN picks.odds IS NULL AND EXCLUDED.odds IS NOT NULL
+                                            THEN NOW() ELSE picks.odds_at
+                                        END,
+                        -- Closing price: keep refreshing until first pitch. The
+                        -- last value written before the game starts IS the close,
+                        -- since re-scores stop at first pitch.
+                        closing_odds    = COALESCE(EXCLUDED.odds, picks.closing_odds),
+                        closing_odds_at = CASE WHEN EXCLUDED.odds IS NOT NULL
+                                               THEN NOW() ELSE picks.closing_odds_at END
                     """,
                     (
                         pick_date,
@@ -83,6 +145,7 @@ def save_picks(picks: list, pick_date: str) -> int:
                         p.get("reasoning", ""),
                         _infer_market_signal(p.get("reasoning", "")),
                         _lineups_set,
+                        _pick_price(p),
                     )
                 )
                 inserted += cur.rowcount

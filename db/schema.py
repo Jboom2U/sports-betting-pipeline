@@ -42,6 +42,15 @@ CREATE TABLE IF NOT EXISTS picks (
     reasoning       TEXT,
     market_signal   TEXT,                   -- CONFIRM | DIVERGE | NEUTRAL (Kalshi/Poly)
     tier_locked     BOOLEAN     NOT NULL DEFAULT FALSE,  -- freezes conf/tier once lineups confirm
+
+    -- PRICE (added 2026-08-11). Without this, EV/ROI/CLV cannot be measured or
+    -- backfilled, which is why the 2026-08-11 review could only ever report win
+    -- RATE. odds = American price on the side actually picked, captured at save
+    -- time. closing_odds = the last pre-first-pitch price, for CLV.
+    odds            REAL,
+    odds_at         TIMESTAMPTZ,
+    closing_odds    REAL,
+    closing_odds_at TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Backtesting fields — filled by the grading step after game results are in
@@ -210,6 +219,13 @@ def create_all():
             # tier), so intraday re-scores can't downgrade a LOCK before grading.
             cur.execute(
                 "ALTER TABLE picks ADD COLUMN IF NOT EXISTS tier_locked BOOLEAN NOT NULL DEFAULT FALSE")
+            # Price columns (2026-08-11). Without a stored price, EV, ROI and CLV
+            # cannot be measured or backfilled — which is why the 2026-08-11
+            # review could only ever report win RATE, never whether the model
+            # beat the number it bet into.
+            for _col, _type in (("odds", "REAL"), ("odds_at", "TIMESTAMPTZ"),
+                                ("closing_odds", "REAL"), ("closing_odds_at", "TIMESTAMPTZ")):
+                cur.execute(f"ALTER TABLE picks ADD COLUMN IF NOT EXISTS {_col} {_type}")
             log.info("DB schema verified / created.")
         except Exception as e:
             log.warning(f"Schema creation failed (non-fatal): {e}")
