@@ -1723,6 +1723,8 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
     <a class="card" href="/admin/pinnacle-odds-test"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Pinnacle odds diagnostic</div>
       <div class="card-desc">Dry-run ML/RL/total parse, no writes, no quota</div></a>
+    <a class="card" href="/admin/pinnacle-props-scan"><span class="badge badge-admin">Admin</span>
+      <b>Pinnacle props scan</b><span>Which prop markets really exist, with real lines. Read-only.</span></a>
     <a class="card" href="/admin/pinnacle-k-test"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Pinnacle K-line test</div>
       <div class="card-desc">Live strikeout lines + prices parse check</div></a>
@@ -2618,6 +2620,109 @@ h2{{color:#58a6ff}} td,th{{padding:5px 12px;border-bottom:1px solid #21262d;font
 <table><tr><th>Pitcher</th><th>Line</th><th>Over</th><th>Under</th></tr>{rows}</table>
 <p><a href="/admin">&larr; Admin</a></p></body></html>"""
     return Response(html, mimetype="text/html")
+
+
+@app.route("/admin/pinnacle-props-scan")
+def pinnacle_props_scan():
+    """
+    READ-ONLY reconnaissance on Pinnacle's free guest feed.
+
+    Purpose: find out which prop markets ACTUALLY exist, with real lines and real
+    prices, BEFORE any parser is written against them. CLAUDE.md notes the feed
+    carries units-tagged Over/Under children (TotalBases, HomeRuns, Hits,
+    EarnedRuns, HitsAllowed, PitchingOuts...) on the same plumbing as the K props.
+    This route proves or disproves that instead of assuming it.
+
+    Writes nothing. Costs no Odds API quota. Pinnacle guest API is free.
+
+    Read the OUTPUT before trusting any of it: a units bucket is only useful if
+    the "parseable" column is high — that means line AND both prices resolved.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/pinnacle-props-scan")
+    import html as _h, collections, traceback
+    try:
+        from scrapers.mlb_pinnacle_scraper import (
+            fetch_matchups, fetch_markets, _by_designation, _mk_price, _mk_points)
+
+        matchups = fetch_matchups()
+        markets  = fetch_markets()
+
+        # market prices keyed by matchupId, only the straight O/U children
+        by_mid = collections.defaultdict(list)
+        for mk in markets:
+            if not isinstance(mk, dict):
+                continue
+            if mk.get("key") and "ou" in str(mk.get("key")):
+                by_mid[mk.get("matchupId")].append(mk.get("prices") or [])
+
+        buckets = collections.defaultdict(lambda: {"n": 0, "ok": 0,
+                                                   "samples": [], "lines": []})
+        for m in matchups:
+            if not isinstance(m, dict) or m.get("type") != "special":
+                continue
+            units = m.get("units") or "(no units tag)"
+            b = buckets[units]
+            b["n"] += 1
+            desc = (m.get("special") or {}).get("description", "") or ""
+            line = op = up = None
+            for prices in by_mid.get(m.get("id"), []):
+                dd = _by_designation(prices)
+                o, u = dd.get("over"), dd.get("under")
+                if o and u:
+                    op, up = _mk_price(o), _mk_price(u)
+                    line = _mk_points(o)
+                    if line is None:
+                        line = _mk_points(u)
+                    break
+            if line is not None and op is not None and up is not None:
+                b["ok"] += 1
+                b["lines"].append(line)
+            if len(b["samples"]) < 3:
+                b["samples"].append((desc[:70], line, op, up))
+
+        rows = ""
+        for units, b in sorted(buckets.items(), key=lambda x: -x[1]["ok"]):
+            pct = (100.0 * b["ok"] / b["n"]) if b["n"] else 0
+            colour = "#3fb950" if pct >= 70 else ("#d29922" if pct >= 25 else "#f85149")
+            lo = min(b["lines"]) if b["lines"] else "-"
+            hi = max(b["lines"]) if b["lines"] else "-"
+            samp = "<br>".join(
+                f"<span style='color:#8b949e'>{_h.escape(str(d))}</span> "
+                f"&rarr; line <b>{l}</b> @ {o}/{u}" for d, l, o, u in b["samples"])
+            rows += (f"<tr><td><b>{_h.escape(str(units))}</b></td>"
+                     f"<td>{b['n']}</td>"
+                     f"<td style='color:{colour}'><b>{b['ok']}</b> ({pct:.0f}%)</td>"
+                     f"<td>{lo} to {hi}</td>"
+                     f"<td style='font-size:11px'>{samp}</td></tr>")
+
+        usable = [u for u, b in buckets.items()
+                  if b["n"] >= 3 and b["ok"] / max(b["n"], 1) >= 0.7]
+        verdict = ("&#9989; Usable prop markets found: <b>" + _h.escape(", ".join(sorted(usable)))
+                   + "</b>" if usable else
+                   "&#9888; No units bucket parsed cleanly. Do NOT write a parser yet.")
+
+        html = f"""<!doctype html><html><head><meta charset=utf-8><title>Pinnacle props scan</title>
+<style>body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:1100px;margin:0 auto}}
+h2{{color:#58a6ff}} td,th{{padding:6px 12px;border-bottom:1px solid #21262d;font-size:13px;text-align:left;vertical-align:top}}
+.v{{background:#161b22;padding:12px 16px;border-radius:8px;font-weight:700;margin:10px 0}}
+.note{{color:#8b949e;font-size:12px;line-height:1.5}}</style></head><body>
+<h2>Pinnacle prop markets &mdash; reconnaissance</h2>
+<div class="v">{verdict}</div>
+<p class="note">{len(matchups)} matchups, {len(markets)} markets fetched live. Read-only, nothing written,
+no Odds API quota used.<br>
+<b>parseable</b> = line AND both prices resolved. Only build a parser for buckets that are green.
+A bucket with a low percentage means the line or prices live somewhere else in the payload.</p>
+<table><tr><th>units</th><th>found</th><th>parseable</th><th>line range</th><th>samples</th></tr>{rows}</table>
+<p class="note">Sanity check the line range before trusting a bucket. Batter Hits should sit near 0.5-1.5,
+Total Bases near 1.5-2.5, pitcher Strikeouts near 3.5-7.5. A range that looks wrong means the bucket is
+a derivative, not the market it claims to be.</p>
+<p><a href="/admin">&larr; Admin</a></p></body></html>"""
+        return Response(html, mimetype="text/html")
+    except Exception:
+        return Response(f"<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        f"{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
 
 
 @app.route("/admin/pinnacle-test")

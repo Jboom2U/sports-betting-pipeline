@@ -260,6 +260,31 @@ def prep_picks(picks, kalshi_data: dict = None):
         except (TypeError, ValueError):
             _pick_price = None
 
+        # ── HONEST READ (2026-08-11) ──────────────────────────────────────────
+        # The displayed conf is systematically inflated: across 121 graded ML
+        # picks it averaged 71.9% while realizing 49.6%. cal_conf maps it through
+        # the Platt fit onto its historically observed win rate; breakeven is what
+        # the ACTUAL price demands. Together they answer the only question that
+        # matters on a card — is the honest probability above what I am charged?
+        _cal_conf = _breakeven = _honest_ev = None
+        _verdict  = ""
+        try:
+            from model.mlb_picks import calibrated_conf as _cc
+            from model.value import american_to_decimal as _a2d
+            _cal = _cc(_p)
+            _cal_conf = round(_cal * 100, 1) if _cal is not None else None
+            _d = _a2d(_pick_price)
+            if _d and _cal is not None:
+                _breakeven = round(100.0 / _d, 1)
+                _honest_ev = round(_cal * (_d - 1.0) - (1.0 - _cal), 4)
+                _m = _cal_conf - _breakeven
+                if   _m >=  4: _verdict = "PLAYABLE"
+                elif _m >=  0: _verdict = "THIN"
+                elif _m >= -8: _verdict = "NO EDGE"
+                else:          _verdict = "AVOID"
+        except Exception:
+            pass
+
         out.append({
             "type":           ptype,
             "label":          p["label"],
@@ -295,6 +320,10 @@ def prep_picks(picks, kalshi_data: dict = None):
             "ml_home_odds":   gd.get("ml_home_odds"),
             "narrative":      p.get("narrative", ""),
             # ── Market VALUE / EV (advisory — price-awareness, not a filter) ──
+            "cal_conf":     _cal_conf,
+            "breakeven":    _breakeven,
+            "honest_ev":    _honest_ev,
+            "read_verdict": _verdict,
             "value_tag":    _val.get("tag", ""),
             "value_ev":     _val.get("ev"),
             "value_edge":   _val.get("edge"),
@@ -1789,6 +1818,18 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
 .date-btn:hover{background:rgba(255,255,255,.1);color:var(--text)}
 .date-btn.active{background:rgba(0,230,118,.15);border-color:var(--green);color:var(--green)}
 /* ── ODDS PILL ── */
+.honest-read{display:block;margin:7px 0 0;padding:7px 10px;border-radius:6px;
+  border-left:3px solid;font-size:.72rem;line-height:1.45}
+.honest-read .hr-title{display:block;font-weight:700;letter-spacing:.06em;font-size:.63rem;margin-bottom:2px}
+.honest-read .hr-body{color:#c9d1d9}
+.hr-play{background:rgba(63,185,80,.09);border-color:#3fb950}
+.hr-play .hr-title{color:#3fb950}
+.hr-thin{background:rgba(210,153,34,.09);border-color:#d29922}
+.hr-thin .hr-title{color:#d29922}
+.hr-none{background:rgba(139,148,158,.09);border-color:#8b949e}
+.hr-none .hr-title{color:#8b949e}
+.hr-avoid{background:rgba(248,81,73,.09);border-color:#f85149}
+.hr-avoid .hr-title{color:#f85149}
 .value-row{display:flex;align-items:center;gap:8px;margin:6px 0 2px;flex-wrap:wrap;font-size:.74rem}
 .value-tag{font-weight:800;letter-spacing:.03em;border:1px solid;border-radius:6px;padding:2px 7px}
 .value-ev{font-weight:700}
@@ -1986,10 +2027,13 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
       </div>
     </div>
 
-    <!-- SURFACED PROPS -- 70%+ confidence props shown alongside game picks -->
+    <!-- SURFACED PROPS -- BETTABLE props only (real book line + price). -->
+    <!-- Fixed 2026-08-11: this surface used to ignore projection_only and was -->
+    <!-- filling with Hits/TB/RBI props priced off a fabricated 0.5 or 1.5 line. -->
     <div id="surfacedPropsSection" style="display:none;margin-bottom:16px">
-      <div class="section-title">👤 Top Props (70%+)</div>
+      <div class="section-title">👤 Top Props <span style="font-size:.72rem;font-weight:400;color:var(--sub)">— real sportsbook lines only</span></div>
       <div class="picks-grid" id="surfacedPropsGrid"></div>
+      <div id="surfacedPropsEmpty" style="display:none;background:rgba(255,183,77,.07);border:1px solid rgba(255,183,77,.25);border-radius:8px;padding:14px 16px;font-size:.82rem;color:var(--sub);line-height:1.5"></div>
     </div>
 
     <div class="section-title">🎯 Thematic Parlays</div>
@@ -2230,6 +2274,42 @@ function oddsHtml(p){
 
 // Market VALUE / EV row — de-vigged price awareness. Confidence says how likely;
 // value says whether the PRICE is wrong. Chalk = heavy favorite, value scarce.
+// ── HONEST READ (2026-08-11) ────────────────────────────────────────────────
+// The big number on a card is the model's stated confidence, which across 121
+// graded ML picks averaged 71.9% while realizing 49.6%. So the card was
+// answering "how sure is the model" when the useful question is "is the honest
+// probability above what this price charges me".
+//
+//   calibrated  = stated conf mapped through the Platt fit onto realized results
+//   breakeven   = what the actual price demands to break even
+//   verdict     = calibrated minus breakeven
+//
+// This is the read, not a filter. Every pick still shows; you decide.
+function honestReadHtml(p){
+  if(p.cal_conf==null) return "";
+  if(p.breakeven==null){
+    return `<div class="honest-read hr-none">
+      <span class="hr-title">HONEST READ</span>
+      <span class="hr-body">Model ${p.conf}% &rarr; calibrated <b>${p.cal_conf}%</b>
+      &middot; no clean price, so no breakeven to compare against</span></div>`;
+  }
+  const m = +(p.cal_conf - p.breakeven).toFixed(1);
+  const v = p.read_verdict || "";
+  const cls = v==="PLAYABLE" ? "hr-play" : v==="THIN" ? "hr-thin"
+            : v==="NO EDGE"  ? "hr-none" : "hr-avoid";
+  const evTxt = (p.honest_ev==null) ? "" :
+    ` &middot; EV ${p.honest_ev>0?"+":""}${(p.honest_ev*100).toFixed(1)}%`;
+  const priceStr = (p.pick_price==null) ? "" :
+    ` at ${p.pick_price>0?"+":""}${Math.round(p.pick_price)}`;
+  return `<div class="honest-read ${cls}">
+    <span class="hr-title">HONEST READ &middot; ${v}</span>
+    <span class="hr-body">
+      Model says <b>${p.conf}%</b> &rarr; calibrated <b>${p.cal_conf}%</b>.
+      Price${priceStr} needs <b>${p.breakeven}%</b>.
+      <b>${m>0?"+":""}${m} pts</b> ${m>=0?"above":"below"} breakeven${evTxt}.
+    </span></div>`;
+}
+
 function valueHtml(p){
   // Run line is a rebuilt, unproven market sitting on a shaky price feed. Do NOT
   // show a loud VALUE/EV number for it yet — it reads as a fake edge. Show the
@@ -2356,9 +2436,22 @@ function bestBetEval(p){
   const model = p.conf/100, market = p.market_prob;
   const gapPts = (model - market)*100;
   if(gapPts < 0 || gapPts > BEST_BET_MAX_GAP) return null;  // credible edge only
-  const trueP = 0.5*model + 0.5*market;                     // damp overconfidence
+  // TRUE PROBABILITY — 2026-08-11.
+  //
+  // Was: trueP = 0.5*model + 0.5*market. That blend was far too weak. On 121
+  // graded ML picks the model averaged 71.9% stated against 49.6% realized, so
+  // a 65% pick blended to ~57% when its historical win rate is ~37%. Best Bets
+  // was therefore built on a number that overstated by roughly 20 points, which
+  // is why the same near-even shape surfaced every single day: the -180 floor
+  // strips the chalk, the gap window strips the mirages, and what is left is
+  // the pick'em band where an inflated probability most easily clears a short
+  // price. That was the filter's geometry showing through, not value.
+  //
+  // Now uses the Platt-calibrated probability, the same one behind the HONEST
+  // READ line on each card and the EV gate, so all three agree.
+  const trueP = (p.cal_conf!=null) ? p.cal_conf/100 : (0.5*model + 0.5*market);
   const dec = p.pick_price>0 ? 1 + p.pick_price/100 : 1 + 100/Math.abs(p.pick_price);
-  const ev = trueP*(dec-1) - (1-trueP);                     // honest blended EV
+  const ev = trueP*(dec-1) - (1-trueP);                     // calibrated EV
   if(ev <= 0) return null;
   return { ev, trueP, gapPts };
 }
@@ -2436,7 +2529,7 @@ function renderBestBets(){
     </div>`;
   }).join("");
   box.innerHTML = `<div class="bb-wrap">
-    <div class="bb-head">⭐ Best Bets <span class="bb-sub">ranked by honest value · ML · no worse than ${BEST_BET_PRICE_FLOOR} · overconfidence stripped out</span></div>
+    <div class="bb-head">⭐ Best Bets <span class="bb-sub">ranked by calibrated value · ML · no worse than ${BEST_BET_PRICE_FLOOR} · confidence mapped to realized results</span></div>
     ${rows}
     <div class="bb-note">ℹ️ This list re-ranks through the day. Best Bets is scored off live Pinnacle prices, which we re-pull every ~40 min until first pitch. When a line moves, a pick's value (EV) changes, so the order shifts and picks can drop on or off. That's the list tracking the real closing market, not a bug — it locks once games start.</div>
   </div>`;
@@ -2900,7 +2993,7 @@ function renderPicks(){
         ${lineShopHtml}
         ${kellyHtml}
         ${oddsHtml(p)}
-        ${valueHtml(p)}
+        ${valueHtml(p)}${honestReadHtml(p)}
         <div class="pick-reasoning">${p.reasoning}</div>
         ${p.narrative ? `<div class="pick-narrative">${p.narrative}</div>` : ""}
         ${(()=>{
@@ -2966,15 +3059,47 @@ function toggleLean(){
 function renderSurfacedProps(){
   const section = document.getElementById("surfacedPropsSection");
   const grid    = document.getElementById("surfacedPropsGrid");
+  const empty   = document.getElementById("surfacedPropsEmpty");
   if(!section || !grid || !DATA_PROPS || !DATA_PROPS.length){
     if(section) section.style.display = "none";
     return;
   }
-  const topProps = DATA_PROPS
+  // BETTABLE ONLY. This surface previously filtered on confidence alone, so it
+  // filled with Hits Over 0.5, Total Bases Over 1.5 and RBIs Over 0.5 — props
+  // scored against a line the model invents, not one a book offers. A 68% read
+  // on Over 0.5 Hits is a LOSING bet at the -250 to -350 books actually price
+  // it at, so this panel was ranking by how fake the line was. prep_props
+  // already sets projection_only from SUPPRESS_BETTABLE_PROPS; the flag was on
+  // the data and this renderer just ignored it. Now it does not.
+  const bettable = DATA_PROPS.filter(p => !p.projection_only);
+  const topProps = bettable
     .filter(p => p.conf >= 65)
     .sort((a,b) => (b.conf||0)-(a.conf||0));
-  if(!topProps.length){ section.style.display = "none"; return; }
+
   section.style.display = "block";
+  if(!topProps.length){
+    // Say WHY it is empty rather than hiding the panel. An empty bettable
+    // surface is real information: it means nothing today has both a genuine
+    // book line and an edge. Silently vanishing reads as a broken page.
+    const suppressed = DATA_PROPS.filter(p => p.projection_only && p.conf >= 65).length;
+    grid.style.display = "none";
+    if(empty){
+      empty.style.display = "block";
+      empty.innerHTML = "<strong style='color:#ffb74d'>No bettable props right now.</strong><br>"
+        + "Only props with a real sportsbook line and price appear here — today that means "
+        + "strikeout props off Pinnacle. Hits, Total Bases, RBI, Runs, HR and SB are scored "
+        + "against a line the model sets itself, so they are research projections, not plays, "
+        + "and they live in the Player Props tab."
+        + (suppressed ? "<br><br><span style='color:var(--sub)'>" + suppressed
+            + " projection-only prop" + (suppressed===1?"":"s") + " at 65%+ moved to that tab.</span>" : "")
+        + "<br><br><span style='color:var(--sub)'>Pitcher K lines post through the morning, so "
+        + "this often fills in later. Batter props need a real line source before they can "
+        + "appear here at all.</span>";
+    }
+    return;
+  }
+  grid.style.display = "";
+  if(empty) empty.style.display = "none";
   grid.innerHTML = "";
   topProps.forEach(p => {
     const overUnder = p.pick_side || (p.proj >= p.line ? "OVER" : "UNDER");
