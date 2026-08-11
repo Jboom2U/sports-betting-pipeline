@@ -1,0 +1,29 @@
+# Keep Node tooling out of the Railway upload.
+#
+# WHY THIS FILE EXISTS (2026-08-11): `railway up` uploads the working DIRECTORY,
+# not the git tree, so untracked files still reach the builder. A root
+# package.json (holding only wrangler, for the Cloudflare Workers) made Nixpacks
+# detect this as a NODE project: it ran `npm ci`, never installed Python, and the
+# container died on `gunicorn: command not found` with a failed healthcheck.
+#
+# This app is Python. requirements.txt must be the only provider signal Nixpacks
+# sees at the root. The Workers keep their own package.json inside their own
+# directories (consensus-worker/, ai-panel-worker/) where wrangler is run from,
+# so ignoring these here does not affect `npx wrangler deploy`.
+package.json
+package-lock.json
+node_modules/
+
+# Local-only credentials for the YouTube video project. Never upload.
+token.json
+youtube_secrets.json
+client_secret*.json
+*.pem
+
+# Local scratch that the server never reads
+logs/
+data/raw/
+__pycache__/
+*.pyc
+.venv/
+venv/

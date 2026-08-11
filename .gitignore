@@ -38,3 +38,8 @@ _setup_admin.py
 
 # one-off admin setup scaffolding
 _setup_admin.py
+
+# Node tooling for the Cloudflare Workers. node_modules is never committed.
+# NOTE: a root package.json also breaks the RAILWAY build by making Nixpacks
+# detect Node instead of Python — that is handled in .railwayignore.
+node_modules/
