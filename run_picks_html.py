@@ -2552,6 +2552,31 @@ function rlBestBetEval(p){
   // Sanity: an American price under 100 in absolute terms is corrupt data (the
   // documented cross-book averaging bug). Never bet a price we cannot verify.
   if(Math.abs(price) < 100) return null;
+
+  // ── RUN LINE / MONEYLINE COHERENCE (2026-08-11) ──────────────────────────
+  // Covering +1.5 includes EVERY outcome where the team wins outright, plus the
+  // ones where they lose by exactly 1. So P(cover +1.5) > P(win) is a hard
+  // mathematical requirement, and the implied probabilities must respect it.
+  //
+  // They frequently do not, because mlb_odds_scraper averages run-line prices
+  // across books WITHOUT pairing each price to its own line. Live examples from
+  // 2026-08-11 that this rule caught:
+  //   Pirates  ML -113 (53.1%) but +1.5 at +154 (39.4%)  -> 13.7 pts backwards
+  //   Dodgers  ML -267 (72.8%) but +1.5 at -120 (54.5%)  -> 18.2 pts backwards
+  // Both showed as huge +EV Best Bets off a price no book would offer. The
+  // Cardinals at ML +148 (40.3%) with +1.5 at -117 (53.9%) is coherent.
+  //
+  // This is the same class of bug as the -57 averaging issue and the phantom
+  // 6.5 totals: a fabricated number producing a fabricated edge. Real fix is
+  // pairing line+price per book in the scraper. Until then, refuse to publish a
+  // run line whose price contradicts its own moneyline.
+  const _isAway = (p.team === p.away);
+  const _ml = _isAway ? p.ml_away_odds : p.ml_home_odds;
+  if(_ml != null && Math.abs(_ml) >= 100){
+    const _impML = _ml < 0 ? Math.abs(_ml)/(Math.abs(_ml)+100) : 100/(_ml+100);
+    const _impRL = price < 0 ? Math.abs(price)/(Math.abs(price)+100) : 100/(price+100);
+    if(_impRL <= _impML) return null;   // impossible: cover priced below the win
+  }
   const dec = price > 0 ? 1 + price/100 : 1 + 100/Math.abs(price);
   const need = 100/dec;                       // break-even %
   const ev = band.rate*(dec-1) - (1-band.rate);
