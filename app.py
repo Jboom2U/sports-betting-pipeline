@@ -2642,19 +2642,37 @@ def pinnacle_props_scan():
         return redirect("/admin/login?next=/admin/pinnacle-props-scan")
     import html as _h, collections, traceback
     try:
-        from scrapers.mlb_pinnacle_scraper import (
-            fetch_matchups, fetch_markets, _by_designation, _mk_price, _mk_points)
+        from scrapers.mlb_pinnacle_scraper import fetch_matchups, fetch_markets
 
         matchups = fetch_matchups()
         markets  = fetch_markets()
 
-        # market prices keyed by matchupId, only the straight O/U children
+        # Index every market by matchupId. Do NOT pre-filter on the key: prop
+        # specials do not all use an "ou" key, and filtering early was what made
+        # the first version of this route report 0% parseable across the board.
         by_mid = collections.defaultdict(list)
         for mk in markets:
-            if not isinstance(mk, dict):
-                continue
-            if mk.get("key") and "ou" in str(mk.get("key")):
-                by_mid[mk.get("matchupId")].append(mk.get("prices") or [])
+            if isinstance(mk, dict):
+                mid = mk.get("matchupId") or mk.get("matchup_id")
+                if mid is not None:
+                    by_mid[mid].append(mk)
+
+        # Price lookup by participantId — the SAME method fetch_strikeout_lines
+        # uses and which is verified working on live data. Prop specials carry
+        # Over/Under as participants with ids; prices reference participantId and
+        # carry the line in "points". Matching by designation (home/away) is a
+        # game-market concept and does not apply here.
+        def _price_and_point(prices, pid):
+            for pr in prices or []:
+                if pr.get("participantId") == pid or pr.get("participant_id") == pid:
+                    price = pr.get("price", pr.get("value"))
+                    pt    = pr.get("points", pr.get("point", pr.get("handicap")))
+                    try:    price = int(round(float(price)))
+                    except (TypeError, ValueError): price = None
+                    try:    pt = float(pt)
+                    except (TypeError, ValueError): pt = None
+                    return price, pt
+            return None, None
 
         buckets = collections.defaultdict(lambda: {"n": 0, "ok": 0,
                                                    "samples": [], "lines": []})
@@ -2665,16 +2683,23 @@ def pinnacle_props_scan():
             b = buckets[units]
             b["n"] += 1
             desc = (m.get("special") or {}).get("description", "") or ""
+
+            over_pid = under_pid = None
+            for part in m.get("participants", []) or []:
+                nm = (part.get("name") or "").strip().lower()
+                if   nm == "over":  over_pid  = part.get("id")
+                elif nm == "under": under_pid = part.get("id")
+
             line = op = up = None
-            for prices in by_mid.get(m.get("id"), []):
-                dd = _by_designation(prices)
-                o, u = dd.get("over"), dd.get("under")
-                if o and u:
-                    op, up = _mk_price(o), _mk_price(u)
-                    line = _mk_points(o)
-                    if line is None:
-                        line = _mk_points(u)
+            for mk in by_mid.get(m.get("id"), []):
+                prices = mk.get("prices") or []
+                _op, _opt = _price_and_point(prices, over_pid)
+                _up, _upt = _price_and_point(prices, under_pid)
+                _ln = _opt if _opt is not None else _upt
+                if _ln is not None and _op is not None and _up is not None:
+                    line, op, up = _ln, _op, _up
                     break
+
             if line is not None and op is not None and up is not None:
                 b["ok"] += 1
                 b["lines"].append(line)

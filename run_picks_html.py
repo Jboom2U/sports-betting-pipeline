@@ -268,10 +268,20 @@ def prep_picks(picks, kalshi_data: dict = None):
         # matters on a card — is the honest probability above what I am charged?
         _cal_conf = _breakeven = _honest_ev = None
         _verdict  = ""
+        # PER-TYPE ONLY. The Platt fit was estimated on ML picks and is valid for
+        # ML picks. It must NOT be applied to RL or TOTAL:
+        #   RL   — rl_conf is a Poisson cover probability, already capped at
+        #          0.55/0.68. Different quantity, different scale, its own bias.
+        #   TOTAL— total_conf comes from abs(exp_total - line)/16 capped at 0.68,
+        #          a distance-to-line heuristic, not a win probability at all.
+        # All three descend from the same exp_runs, so their errors are correlated
+        # but NOT identical, and one curve cannot correct all of them. Until each
+        # type has its own fit from fit_calibration.py --per-type, only ML shows a
+        # calibrated number. The others say so rather than showing a wrong one.
         try:
             from model.mlb_picks import calibrated_conf as _cc
             from model.value import american_to_decimal as _a2d
-            _cal = _cc(_p)
+            _cal = _cc(_p) if ptype == "ML" else None
             _cal_conf = round(_cal * 100, 1) if _cal is not None else None
             _d = _a2d(_pick_price)
             if _d and _cal is not None:
@@ -2286,7 +2296,20 @@ function oddsHtml(p){
 //
 // This is the read, not a filter. Every pick still shows; you decide.
 function honestReadHtml(p){
-  if(p.cal_conf==null) return "";
+  if(p.cal_conf==null){
+    // No calibration for this bet type yet. Say so plainly. A missing number is
+    // information; a borrowed one from another bet type would be a lie.
+    if(p.type==="RL" || p.type==="TOTAL"){
+      const be = (p.breakeven!=null) ? ` Price needs <b>${p.breakeven}%</b>.` : "";
+      return `<div class="honest-read hr-none">
+        <span class="hr-title">HONEST READ &middot; NOT CALIBRATED</span>
+        <span class="hr-body">${p.type==="RL"
+          ? "Run line confidence is a Poisson cover probability, not a win rate, so the ML calibration does not apply."
+          : "Totals confidence is a distance-to-line heuristic, not a win probability, so the ML calibration does not apply."}
+          ${be} Needs its own fit before this number can be trusted.</span></div>`;
+    }
+    return "";
+  }
   if(p.breakeven==null){
     return `<div class="honest-read hr-none">
       <span class="hr-title">HONEST READ</span>
