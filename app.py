@@ -1723,6 +1723,8 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
     <a class="card" href="/admin/pinnacle-odds-test"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Pinnacle odds diagnostic</div>
       <div class="card-desc">Dry-run ML/RL/total parse, no writes, no quota</div></a>
+    <a class="card" href="/admin/strategy-backtest"><span class="badge badge-admin">Admin</span>
+      <b>Strategy backtest</b><span>Threshold rules replayed on graded history, walk-forward validated.</span></a>
     <a class="card" href="/admin/calibration-fit"><span class="badge badge-admin">Admin</span>
       <b>Calibration fit</b><span>Per-type Platt coefficients from live graded picks. Read-only.</span></a>
     <a class="card" href="/admin/pinnacle-props-scan"><span class="badge badge-admin">Admin</span>
@@ -2622,6 +2624,171 @@ h2{{color:#58a6ff}} td,th{{padding:5px 12px;border-bottom:1px solid #21262d;font
 <table><tr><th>Pitcher</th><th>Line</th><th>Over</th><th>Under</th></tr>{rows}</table>
 <p><a href="/admin">&larr; Admin</a></p></body></html>"""
     return Response(html, mimetype="text/html")
+
+
+@app.route("/admin/strategy-backtest")
+def strategy_backtest():
+    """
+    What WOULD the record have been under a confidence-threshold rule?
+
+    Read-only replay of the graded picks table. Answers the question the
+    calibration page raises: if the model only published its higher-confidence
+    picks, would it have made money?
+
+    THE HONEST PART — walk-forward validation. Picking a threshold after looking
+    at the results is how you fool yourself: with 7 bands and 3 bet types there
+    are plenty of cuts, and one of them will look great by luck. So this page
+    ALSO splits the period in half, chooses the best threshold using ONLY the
+    first half, then reports how that threshold performed on the second half,
+    which it never saw. Read the walk-forward number, not the headline.
+
+    ROI CAVEAT: the picks table stores no price, so ROI assumes a flat -110.
+    Moneyline picks skew to favorites priced worse than -110, so the true ML ROI
+    is LOWER than shown here. Run line prices sit nearer -110, so its number is
+    more trustworthy. Capturing real prices is the fix.
+
+      ?since=YYYY-MM-DD   default 2026-07-21
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/strategy-backtest")
+    import html as _h, traceback
+    from collections import defaultdict
+    since = request.args.get("since", "2026-07-21")
+
+    def _roi(w, l):
+        n = w + l
+        return ((w * (100.0/110.0) - l) / n * 100.0) if n else 0.0
+
+    def _fmt(w, l):
+        n = w + l
+        if not n: return "&mdash;", 0.0, 0.0
+        return f"{w}-{l}", 100.0*w/n, _roi(w, l)
+
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT pick_date, pick_type, conf, actual_result
+                FROM picks
+                WHERE actual_result IN ('WIN','LOSS')
+                  AND conf IS NOT NULL AND pick_date >= %s
+                ORDER BY pick_date ASC
+            """, (since,))
+            rows = cur.fetchall(); cur.close()
+
+        recs = []
+        for d, t, c, r in rows:
+            c = float(c)
+            if c > 1.5: c /= 100.0
+            if 0.0 < c < 1.0:
+                recs.append((str(d), t or "?", c, 1 if r == "WIN" else 0))
+
+        THRESH = [0.50,0.55,0.58,0.60,0.62,0.65,0.68,0.70,0.75,0.80]
+        types  = sorted({r[1] for r in recs})
+
+        # ── sweep ────────────────────────────────────────────────────────────
+        sweep = ""
+        for t in types:
+            sub = [r for r in recs if r[1] == t]
+            sweep += f"<h3>{_h.escape(t)} <span style='font-weight:400;color:#8b949e'>n={len(sub)}</span></h3><table>"
+            sweep += "<tr><th>min conf</th><th>picks</th><th>W-L</th><th>win%</th><th>ROI @-110</th></tr>"
+            for th in THRESH:
+                sel = [r for r in sub if r[2] >= th]
+                if not sel:
+                    continue
+                w = sum(r[3] for r in sel); l = len(sel) - w
+                rec, pct, roi = _fmt(w, l)
+                col = "#3fb950" if pct >= 52.38 else "#f85149"
+                thin = " <span style='color:#d29922'>thin</span>" if len(sel) < 30 else ""
+                sweep += (f"<tr><td>{int(th*100)}%</td><td>{len(sel)}</td><td>{rec}</td>"
+                          f"<td style='color:{col}'><b>{pct:.1f}%</b>{thin}</td>"
+                          f"<td style='color:{col}'>{roi:+.1f}%</td></tr>")
+            sweep += "</table>"
+
+        # ── walk-forward ─────────────────────────────────────────────────────
+        dates = sorted({r[0] for r in recs})
+        split = dates[len(dates)//2] if dates else None
+        wf = ""
+        for t in types:
+            tr = [r for r in recs if r[1] == t and r[0] <  split]
+            te = [r for r in recs if r[1] == t and r[0] >= split]
+            best, best_roi = None, -999
+            for th in THRESH:
+                sel = [r for r in tr if r[2] >= th]
+                if len(sel) < 20: continue
+                w = sum(r[3] for r in sel)
+                roi = _roi(w, len(sel)-w)
+                if roi > best_roi: best, best_roi = th, roi
+            if best is None:
+                wf += (f"<tr><td>{_h.escape(t)}</td><td colspan='5'>"
+                       f"<i>not enough training picks to choose a threshold</i></td></tr>")
+                continue
+            sel = [r for r in te if r[2] >= best]
+            w = sum(r[3] for r in sel); l = len(sel) - w
+            rec, pct, roi = _fmt(w, l)
+            col = "#3fb950" if pct >= 52.38 else "#f85149"
+            verdict = ("holds up" if pct >= 52.38 else "does NOT hold up")
+            wf += (f"<tr><td><b>{_h.escape(t)}</b></td><td>{int(best*100)}%</td>"
+                   f"<td>{best_roi:+.1f}%</td><td>{rec}</td>"
+                   f"<td style='color:{col}'><b>{pct:.1f}%</b></td>"
+                   f"<td style='color:{col}'>{roi:+.1f}% &mdash; {verdict}</td></tr>")
+
+        # ── week by week under RL>=60 + ML>=70 ────────────────────────────────
+        import datetime as _dt
+        wk = defaultdict(lambda: [0,0,0,0])   # [rule_w, rule_l, all_w, all_l]
+        for d, t, c, y in recs:
+            try: dd = _dt.date.fromisoformat(d)
+            except Exception: continue
+            k = (dd - _dt.timedelta(days=dd.weekday())).isoformat()
+            wk[k][2 if y else 3] += 1
+            if (t == "RL" and c >= 0.60) or (t == "ML" and c >= 0.70):
+                wk[k][0 if y else 1] += 1
+        wrows = ""
+        for k in sorted(wk):
+            rw, rl, aw, al = wk[k]
+            r_rec, r_pct, r_roi = _fmt(rw, rl)
+            a_rec, a_pct, a_roi = _fmt(aw, al)
+            rc = "#3fb950" if r_pct >= 52.38 else "#f85149"
+            wrows += (f"<tr><td>{k}</td><td>{r_rec}</td>"
+                      f"<td style='color:{rc}'><b>{r_pct:.0f}%</b></td>"
+                      f"<td style='color:{rc}'>{r_roi:+.0f}%</td>"
+                      f"<td style='color:#8b949e'>{a_rec} &middot; {a_pct:.0f}%</td></tr>")
+
+        html = f"""<!doctype html><html><head><meta charset=utf-8><title>Strategy backtest</title>
+<style>body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:900px;margin:0 auto}}
+h2{{color:#58a6ff}} h3{{color:#e6edf3;margin-top:24px}}
+td,th{{padding:5px 13px;border-bottom:1px solid #21262d;font-size:13px;text-align:left}}
+.note{{color:#8b949e;font-size:12px;line-height:1.6}}
+.warn{{background:rgba(210,153,34,.08);border:1px solid rgba(210,153,34,.3);border-radius:8px;padding:12px 16px;margin:14px 0}}</style>
+</head><body>
+<h2>Strategy backtest &mdash; confidence thresholds</h2>
+<p class="note">Graded picks since <b>{_h.escape(since)}</b>. Read-only replay.</p>
+
+<div class="warn"><b>ROI assumes a flat -110.</b> The picks table stores no price, so this
+is an approximation. Moneyline picks skew to favorites priced worse than -110, so true ML
+ROI is <b>lower</b> than shown. Run line prices sit nearer -110, so that column is the more
+trustworthy one. Storing the real price per pick is the fix.</div>
+
+<h2>Walk-forward validation</h2>
+<p class="note">Threshold chosen using ONLY the first half of the period, then applied to the
+second half it never saw. <b>This is the number that matters.</b> A rule that looks great in
+the sweep below but fails here was luck, not edge.</p>
+<table><tr><th>type</th><th>threshold picked</th><th>train ROI</th><th>test W-L</th>
+<th>test win%</th><th>test ROI</th></tr>{wf}</table>
+
+<h2>Week by week &mdash; RL 60%+ and ML 70%+</h2>
+<table><tr><th>week of</th><th>rule W-L</th><th>win%</th><th>ROI</th><th>all picks</th></tr>{wrows}</table>
+
+<h2>Full threshold sweep</h2>
+<p class="note">Every cut, for reference. Thresholds chosen by reading this table are
+selection-biased &mdash; that is exactly what the walk-forward section above corrects for.</p>
+{sweep}
+<p><a href="/admin">&larr; Admin</a></p></body></html>"""
+        return Response(html, mimetype="text/html")
+    except Exception:
+        return Response(f"<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        f"{_h.escape(traceback.format_exc())}</pre>", mimetype="text/html"), 500
 
 
 @app.route("/admin/calibration-fit")
