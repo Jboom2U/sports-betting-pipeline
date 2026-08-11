@@ -1402,6 +1402,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .bb-head{font-size:1.02rem;font-weight:800;color:var(--gold);margin-bottom:10px}
 .bb-sub{font-size:.68rem;font-weight:500;color:var(--sub);margin-left:6px;letter-spacing:.02em}
 .bb-empty{font-size:.82rem;color:var(--sub);line-height:1.5}
+.bb-basis{color:var(--sub);font-size:.68rem;line-height:1.4}
 .bb-note{font-size:.7rem;color:var(--sub);line-height:1.45;margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
 .bb-row{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--border)}
 .bb-row:first-of-type{border-top:none}
@@ -1927,6 +1928,12 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <div id="refreshStatus"></div>
 </div>
 
+<!-- Stale board banner: shown when the server has rescored since page load -->
+<div id="staleBoardBar" style="display:none;background:rgba(210,153,34,.14);border-bottom:1px solid rgba(210,153,34,.4);padding:8px 16px;align-items:center;gap:14px;font-size:.85rem;color:#e6edf3">
+  <span>🔄 <b>New lines are in.</b> Lineups or prices have changed since you loaded this page, so Best Bets and the EV numbers below are out of date. Picks that did not qualify may qualify now.</span>
+  <button onclick="location.reload()" style="background:rgba(210,153,34,.25);border:1px solid rgba(210,153,34,.6);color:#ffd479;border-radius:12px;padding:4px 14px;font-size:.8rem;font-weight:700;cursor:pointer;font-family:inherit">Reload board</button>
+</div>
+
 <!-- Schedule Status Bar -->
 <div id="scheduleBar" style="background:#161b22;border-bottom:1px solid #30363d;padding:6px 16px;display:flex;gap:24px;font-size:0.82em;color:#8b949e;flex-wrap:wrap">
   <span>⏰ <b style="color:#e6edf3">Next pipeline:</b> <span id="sched-pipeline">loading...</span></span>
@@ -1948,6 +1955,23 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
       document.getElementById('sched-refresh').textContent  = r ? (r.time + ' (' + r.label + ')') : 'after 6am pipeline';
       window._schedRefreshTime = r ? r.time : 'lineup refresh';
       document.getElementById('sched-pitch').textContent    = fp ? fp.time : '—';
+
+      // ── STALE BOARD DETECTION (2026-08-11) ────────────────────────────────
+      // Best Bets, the honest read and every EV number are computed when the
+      // page is RENDERED. The server rescores at the lineup refresh and on each
+      // ~40 min Pinnacle odds pull, so a tab left open all evening shows stale
+      // picks while confidences and prices have moved underneath. As lineups
+      // confirm, cards that did not qualify can start qualifying and vice versa.
+      // Rather than silently re-render a partial view, tell the user plainly and
+      // let them reload to get a fully consistent board.
+      if (d.board_version) {
+        if (window._boardVersion == null) {
+          window._boardVersion = d.board_version;
+        } else if (d.board_version !== window._boardVersion) {
+          var bar = document.getElementById('staleBoardBar');
+          if (bar) bar.style.display = 'flex';
+        }
+      }
     }).catch(function() {
       document.getElementById('sched-pipeline').textContent = '6am ET daily';
       document.getElementById('sched-refresh').textContent  = 'after 6am pipeline';
@@ -2488,7 +2512,52 @@ function buildAnalysis(p){
 // honest blended EV — deep chalk and 20-point mirages can never make the list.
 const BEST_BET_PRICE_FLOOR = -180;   // most chalk allowed (adjust to taste)
 const BEST_BET_MAX_GAP     = 15;     // points above market before it's a mirage
-const BEST_BET_TYPES       = ["ML"]; // ML only for now (RL unproven, totals hot)
+const BEST_BET_TYPES       = ["ML"]; // ML path below; RL has its own rule
+
+// ── RUN LINE BEST BETS (2026-08-11) ──────────────────────────────────────────
+// The run line is the ONLY bet type with a walk-forward validated edge:
+// threshold chosen on the first half of the period, applied to the second half
+// it never saw, returned 51-21 (70.8%), p=0.0011. It is also a broad plateau
+// across adjacent thresholds rather than one lucky cut, which is what makes it
+// believable.
+//
+// RL is deliberately NOT Platt-calibrated (its fit made out-of-sample Brier
+// worse), so instead of a curve we use the ACTUAL observed rate for the band
+// the pick falls in, straight from /admin/calibration-fit, and require positive
+// EV against the real price.
+//
+//   conf band   actual record   rate
+//   55-60%      40-35           53.3%
+//   60-65%      29-14           67.4%
+//   65-70%      31-18           63.3%   <- excluded, see below
+//
+// Band ceiling is 65%. Above that you approach the 0.68 cover cap where the
+// record collapses to 15-14 (51.7%), and prices there are typically -180 or
+// worse. Floor is 57% because 55-60% only returns 53.3%, which most prices eat.
+const RL_BEST_BET_MIN  = 0.57;
+const RL_BEST_BET_MAX  = 0.65;
+const RL_BAND_RATES = [
+  { lo: 0.57, hi: 0.60, rate: 0.533, rec: "40-35" },
+  { lo: 0.60, hi: 0.651, rate: 0.674, rec: "29-14" }
+];
+
+function rlBestBetEval(p){
+  if(p.type !== "RL") return null;
+  const c = (p.conf||0)/100;
+  if(c < RL_BEST_BET_MIN || c > RL_BEST_BET_MAX) return null;
+  if(p.pick_price == null) return null;
+  const band = RL_BAND_RATES.find(b => c >= b.lo && c < b.hi);
+  if(!band) return null;
+  const price = p.pick_price;
+  // Sanity: an American price under 100 in absolute terms is corrupt data (the
+  // documented cross-book averaging bug). Never bet a price we cannot verify.
+  if(Math.abs(price) < 100) return null;
+  const dec = price > 0 ? 1 + price/100 : 1 + 100/Math.abs(price);
+  const need = 100/dec;                       // break-even %
+  const ev = band.rate*(dec-1) - (1-band.rate);
+  if(ev <= 0) return null;
+  return { ev, trueP: band.rate, need, band, price };
+}
 
 function bestBetEval(p){
   if(!BEST_BET_TYPES.includes(p.type)) return null;
@@ -2565,21 +2634,35 @@ function renderBestBets(){
   const box = document.getElementById("bestBets");
   if(!box) return;
   const src = (typeof ACTIVE_PICKS!=="undefined" && ACTIVE_PICKS.length) ? ACTIVE_PICKS : DATA_PICKS;
+  // Two independent rules. RL uses its observed band rate (validated edge);
+  // ML uses the Platt-calibrated probability. Both must clear positive EV
+  // against the REAL price. Tagged so the card can explain which applied.
   const ranked = (src||[])
-    .map(p => ({p, e: bestBetEval(p)}))
-    .filter(x => x.e)
+    .map(p => {
+      const rl = rlBestBetEval(p);
+      if(rl) return {p, e: rl, kind: "RL"};
+      const ml = bestBetEval(p);
+      return ml ? {p, e: ml, kind: "ML"} : null;
+    })
+    .filter(x => x)
     .sort((a,b) => b.e.ev - a.e.ev)
     .slice(0, 6);
   if(!ranked.length){
     box.innerHTML = `<div class="bb-wrap"><div class="bb-head">⭐ Best Bets</div>
-      <div class="bb-empty">No picks clear the bar today: credible edge, fair price (no worse than ${BEST_BET_PRICE_FLOOR}), positive value. That's the model protecting you from bad spots, not a glitch.</div></div>`;
+      <div class="bb-empty">No picks clear the bar today. The run line needs 57-65% confidence at a price the edge can survive; moneylines need calibrated probability above break-even. Nothing qualified — that is the model protecting you from bad spots, not a glitch.</div></div>`;
     return;
   }
-  const rows = ranked.map(({p, e}) => {
+  const rows = ranked.map(({p, e, kind}) => {
     const priceStr = (p.pick_price>0?"+":"")+Math.round(p.pick_price);
+    // Say WHERE the number came from. An RL best bet rests on an observed band
+    // record; an ML one rests on a fitted calibration curve. Those are different
+    // levels of evidence and the card should not blur them.
+    const basis = (kind === "RL")
+      ? `<span class="bb-basis">RL ${Math.round(e.band.lo*100)}-${Math.round(e.band.hi*100)}% band has gone <b>${e.band.rec}</b> (${(e.band.rate*100).toFixed(0)}%) · needs ${e.need.toFixed(1)}%</span>`
+      : `<span class="bb-basis">calibrated ${Math.round(e.trueP*100)}% vs market</span>`;
     return `<div class="bb-row">
       <div class="bb-main">
-        <span class="bb-team">${p.label}</span>
+        <span class="bb-team">${kind === "RL" ? "🎯 " : ""}${p.label}</span>
         <span class="bb-price">${priceStr}</span>
       </div>
       <div class="bb-meta">
@@ -2587,10 +2670,11 @@ function renderBestBets(){
         <span class="bb-win">${Math.round(e.trueP*100)}% fair win</span>
         <span class="bb-game">${teamLogo(p.away,14)}${teamLogo(p.home,14)}${p.game}</span>
       </div>
+      <div class="bb-meta">${basis}</div>
     </div>`;
   }).join("");
   box.innerHTML = `<div class="bb-wrap">
-    <div class="bb-head">⭐ Best Bets <span class="bb-sub">ranked by calibrated value · ML · no worse than ${BEST_BET_PRICE_FLOOR} · confidence mapped to realized results</span></div>
+    <div class="bb-head">⭐ Best Bets <span class="bb-sub">🎯 = run line, the one walk-forward validated edge (51-21, 70.8%, p=0.0011) · everything ranked by EV against the real price</span></div>
     ${rows}
     <div class="bb-note">ℹ️ This list re-ranks through the day. Best Bets is scored off live Pinnacle prices, which we re-pull every ~40 min until first pitch. When a line moves, a pick's value (EV) changes, so the order shifts and picks can drop on or off. That's the list tracking the real closing market, not a bug — it locks once games start.</div>
   </div>`;
@@ -4503,6 +4587,10 @@ function renderTicker(){
         window._picksStatusPainted = true;
         try { if (typeof renderPicks === "function") renderPicks(); } catch(e){}
       }
+      // Recompute Best Bets each cycle. Cheap, and it keeps the list consistent
+      // with any client-side filter or state change without collapsing the
+      // expanded pick cards the way a full renderPicks() would.
+      try { if (typeof renderBestBets === "function") renderBestBets(); } catch(e){}
     }
   }
 

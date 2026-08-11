@@ -2205,10 +2205,23 @@ def schedule_status():
         label = f"in {h}h {m}m" if h > 0 else f"in {m}m"
         return {"time": dt.strftime("%I:%M %p ET").lstrip("0"), "in_seconds": int(diff), "label": label}
 
+    # board_version lets an OPEN page detect that the server has rescored.
+    # Added 2026-08-11: Best Bets is computed once at page render, but the board
+    # is rescored at the 4:40 lineup refresh and on every ~40 min Pinnacle odds
+    # pull. So a tab left open all evening showed a stale Best Bets list while
+    # prices and confidences had moved underneath it — exactly the picks the
+    # user is meant to act on. The page polls this every 60s already; it now
+    # compares this value and prompts a reload when it changes.
+    _bv = None
+    try:
+        _bv = _cache.get("generated_at") if isinstance(_cache, dict) else None
+    except Exception:
+        pass
     return jsonify({
         "next_pipeline":   _fmt(_schedule_state.get("next_pipeline_et")),
         "next_refresh":    _fmt(_schedule_state.get("next_refresh_et")),
         "first_pitch":     _fmt(_schedule_state.get("first_pitch_et")),
+        "board_version":   _bv,
     })
 
 
@@ -4365,6 +4378,37 @@ def _start_daily_scheduler():
     t.start()
 
 
+def _last_first_pitch():
+    """ET datetime of the day's LAST first pitch, or None.
+
+    Hoisted to module scope 2026-08-11. It was nested inside
+    _start_frequent_odds, so the lineup scheduler could not see it — the
+    NameError would have been swallowed by that loop's try/except and silently
+    fallen back to a fixed cutoff, which is the exact class of quiet failure
+    this file has been bitten by before. Both schedulers now share one helper.
+    """
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    last_et = None
+    try:
+        from datetime import timezone as _tz
+        with open(os.path.join(CLEAN_DIR, "mlb_schedule_master.csv"), encoding="utf-8") as f:
+            for row in _csv.DictReader(f):
+                if row.get("game_date") != today:
+                    continue
+                u = row.get("game_time_utc", "").strip()
+                if not u:
+                    continue
+                try:
+                    g = datetime.strptime(u, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tz.utc).astimezone(ET)
+                    if last_et is None or g > last_et:
+                        last_et = g
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return last_et
+
+
 def _start_lineup_hourly_scheduler():
     """
     Every day 10am–3pm ET: re-scrapes lineups + hitter stats every hour.
@@ -4385,11 +4429,39 @@ def _start_lineup_hourly_scheduler():
                 log.info(f"Lineup hourly scheduler: next check at {target.strftime('%I:%M %p ET')} ({wait/3600:.1f}h away)")
                 time.sleep(max(1, wait))
 
-            # Poll hourly from 10am to 3pm ET
+            # ── Poll until the LAST first pitch, rescore on NEW confirmations ──
+            # REWRITTEN 2026-08-11. Two bugs in the old version:
+            #
+            # 1. It stopped at 3pm ET. Lineups post roughly 2-3 hours before
+            #    first pitch, so for a 6:40pm game they land about 4:10pm and for
+            #    a 10:10pm west-coast game about 7:40pm. The scheduler quit
+            #    before most lineups ever confirmed, which is why the board sat
+            #    on unconfirmed lineups all evening and why every card read
+            #    "LINEUP NOT SET" at first pitch.
+            # 2. It rescored whenever confirmed > 0, so it rebuilt the board
+            #    every hour whether or not anything had actually changed, while
+            #    still missing the changes that mattered.
+            #
+            # Now: run until the day's last first pitch, poll every 20 minutes,
+            # and rescore only when the confirmed COUNT INCREASES. Lineup
+            # scraping is free (no Odds API quota), so frequent polling is cheap.
+            # Confirmed lineups feed the lineup-OPS adjustment in exp_runs, so a
+            # rescore genuinely changes ML, RL and totals — and picks can move
+            # in and out of Best Bets as a result.
+            POLL_SECONDS = 20 * 60
+            last_confirmed = -1
             while True:
                 now = datetime.now(ET)
-                if now.hour >= 15:
-                    log.info("Lineup hourly scheduler: 3pm ET reached — done for today")
+                _lfp = None
+                try:
+                    _lfp = _last_first_pitch()
+                except Exception:
+                    pass
+                if _lfp is not None and now > _lfp:
+                    log.info("Lineup scheduler: last first pitch passed — done for today")
+                    break
+                if _lfp is None and now.hour >= 23:
+                    log.info("Lineup scheduler: no schedule times found, stopping at 11pm ET")
                     break
                 try:
                     today = now.strftime("%Y-%m-%d")
@@ -4397,11 +4469,26 @@ def _start_lineup_hourly_scheduler():
                     lineups = run_lu(target_date=today)
                     confirmed = sum(1 for g in lineups if g.get("lineup_confirmed"))
                     total = len(lineups)
-                    log.info(f"Lineup hourly check: {confirmed}/{total} games confirmed")
-                    if confirmed > 0:
+                    log.info(f"Lineup check: {confirmed}/{total} games confirmed "
+                             f"(was {max(last_confirmed,0)})")
+
+                    # Rescore on ANY change, not just increases. A late scratch
+                    # can un-confirm a lineup, and that matters as much as a new
+                    # confirmation — it changes the lineup-OPS input to exp_runs
+                    # and can move a pick in or out of Best Bets.
+                    if confirmed != last_confirmed:
+                        _delta = confirmed - max(last_confirmed, 0)
+                        log.info(f"Lineup scheduler: lineup change ({_delta:+d}) — rescoring board")
                         from scrapers.mlb_hitter_scraper import run as run_hs
                         run_hs(target_date=today)
-                        log.info("Lineup hourly: hitter stats refreshed")
+                        # Real prop lines too, so newly confirmed batters get
+                        # priced against the book rather than an invented line.
+                        try:
+                            from scrapers.mlb_pinnacle_scraper import save_prop_lines, save_strikeout_lines
+                            save_strikeout_lines(today)
+                            save_prop_lines(today)
+                        except Exception as _pe:
+                            log.warning(f"Prop line refresh failed (non-fatal): {_pe}")
                         try:
                             from db.csv_sync import upload_all, storage_available
                             if storage_available():
@@ -4411,12 +4498,18 @@ def _start_lineup_hourly_scheduler():
                         with _cache_lock:
                             _cache["generated_at"] = 0
                         _regenerate_in_background()
-                    if total > 0 and confirmed == total:
-                        log.info("Lineup hourly scheduler: all lineups confirmed — done for today")
-                        break
+                        last_confirmed = confirmed
+                    # DELIBERATELY NO EARLY EXIT once all lineups are confirmed.
+                    # The old version stopped there, so a late scratch after the
+                    # last confirmation was never picked up. Lineup scraping is
+                    # free, the loop costs nothing, and it now runs to the last
+                    # first pitch alongside the 40-minute Pinnacle price pulls.
+                    # Note conf/tier are frozen by picks.tier_locked at the first
+                    # save with lineups confirmed, so a rescore after that point
+                    # moves PRICES and EV, not the confidence number.
                 except Exception as e:
-                    log.warning(f"Lineup hourly check failed (non-fatal): {e}")
-                time.sleep(3600)  # wait 1 hour before next check
+                    log.warning(f"Lineup check failed (non-fatal): {e}")
+                time.sleep(POLL_SECONDS)
 
             # Wait until next day's 10am
             now = datetime.now(ET)
@@ -4540,26 +4633,6 @@ def _start_frequent_odds():
     import csv as _csv
     from datetime import timezone as _tz
 
-    def _last_first_pitch():
-        today = datetime.now(ET).strftime("%Y-%m-%d")
-        last_et = None
-        try:
-            with open(os.path.join(CLEAN_DIR, "mlb_schedule_master.csv"), encoding="utf-8") as f:
-                for row in _csv.DictReader(f):
-                    if row.get("game_date") != today:
-                        continue
-                    u = row.get("game_time_utc", "").strip()
-                    if not u:
-                        continue
-                    try:
-                        g = datetime.strptime(u, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tz.utc).astimezone(ET)
-                        if last_et is None or g > last_et:
-                            last_et = g
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        return last_et
 
     def _loop():
         import time as _t
