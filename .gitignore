@@ -16,9 +16,17 @@ data/raw/
 # data/clean/ is intentionally NOT ignored
 # picks/ is intentionally tracked so HTML dashboards are served via GitHub Pages
 
-# Private keys — never commit
+# Private keys and OAuth credentials — never commit
 kalshi_private.pem
 *.pem
+
+# YouTube / Google OAuth for the video-posting project (Google project "parlaykingz").
+# These stay on disk and the pipeline keeps using them normally — ignoring only
+# stops them being pushed to GitHub. token.json holds a refresh_token, which is
+# long-lived upload access to the channel.
+token.json
+youtube_secrets.json
+client_secret*.json
 
 # Data files — large and change daily, use object storage instead
 data/clean/

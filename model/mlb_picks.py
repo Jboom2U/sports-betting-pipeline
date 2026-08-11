@@ -18,6 +18,7 @@ Parlay rules:
 import csv
 import os
 import logging
+import math
 from itertools import combinations
 from datetime import datetime
 
@@ -59,6 +60,129 @@ def tier_emoji(t: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # PICK GENERATION
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# EV GATE  (added 2026-08-11, DEFAULT OFF)
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY: the run line is the only bet type that must clear a positive-EV test
+# against a real price before it publishes (mlb_model.py score_game, _rl_ev).
+# ML and TOTAL publish on confidence alone and are then sliced into a fixed
+# top 5 — exactly 5 picks a day for 30 straight days in the consensus DB,
+# regardless of whether 5 edges existed.
+#
+# Measured cost (139 Statalizers ML picks, 121 graded, 2026-07-11 to 08-11,
+# consensus-db source_picks):
+#     conf >= 75 :  24-12  (66.7%)
+#     conf <  75 :  36-49  (42.4%)   <- 70% of all published volume
+# Break-even at -110 is 52.38%.
+#
+# THE OVERCONFIDENCE CORRECTION: raw conf CANNOT be the probability in an EV
+# calculation. Stated confidence averages 71.9% while realized is 49.6%. Using
+# raw conf would pass essentially everything. So we Platt-scale conf onto its
+# historically observed win rate first — which is exactly the drop-in function
+# fit_calibration.py has been printing all along and that nothing ever pasted in.
+#
+# Coefficients below were fitted on those 121 graded ML picks:
+#     A = 1.440066   B = -1.407709
+#     Brier 0.2873 (raw) -> 0.2338 (calibrated)
+#     stated 70% -> 45.3%   stated 75% -> 54.3%   stated 80% -> 64.3%
+# The fit independently reproduces the 75 threshold found by binning, which is
+# two different methods agreeing.
+#
+# CAVEATS, do not skip: n=121 is small and the Brier figure is IN-SAMPLE, so it
+# flatters. These coefficients are valid only for the model version that
+# generated those picks. REFIT MONTHLY:
+#     python3 fit_calibration.py --database-url "..." --since 2026-07-21
+# and override without a redeploy via the CAL_A / CAL_B env vars.
+#
+# Calibration is used ONLY for EV and gating. Displayed conf and the tier
+# thresholds are deliberately left alone, or every tier boundary shifts at once.
+#
+# Run line is NOT gated here: it already runs its own EV test upstream and
+# would be double-filtered.
+#
+# Flip the gate on with EV_GATE=1 on Railway. OFF by default so deploying this
+# change alone cannot alter tonight's board.
+_CAL_A = float(os.getenv("CAL_A", "1.440066"))
+_CAL_B = float(os.getenv("CAL_B", "-1.407709"))
+
+EV_GATE_ENABLED       = os.getenv("EV_GATE", "0").strip().lower() in ("1", "true", "yes", "on")
+EV_GATE_TYPES         = {"ML", "TOTAL"}
+EV_GATE_MIN_EV        = float(os.getenv("EV_GATE_MIN_EV", "0.0"))
+EV_GATE_KEEP_UNPRICED = True    # no price => keep and flag, never silently drop
+
+
+def calibrated_conf(conf):
+    """Map raw model confidence onto its historically observed win rate.
+
+    Use for bet sizing and value/EV only. Never for display or tiering.
+    """
+    if conf is None:
+        return None
+    c = min(max(float(conf), 0.01), 0.99)
+    z = _CAL_A * math.log(c / (1.0 - c)) + _CAL_B
+    return 1.0 / (1.0 + math.exp(-z))
+
+
+def _price_for(pick: dict):
+    """The American price actually being taken on this pick, or None."""
+    g = pick.get("game_data", {}) or {}
+    t = pick.get("type")
+    if t == "ML":
+        away = (pick.get("side") == "away") or (pick.get("team") == g.get("away_team", ""))
+        return g.get("ml_away_odds") if away else g.get("ml_home_odds")
+    if t == "TOTAL":
+        over = (pick.get("side") == "over") or ("OVER" in (pick.get("label", "") or "").upper())
+        return g.get("total_over_price") if over else g.get("total_under_price")
+    if t == "RL":
+        away = pick.get("team") == g.get("away_team", "")
+        return g.get("rl_away_price") if away else g.get("rl_home_price")
+    return None
+
+
+def honest_ev(pick: dict) -> dict:
+    """
+    EV using calibrated probability instead of raw confidence.
+
+    Returns {cal_p, ev, priced, passes}. Pure, side-effect free.
+    """
+    from model.value import american_to_decimal
+
+    cal_p = calibrated_conf(pick.get("conf"))
+    d     = american_to_decimal(_price_for(pick))
+    if d is None or cal_p is None:
+        return {"cal_p": cal_p, "ev": None, "priced": False,
+                "passes": bool(EV_GATE_KEEP_UNPRICED)}
+
+    ev = cal_p * (d - 1.0) - (1.0 - cal_p)
+    return {"cal_p": round(cal_p, 4), "ev": round(ev, 4),
+            "priced": True, "passes": ev > EV_GATE_MIN_EV}
+
+
+def apply_ev_gate(picks: list, enabled: bool = None) -> tuple:
+    """
+    Annotate every pick with calibrated-EV fields, and drop gated types that fail.
+
+    Always annotates, so the gate can be previewed while switched off.
+    Returns (kept_picks, dropped_picks).
+    """
+    if enabled is None:
+        enabled = EV_GATE_ENABLED
+
+    kept, dropped = [], []
+    for p in picks:
+        h = honest_ev(p)
+        p["honest_ev"]  = h["ev"]
+        p["cal_conf"]   = h["cal_p"]
+        p["ev_priced"]  = h["priced"]
+        gated = p.get("type") in EV_GATE_TYPES
+        p["ev_gate_pass"] = (h["passes"] if gated else True)
+        if enabled and gated and not h["passes"]:
+            dropped.append(p)
+        else:
+            kept.append(p)
+    return kept, dropped
+
+
 def generate_picks(scored_games: list, cfg: dict = None) -> list:
     """
     Convert scored games into a flat sorted list of individual picks.
@@ -175,6 +299,13 @@ def generate_picks(scored_games: list, cfg: dict = None) -> list:
         for p in picks:
             p.setdefault("value", {"market_prob": None, "edge": None,
                                    "ev": None, "tag": "", "chalk": False})
+
+    # EV gate — annotates always, filters only when enabled (see EV_GATE_ENABLED).
+    picks, _gate_dropped = apply_ev_gate(picks)
+    if _gate_dropped:
+        log.info("EV gate dropped %d pick(s): %s", len(_gate_dropped),
+                 ", ".join(f"{d.get('label')} (ev {d.get('honest_ev')})"
+                           for d in _gate_dropped[:8]))
 
     picks.sort(key=lambda x: x["conf"], reverse=True)
     return picks
@@ -340,7 +471,16 @@ def _ml_reasoning(g: dict) -> str:
     sharp    = g.get("sharp_side", "")
     ml_adj   = g.get("ml_adj", 0)
     if ml_sig in ("STEAM", "DRIFT") and sharp:
-        direction = "WITH model" if ml_adj > 0 else "AGAINST model"
+        # WITH/AGAINST describes whether SHARP MONEY is on the team the model
+        # picked. It must compare the sharp side to the pick, NOT the sign of
+        # ml_adj. ml_adj is the SUM of every confidence adjustment (line
+        # movement, book discrepancy, rest, pitcher gap, market agreement,
+        # convergence, prediction markets), so a game where sharp money agreed
+        # with the model but the other signals netted negative printed
+        # "AGAINST model" — e.g. 2026-08-11 Yankees, model picked NYY, sharp
+        # was on NYY, label read AGAINST. Verified inverted on live output.
+        _picked = (g.get("ml_team") or "").strip()
+        direction = "WITH model" if sharp.strip() == _picked else "AGAINST model"
         parts.append(f"💰 {ml_sig}: Sharp $ on {sharp} ({direction})")
 
     # Current odds
@@ -377,8 +517,15 @@ def _total_reasoning(g: dict) -> str:
     total_move = g.get("total_move")
     total_adj  = g.get("total_adj", 0)
     if tot_sig in ("STEAM", "DRIFT") and total_move is not None:
-        direction  = "WITH model" if total_adj > 0 else "AGAINST model"
+        # Same bug as the ML label: total_adj is an aggregate, not a statement
+        # about which side the money took. A total moving UP means money is on
+        # the OVER; moving DOWN means the UNDER. Compare that to the model's
+        # own total pick.
         move_dir   = "UP" if total_move > 0 else "DOWN"
+        _money_side = "OVER" if total_move > 0 else "UNDER"
+        direction  = ("WITH model"
+                      if _money_side == (g.get("total_pick") or "").strip().upper()
+                      else "AGAINST model")
         parts.append(f"💰 {tot_sig}: Total moved {move_dir} {abs(total_move):.1f} pts ({direction})")
 
     pf = g.get("park_runs", 100)

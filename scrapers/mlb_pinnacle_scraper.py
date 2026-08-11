@@ -95,6 +95,11 @@ REAL_TEAMS = set(TEAM_NAME_MAP.values())
 
 # Reuse SNAPSHOT_FIELDNAMES / MOVEMENT_FIELDNAMES from the primary odds scraper
 # so we can append to the same CSV files without import cycles.
+# A main full-game total is priced close to even. Anything more skewed than this
+# (in American-odds cents between the two sides) is an alternate line, not the
+# main number. -105/-115 => 10. -400/+300 => 100.
+MAX_MAIN_TOTAL_PRICE_SKEW = 40
+
 SNAPSHOT_FIELDNAMES = [
     "snapshot_id", "snapshot_time", "game_id", "game_date", "game_time_utc",
     "away_team", "home_team",
@@ -486,13 +491,37 @@ def _parse_markets(raw: list, matchup_index: dict, snapshot_time: str,
             # Real MLB game totals live ~6.5-12.5. Derivative s;0;ou markets that
             # sneak in via parentId (inning props, alt lines) fall outside this;
             # reject them so we don't pick a 0.5 or 15.5 "total".
-            if not (6.0 <= ln <= 13.0):
+            #
+            # TIGHTENED 2026-08-11. The old 6.0-13.0 range plus "closest to even"
+            # was not enough. Pinnacle's free feed carries NO clean full-game
+            # total, only derivative children, so when the main line is absent
+            # this happily selected an ALT line and wrote it as the game total.
+            # Live consequence on 2026-08-11: four games priced at 6.5, and the
+            # model then read a 9.5 projection against a 6.5 "line" as a 3.0 run
+            # edge and published it as a LOCK. Those edges were artifacts, and
+            # the picks were graded against a number no book offered.
+            #
+            # Three checks now, all structural:
+            #   1. floor 6.5 (6.0 is not a real MLB game total)
+            #   2. half-number only — real game totals are X.5, inning and team
+            #      derivatives are frequently whole numbers
+            #   3. price balance — a MAIN total is priced near even (-105/-115,
+            #      bal 10). A deep alt is heavily skewed (-400/+300, bal 100).
+            #      This is the check that actually separates main from alt.
+            if not (6.5 <= ln <= 13.0):
+                continue
+            if abs((ln * 2) % 2 - 1) > 1e-9:      # require .5, reject whole numbers
                 continue
             bal = abs(abs(op) - abs(up))
+            if bal > MAX_MAIN_TOTAL_PRICE_SKEW:
+                continue
             if best is None or bal < best[0]:
                 best = (bal, ln, op, up)
         if best:
             _, total, over_p, under_p = best
+        # If nothing survived, total stays None. That is deliberate: the model
+        # must suppress the total pick rather than invent an edge against a
+        # derivative line. Silence beats a fabricated 3-run edge.
 
         game_id = f"pinnacle_{mid}"
         snap_id = f"{str(mid)[:8]}_{snapshot_time[:13]}"

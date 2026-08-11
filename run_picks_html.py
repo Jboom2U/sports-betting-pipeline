@@ -644,7 +644,19 @@ def compute_high_conf_rule() -> dict:
 # continues (save loops read raw props), so the record keeps accruing to revisit.
 # The real fix is a free/affordable batter-prop LINE source; then these become real
 # bets we can price + calibrate like K props, and can come off this list.
-SUPPRESS_BETTABLE_PROPS = {"HR", "SB", "RBI", "R", "TB"}
+# HITS added 2026-08-11. It was the LAST batter prop still presented as a real
+# bet while being scored against a hardcoded 0.5 line that no book offered.
+# score_hits_prop (model/mlb_props_model.py:276) sets "line": 0.5 unconditionally
+# and computes P(at least one hit) from a Poisson with lambda ~1.0, which lands
+# most regulars at 65-70%. Real books price Over 0.5 Hits around -250 to -350,
+# where 68% is a LOSING bet — but the record logged it as a win, which is exactly
+# why the props column looked healthy while producing nothing. Same disease as
+# the fabricated totals line: grading against a number that was never available.
+# K props are unaffected — they run on real Pinnacle lines with real prices and
+# stay bettable. Suppression is DISPLAY-ONLY: HITS stays visible in the Player
+# Props tab as a research projection, and grading still accrues underneath.
+# Remove from this set once a real batter-prop line source is wired in.
+SUPPRESS_BETTABLE_PROPS = {"HR", "SB", "RBI", "R", "TB", "HITS"}
 
 
 def prep_props(props: list) -> list:
