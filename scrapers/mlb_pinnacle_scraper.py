@@ -31,6 +31,17 @@ log = logging.getLogger(__name__)
 
 BASE_DIR  = Path(__file__).parent.parent
 RAW_DIR   = BASE_DIR / "data" / "raw"
+
+
+def _today_et() -> str:
+    """Today's date in ET, for the prop-line helpers below.
+
+    Railway runs Python in UTC, so a bare datetime.now() rolls to tomorrow at 8pm
+    ET and the evening runs would look for tomorrow's dated files. Always resolve
+    "today" in ET, same as model/mlb_model.py. (save_strikeout_lines resolves its
+    own date via _dt.now(ET) and is unaffected.)
+    """
+    return datetime.now(ET).strftime("%Y-%m-%d")
 CLEAN_DIR = BASE_DIR / "data" / "clean"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
@@ -355,6 +366,164 @@ def fetch_strikeout_lines() -> dict:
 
     log.info(f"[Pinnacle] parsed {len(out)} pitcher strikeout lines")
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GENERAL PROP LINES  (added 2026-08-11)
+# ─────────────────────────────────────────────────────────────────────────────
+# fetch_strikeout_lines() proved the pattern; this generalizes it to every prop
+# market Pinnacle exposes. Verified live via /admin/pinnacle-props-scan on
+# 2026-08-11, all at 100% parseable with two-way prices:
+#
+#   units            n    line range     example price
+#   Bases          266    0.5 to 1.5     -110/-120
+#   Home Runs      120    0.5            +240/-346
+#   Strikeouts      29    2.5 to 8.5     +120/-160
+#   Hits Allowed    27    3.5 to 6.5     +104/-138
+#   Pitching Outs   24    14.5 to 18.5   +119/-159
+#
+# This is what kills the fabricated-line props. The model was scoring Total Bases
+# against its own 1.5 and HR against its own 0.5 with no price at all, so the
+# recorded hit rate measured beating a made-up number. With a real line AND both
+# prices, a prop becomes an actual bet with computable EV, exactly like K props.
+#
+# There is NO batter "Hits" bucket in the feed. Do not synthesize one. Total Bases
+# at 0.5 is the closest real market.
+#
+# Sanity bounds per market, so a derivative that sneaks into a units bucket cannot
+# be mistaken for the real thing (this is the lesson from the totals bug).
+PROP_UNITS = {
+    "Bases":         {"key": "TB",  "lo": 0.5,  "hi": 6.5},
+    "Home Runs":     {"key": "HR",  "lo": 0.5,  "hi": 2.5},
+    "Strikeouts":    {"key": "K",   "lo": 1.5,  "hi": 12.5},
+    "Hits Allowed":  {"key": "HA",  "lo": 1.5,  "hi": 12.5},
+    "Pitching Outs": {"key": "PO",  "lo": 6.5,  "hi": 27.5},
+}
+
+
+def _player_from_desc(desc: str) -> str:
+    """'Jonathan Aranda Total Bases' / 'Bryce Elder (Total Strikeouts)(must start)'
+    -> player name. Strips the market phrase and any parenthetical qualifier."""
+    import re as _re
+    d = (desc or "").split("(")[0]
+    d = _re.sub(r"\s+Total\s+(Bases|Home Runs|Strikeouts|Hits Allowed|Pitching Outs)\s*$",
+                "", d, flags=_re.I)
+    return " ".join(d.split()).strip()
+
+
+def fetch_prop_lines(units_filter: set | None = None) -> dict:
+    """
+    Pull REAL prop lines + two-way prices from Pinnacle's free guest API.
+
+    Returns { prop_key: { player_name: {line, over_price, under_price} } }
+    where prop_key is TB / HR / K / HA / PO.
+
+    Same participantId price-matching that fetch_strikeout_lines uses, which is
+    the verified-working path. A market is only returned when line AND both
+    prices resolve and the line falls inside that market's sanity bounds.
+    Missing means missing — never invent a line.
+    """
+    matchups = fetch_matchups()
+
+    wanted = {u: c for u, c in PROP_UNITS.items()
+              if units_filter is None or c["key"] in units_filter}
+
+    specials = {}
+    for m in matchups:
+        if not isinstance(m, dict) or m.get("type") != "special":
+            continue
+        cfg = wanted.get(m.get("units"))
+        if not cfg:
+            continue
+        mid = m.get("id")
+        player = _player_from_desc((m.get("special") or {}).get("description", ""))
+        if mid is None or not player:
+            continue
+        over_pid = under_pid = None
+        for part in m.get("participants", []) or []:
+            nm = (part.get("name") or "").strip().lower()
+            if   nm == "over":  over_pid  = part.get("id")
+            elif nm == "under": under_pid = part.get("id")
+        if over_pid is None or under_pid is None:
+            continue
+        specials[mid] = {"player": player, "cfg": cfg,
+                         "over_pid": over_pid, "under_pid": under_pid}
+
+    if not specials:
+        log.info("[Pinnacle] no prop specials found in matchups feed")
+        return {}
+
+    markets = fetch_markets()
+    mk_by_mid = {}
+    for mk in markets:
+        mid = mk.get("matchupId") or mk.get("matchup_id")
+        if mid in specials:
+            mk_by_mid.setdefault(mid, []).append(mk)
+
+    def _pp(prices, pid):
+        for pr in prices or []:
+            if pr.get("participantId") == pid or pr.get("participant_id") == pid:
+                price = pr.get("price", pr.get("value"))
+                pt    = pr.get("points", pr.get("point", pr.get("handicap")))
+                try:    price = int(round(float(price)))
+                except (TypeError, ValueError): price = None
+                try:    pt = float(pt)
+                except (TypeError, ValueError): pt = None
+                return price, pt
+        return None, None
+
+    out, rejected = {}, 0
+    for mid, info in specials.items():
+        line = op = up = None
+        for mk in mk_by_mid.get(mid, []):
+            prices = mk.get("prices") or []
+            _op, _opt = _pp(prices, info["over_pid"])
+            _up, _upt = _pp(prices, info["under_pid"])
+            _ln = _opt if _opt is not None else _upt
+            if _ln is not None and _op is not None and _up is not None:
+                line, op, up = _ln, _op, _up
+                break
+        if line is None or op is None or up is None:
+            continue
+        cfg = info["cfg"]
+        if not (cfg["lo"] <= line <= cfg["hi"]):
+            rejected += 1          # derivative masquerading as the real market
+            continue
+        out.setdefault(cfg["key"], {})[info["player"]] = {
+            "line": line, "over_price": op, "under_price": up,
+        }
+
+    log.info("[Pinnacle] prop lines parsed: %s%s",
+             {k: len(v) for k, v in out.items()},
+             f" ({rejected} rejected on sanity bounds)" if rejected else "")
+    return out
+
+
+def save_prop_lines(date: str = None) -> dict:
+    """Fetch + persist today's real prop lines to raw/mlb_pinnacle_props_<date>.json.
+    Free (Pinnacle guest API, no Odds API quota). Returns per-market counts."""
+    date = date or _today_et()
+    data = fetch_prop_lines()
+    path = RAW_DIR / f"mlb_pinnacle_props_{date}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1)
+    counts = {k: len(v) for k, v in data.items()}
+    log.info(f"[Pinnacle] saved prop lines -> {path.name}: {counts}")
+    return counts
+
+
+def load_prop_lines(date: str) -> dict:
+    """Load persisted prop lines for a date. {} when absent (no bet, not a guess)."""
+    path = RAW_DIR / f"mlb_pinnacle_props_{date}.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        log.warning(f"[Pinnacle] could not read {path.name}: {e}")
+        return {}
 
 
 def save_strikeout_lines(date: str = None) -> int:

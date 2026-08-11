@@ -1723,6 +1723,8 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
     <a class="card" href="/admin/pinnacle-odds-test"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Pinnacle odds diagnostic</div>
       <div class="card-desc">Dry-run ML/RL/total parse, no writes, no quota</div></a>
+    <a class="card" href="/admin/calibration-fit"><span class="badge badge-admin">Admin</span>
+      <b>Calibration fit</b><span>Per-type Platt coefficients from live graded picks. Read-only.</span></a>
     <a class="card" href="/admin/pinnacle-props-scan"><span class="badge badge-admin">Admin</span>
       <b>Pinnacle props scan</b><span>Which prop markets really exist, with real lines. Read-only.</span></a>
     <a class="card" href="/admin/pinnacle-k-test"><span class="badge badge-admin">Admin</span>
@@ -2620,6 +2622,169 @@ h2{{color:#58a6ff}} td,th{{padding:5px 12px;border-bottom:1px solid #21262d;font
 <table><tr><th>Pitcher</th><th>Line</th><th>Over</th><th>Under</th></tr>{rows}</table>
 <p><a href="/admin">&larr; Admin</a></p></body></html>"""
     return Response(html, mimetype="text/html")
+
+
+@app.route("/admin/calibration-fit")
+def calibration_fit():
+    """
+    PER-BET-TYPE Platt calibration, fitted on the live graded pick history.
+
+    Runs ON Railway so it reaches postgres.railway.internal — no public database
+    URL and no credential ever leaves the platform. Read-only, SELECT only.
+
+    WHY PER TYPE: ML, RL and TOTAL all descend from the same exp_runs number, but
+    they are different quantities and cannot share one correction.
+      ML    — Pythagorean win probability
+      RL    — Poisson cover probability, already capped at 0.55/0.68
+      TOTAL — abs(exp_total - line)/16 capped at 0.68, a distance heuristic
+    One curve fitted on ML and applied to all three produces meaningless numbers
+    for two of them.
+
+    Pure-Python fit: no numpy/sklearn on the Railway image, so gradient descent
+    on the logistic loss. Identical model to fit_calibration.py.
+
+      ?since=YYYY-MM-DD   default 2026-07-21 (the post-fix data boundary)
+      ?min_n=N            default 40, below this a type is reported but NOT fitted
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/calibration-fit")
+    import html as _h, math, traceback
+    since = request.args.get("since", "2026-07-21")
+    min_n = int(request.args.get("min_n", 40))
+
+    def _logit(p):
+        p = min(max(float(p), 0.01), 0.99)
+        return math.log(p / (1.0 - p))
+
+    def _sig(z):
+        if z < -60: return 0.0
+        if z >  60: return 1.0
+        return 1.0 / (1.0 + math.exp(-z))
+
+    def _fit(confs, ys, iters=8000, lr=0.05):
+        A, B = 1.0, 0.0
+        X = [_logit(c) for c in confs]
+        n = len(ys)
+        for _ in range(iters):
+            ga = gb = 0.0
+            for xi, yi in zip(X, ys):
+                e = _sig(A * xi + B) - yi
+                ga += e * xi; gb += e
+            A -= lr * ga / n; B -= lr * gb / n
+        return A, B
+
+    def _apply(c, A, B):
+        return _sig(A * _logit(c) + B)
+
+    def _brier(ps, ys):
+        return sum((p - y) ** 2 for p, y in zip(ps, ys)) / len(ys)
+
+    def _cv(confs, ys, folds=4):
+        """Fit on the past, test on the future. Never random folds — betting data
+        is temporal and random splits leak the future into the training set."""
+        n = len(ys)
+        if n < 60: return None
+        raw, cal, used = [], [], 0
+        for k in range(1, folds + 1):
+            cut = int(n * k / (folds + 1))
+            te_end = int(n * (k + 1) / (folds + 1))
+            tr_c, tr_y = confs[:cut], ys[:cut]
+            te_c, te_y = confs[cut:te_end], ys[cut:te_end]
+            if len(te_y) < 10 or len(set(tr_y)) < 2: continue
+            A, B = _fit(tr_c, tr_y, iters=3000)
+            raw.append(_brier(te_c, te_y))
+            cal.append(_brier([_apply(c, A, B) for c in te_c], te_y))
+            used += 1
+        if not used: return None
+        return sum(raw) / used, sum(cal) / used, used
+
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT pick_date, pick_type, conf, actual_result
+                FROM picks
+                WHERE actual_result IN ('WIN','LOSS')
+                  AND conf IS NOT NULL AND pick_date >= %s
+                ORDER BY pick_date ASC
+            """, (since,))
+            raw_rows = cur.fetchall()
+            cur.close()
+
+        groups = {}
+        for pick_date, ptype, conf, res in raw_rows:
+            c = float(conf)
+            if c > 1.5:      # legacy 0-100 scale rows
+                c /= 100.0
+            if not (0.0 < c < 1.0):
+                continue
+            groups.setdefault(ptype or "?", []).append((c, 1 if res == "WIN" else 0))
+            groups.setdefault("ALL", []).append((c, 1 if res == "WIN" else 0))
+
+        blocks = ""
+        envlines = []
+        for ptype in sorted(groups, key=lambda k: (k == "ALL", k)):
+            data = groups[ptype]
+            confs = [d[0] for d in data]; ys = [d[1] for d in data]
+            n = len(ys); w = sum(ys)
+            stated = 100.0 * sum(confs) / n
+            actual = 100.0 * w / n
+            head = (f"<h3>{_h.escape(ptype)} &nbsp;<span style='font-weight:400;color:#8b949e'>"
+                    f"n={n} &middot; {w}-{n-w} &middot; stated {stated:.1f}% vs actual "
+                    f"{actual:.1f}% (gap {actual-stated:+.1f})</span></h3>")
+            if n < min_n:
+                blocks += head + ("<p style='color:#d29922'>Too few graded picks to fit "
+                    f"(need {min_n}). Leave this type UNCALIBRATED rather than fitting noise.</p>")
+                continue
+            A, B = _fit(confs, ys)
+            b_raw = _brier(confs, ys)
+            b_cal = _brier([_apply(c, A, B) for c in confs], ys)
+            cv = _cv(confs, ys)
+            cvtxt = ("<i>sample too small for out-of-sample check</i>" if not cv else
+                     f"out-of-sample Brier {cv[0]:.4f} raw &rarr; <b>{cv[1]:.4f}</b> calibrated "
+                     f"over {cv[2]} folds " +
+                     ("<span style='color:#3fb950'>(improves)</span>" if cv[1] < cv[0]
+                      else "<span style='color:#f85149'>(does NOT improve — do not apply)</span>"))
+            tbl = "".join(
+                f"<tr><td>{int(sc*100)}%</td><td><b>{_apply(sc,A,B)*100:.1f}%</b></td></tr>"
+                for sc in (0.55,0.60,0.65,0.70,0.75,0.80,0.85))
+            be = next((f"{int(sc*100)}%" for sc in [x/100 for x in range(50,96)]
+                       if _apply(sc,A,B) >= 0.5238), "never in range")
+            blocks += head + f"""
+              <p><code>A = {A:.6f}</code> &nbsp; <code>B = {B:.6f}</code></p>
+              <p>in-sample Brier {b_raw:.4f} raw &rarr; {b_cal:.4f} calibrated<br>{cvtxt}</p>
+              <p>First stated confidence whose calibrated value clears the 52.38%
+                 break-even: <b>{be}</b></p>
+              <table><tr><th>stated</th><th>calibrated</th></tr>{tbl}</table>"""
+            if ptype not in ("ALL", "?"):
+                envlines.append(f"CAL_A_{ptype}={A:.6f}\nCAL_B_{ptype}={B:.6f}")
+
+        env = _h.escape("\n".join(envlines))
+        html = f"""<!doctype html><html><head><meta charset=utf-8><title>Calibration fit</title>
+<style>body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:860px;margin:0 auto}}
+h2{{color:#58a6ff}} h3{{color:#e6edf3;margin-top:26px;border-top:1px solid #21262d;padding-top:16px}}
+td,th{{padding:4px 14px;border-bottom:1px solid #21262d;font-size:13px;text-align:left}}
+code{{background:#161b22;padding:2px 7px;border-radius:4px;color:#79c0ff}}
+pre{{background:#161b22;padding:12px;border-radius:8px;overflow:auto}}
+.note{{color:#8b949e;font-size:12px;line-height:1.6}}</style></head><body>
+<h2>Per-type calibration fit</h2>
+<p class="note">Graded picks since <b>{_h.escape(since)}</b>. Read-only.
+Fitted on Railway so the internal database host resolves and no public URL is needed.<br>
+<b>Read the out-of-sample line before trusting any coefficient.</b> An in-sample Brier
+always improves — that is the fit memorizing. Only apply a curve whose out-of-sample
+Brier also improves.</p>
+{blocks}
+<h3>Env vars</h3>
+<p class="note">Set these on Railway to apply per-type calibration without a redeploy.
+Only set the ones whose out-of-sample check improved.</p>
+<pre>{env}</pre>
+<p><a href="/admin">&larr; Admin</a></p></body></html>"""
+        return Response(html, mimetype="text/html")
+    except Exception:
+        return Response(f"<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        f"{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
 
 
 @app.route("/admin/pinnacle-props-scan")
