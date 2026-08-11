@@ -854,13 +854,62 @@ def detect_movement(prev_snaps: list, curr_snaps: list, ts: str) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def save_snapshot(rows: list):
-    master     = CLEAN_DIR / "mlb_odds_master.csv"
-    write_hdr  = not master.exists()
-    with open(master, "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=SNAPSHOT_FIELDNAMES)
-        if write_hdr:
-            w.writeheader()
+    """Append snapshot rows, REWRITING the file if the schema changed.
+
+    CRITICAL (fixed 2026-08-11). This used to open in append mode and write a
+    header only when the file did not exist. The moment SNAPSHOT_FIELDNAMES
+    gained a column, new rows were written in the NEW order underneath the OLD
+    header, so every consumer read shifted values.
+
+    It happened the same day the four explicit run-line price columns were added
+    at index 13: `total_line` started reading `rl_home_m15_price`, so a -207 run
+    line price rendered on the board as "UNDER 207.0" with a 197-run edge. The
+    ML and RL fields before the insertion point were unaffected, which is why the
+    breakage looked partial and plausible.
+
+    This is the exact failure normalize/mlb_normalize.append_to_master was fixed
+    for on 2026-07-29 (schedule master, shift-by-one on the probable-pitcher-ID
+    columns). Same fix applied here: compare the on-disk header, and if it does
+    not match, rewrite the whole file under the union schema so columns can never
+    shift again. Old rows get "" for new columns.
+    """
+    master = CLEAN_DIR / "mlb_odds_master.csv"
+
+    existing_hdr, existing_rows = None, []
+    if master.exists():
+        try:
+            with open(master, newline="", encoding="utf-8") as f:
+                r = csv.DictReader(f)
+                existing_hdr = list(r.fieldnames or [])
+                if existing_hdr == list(SNAPSHOT_FIELDNAMES):
+                    existing_hdr = None          # schema matches, plain append
+                else:
+                    existing_rows = list(r)
+        except Exception as e:
+            log.warning(f"[Pinnacle] could not read odds master, rewriting: {e}")
+            existing_hdr, existing_rows = [], []
+
+    if existing_hdr is None and master.exists():
+        with open(master, "a", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=SNAPSHOT_FIELDNAMES).writerows(rows)
+        log.info(f"[Pinnacle] Saved {len(rows)} snapshot rows to mlb_odds_master.csv")
+        return
+
+    # Schema changed (or first write). Rewrite under the current field list.
+    # Rows written under a DIFFERENT header are dropped rather than migrated:
+    # their values are positionally misaligned and there is no safe way to
+    # recover them. Snapshots are cheap to re-pull (Pinnacle is free), whereas a
+    # silently misaligned row poisons every downstream price and total.
+    dropped = len(existing_rows)
+    with open(master, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=SNAPSHOT_FIELDNAMES, extrasaction="ignore")
+        w.writeheader()
         w.writerows(rows)
+    if dropped:
+        log.warning(f"[Pinnacle] odds master schema changed "
+                    f"({len(existing_hdr or [])} -> {len(SNAPSHOT_FIELDNAMES)} cols). "
+                    f"Rewrote file and DROPPED {dropped} misaligned row(s). "
+                    f"Snapshots re-pull for free; re-run the odds pull.")
     log.info(f"[Pinnacle] Saved {len(rows)} snapshot rows to mlb_odds_master.csv")
 
 
