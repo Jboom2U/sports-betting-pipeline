@@ -366,11 +366,54 @@ CONFIRMED already correct: `get_pitcher` uses `sorted(keys)[-1]` = single latest
   walk-forward validated, weekly breakdown), `/admin/pinnacle-props-scan`
   (which prop markets really exist, read-only).
 
-**Still open:** no `odds` column on `picks`, so EV and CLV cannot be measured or
-backfilled. This is the top blocker and it gates any real ML verdict. Platoon
-wiring needs `pitchHand` on the schedule scrape (batter `vs_lhp_*`/`vs_rhp_*`
-splits are already scraped and unused). Hits Allowed and Pitching Outs have real
-lines but no probability model.
+**Shipped later the same day:** `odds`, `odds_at`, `closing_odds`,
+`closing_odds_at` on `picks`. `odds` keeps the FIRST price seen and freezes with
+`tier_locked`; `closing_odds` refreshes on every rescore, and since rescores stop
+at first pitch the last value written IS the close, so CLV needs no extra job.
+`_pick_price()` in `picks_store.py` returns None rather than guessing.
+
+**Still open:** platoon wiring needs `pitchHand` on the schedule scrape (batter
+`vs_lhp_*`/`vs_rhp_*` splits are already scraped and unused). Hits Allowed and
+Pitching Outs have real lines but no probability model. Batter Hits/RBI/Runs/SB
+need the Odds API on-demand button (see below).
+
+---
+
+## 📋 QUEUED: Gemini pre-deploy proofread (requested 2026-08-11, not built)
+
+Justin wants a second model reviewing changes BEFORE `railway up`, not after.
+The hook is `scripts/predeploy_check.py`, which already runs before every deploy.
+
+**Why:** on 2026-08-11 four self-inflicted bugs were caught only because they
+happened to be re-read: a `_safe()` helper that did not exist (would have thrown
+on schema creation at startup), a calibration fitted on a biased ML_TOP5 sample
+and applied far too harshly, an ML-fitted Platt curve applied to run lines where
+it is meaningless, and a claimed "latent bug" that was actually the reviewer's
+own newly-inserted code. A model from a different family fails differently and is
+more likely to catch what one model would repeat.
+
+**Design sketch:**
+- New step in `predeploy_check.py`, AFTER the syntax and SQL checks pass.
+- Input: `git diff` of staged files, plus the relevant CLAUDE.md sections.
+  (Justin runs it from PowerShell, so git is available there. This must NOT be
+  run from the Cowork sandbox, see the git rule above.)
+- Reuse `gemini_client.call_gemini()`. Needs `GEMINI_API_KEY` locally, not just
+  on Railway. Degrade to a warning and PASS if the key is absent, so the check
+  never blocks a deploy on a missing key.
+- Prompt should target the failure modes this repo actually has, not generic
+  code review: undefined helpers, column names that do not exist in schema.py,
+  fields read from the wrong dict, prices looked up by the wrong key, statistics
+  fitted on a filtered sample then applied to the whole population, thresholds
+  chosen after seeing the data.
+- Output ADVISORY only. Print findings, never fail the build on them. A model
+  blocking a deploy on a false positive is worse than the bug it prevents.
+- Separate concern from the existing `/admin/analysis` and `/ask` debates, which
+  review the day's PICKS. This reviews the CODE.
+
+**Also queued:** a one-off Gemini red-team of the 2026-08-11 statistical
+conclusions themselves (the RL 57-65% band, the walk-forward split, the per-type
+Platt acceptance test, and whether p=0.0011 is adequately discounted for the fact
+that the threshold was chosen after seeing the bands).
 
 ---
 

@@ -3293,6 +3293,7 @@ function renderSurfacedProps(){
   grid.style.display = "";
   if(empty) empty.style.display = "none";
   grid.innerHTML = "";
+  const _sfxBuf = [];
   topProps.forEach(p => {
     const overUnder = p.pick_side || (p.proj >= p.line ? "OVER" : "UNDER");
     const label     = propLabel(p.prop_type, p.line, overUnder);
@@ -3307,7 +3308,7 @@ function renderSurfacedProps(){
     const projBanner = p.projected
       ? `<div style="background:rgba(255,183,77,.1);border-bottom:1px solid rgba(255,183,77,.2);padding:3px 10px;font-size:.68rem;color:#ffb74d;letter-spacing:.04em">📋 Lineup not confirmed yet</div>`
       : "";
-    grid.innerHTML += `
+    _sfxBuf.push(`
       <div class="pick-card tier-${p.tier}" data-type="PROP" data-tier="${p.tier}">
         ${projBanner}
         <div class="pick-top">
@@ -3330,8 +3331,9 @@ function renderSurfacedProps(){
           Model projection: <span style="color:${projColor};font-weight:600">${p.proj} (${overUnder})</span>
         </div>
         <div class="pick-reasoning">${p.reasoning||""}</div>
-      </div>`;
+      </div>`);
   });
+  grid.innerHTML = _sfxBuf.join('');   // one DOM write, not N
 }
 
 
@@ -3807,6 +3809,7 @@ function weatherDisplay(g){
 function renderGames(){
   const grid = document.getElementById("gamesGrid");
   grid.innerHTML = "";
+  const _gameBuf = [];
   DATA_GAMES.forEach(g=>{
     const homeW    = g.home_wp, awayW = g.away_wp;
     const totalDir = g.exp_total > g.total_line ? "↑ OVER" : "↓ UNDER";
@@ -3823,7 +3826,7 @@ function renderGames(){
            </span></div>`
       : "";
 
-    grid.innerHTML += `
+    _gameBuf.push(`
       <div class="game-card">
         <div class="game-header">
           <span class="matchup">${teamLogo(g.away,18)}${g.away} @ ${teamLogo(g.home,18)}${g.home}</span>
@@ -3890,8 +3893,9 @@ function renderGames(){
             </div>
           </div>
         </div>
-      </div>`;
+      </div>`);
   });
+  grid.innerHTML = _gameBuf.join('');   // one DOM write, not N
 }
 
 // ── Section Nav ───────────────────────────────────────────────────────────────
@@ -4248,6 +4252,7 @@ function renderSchedule(){
     grid.innerHTML = `<div class="empty">No games found for today.</div>`;
     return;
   }
+  const _schedBuf = [];
   ACTIVE_SCHEDULE.forEach(g=>{
     const isLive    = g.status.startsWith("Live");
     const isFinal   = g.status === "Final";
@@ -4277,7 +4282,7 @@ function renderSchedule(){
 
     const venueTrunc = g.venue.length > 28 ? g.venue.slice(0,26)+"…" : g.venue;
 
-    grid.innerHTML += `
+    _schedBuf.push(`
       <div class="sched-card">
         <div class="sched-status-bar ${statusClass}">${statusLabel}</div>
         <div class="sched-matchup">
@@ -4311,8 +4316,9 @@ function renderSchedule(){
           <span class="sched-time">${isFinal||isLive ? g.status : localGameTime(g.game_time_utc)}</span>
           <span class="sched-venue">${venueTrunc}</span>
         </div>
-      </div>`;
+      </div>`);
   });
+  grid.innerHTML = _schedBuf.join('');   // one DOM write, not N
 }
 
 // ── Render Props ──────────────────────────────────────────────────────────────
@@ -4346,6 +4352,7 @@ function renderProps(){
     if(timeEl && window._schedRefreshTime) timeEl.textContent = window._schedRefreshTime;
   }
   // Bettable props first, research-only projections after.
+  const _propBuf = [];
   [...DATA_PROPS].sort((a,b)=>(a.projection_only?1:0)-(b.projection_only?1:0)).forEach(p=>{
     const show = (propFilterType==="all" || p.prop_type===propFilterType)
               && (propFilterTier==="all" || p.tier===propFilterTier);
@@ -4391,7 +4398,7 @@ function renderProps(){
     const projBanner = p.projected ? `<div style="background:rgba(255,183,77,.1);border-bottom:1px solid rgba(255,183,77,.2);
       padding:4px 10px;font-size:.68rem;color:#ffb74d;letter-spacing:.04em">
       📋 PROJECTED — based on last confirmed lineup</div>` : "";
-    grid.innerHTML += `
+    _propBuf.push(`
       <div class="prop-card tier-${p.tier}" style="${p.projected ? 'border:1px dashed rgba(255,183,77,.3)' : ''}">
         ${projBanner}
         <div class="prop-top">
@@ -4432,8 +4439,13 @@ function renderProps(){
           </span>
         </div>` : ""}
         <div class="prop-reasoning">${p.reasoning}</div>
-      </div>`;
+      </div>`);
   });
+  // ONE DOM write. `innerHTML +=` in a loop re-serialises and re-parses the
+  // ENTIRE grid on every iteration, so rendering N props costs O(N^2). With
+  // ~259 props on a full slate that froze the main thread for 10-20s, which
+  // is what made the page feel like it was hanging on load. (2026-08-11)
+  grid.innerHTML = _propBuf.join('');
   document.getElementById("propResults").innerHTML =
     `Showing <b>${visible}</b> of <b>${DATA_PROPS.length}</b> props`;
   if(!visible){
