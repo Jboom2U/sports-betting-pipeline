@@ -2719,16 +2719,26 @@ def strategy_backtest():
                 if len(sel) < 20: continue
                 w = sum(r[3] for r in sel)
                 roi = _roi(w, len(sel)-w)
+                # Only consider thresholds that were PROFITABLE in training.
+                # Without this the search returns the least-bad losing rule and
+                # then "passes" on a small test sample by luck — which is exactly
+                # what TOTAL did on 2026-08-11: every training threshold was
+                # negative (best -12.3%), it still proposed one, and 17-12 on
+                # n=29 got reported as holding up. A rule that lost money in
+                # training is not a rule.
+                if roi <= 0: continue
                 if roi > best_roi: best, best_roi = th, roi
             if best is None:
-                wf += (f"<tr><td>{_h.escape(t)}</td><td colspan='5'>"
-                       f"<i>not enough training picks to choose a threshold</i></td></tr>")
+                wf += (f"<tr><td><b>{_h.escape(t)}</b></td><td colspan='5' style='color:#f85149'>"
+                       f"<i>NO profitable threshold in training &mdash; nothing to test. "
+                       f"This bet type has no rule worth applying.</i></td></tr>")
                 continue
             sel = [r for r in te if r[2] >= best]
             w = sum(r[3] for r in sel); l = len(sel) - w
             rec, pct, roi = _fmt(w, l)
             col = "#3fb950" if pct >= 52.38 else "#f85149"
-            verdict = ("holds up" if pct >= 52.38 else "does NOT hold up")
+            verdict = ("<b>too few test picks to judge</b>" if len(sel) < 30
+                       else "holds up" if pct >= 52.38 else "does NOT hold up")
             wf += (f"<tr><td><b>{_h.escape(t)}</b></td><td>{int(best*100)}%</td>"
                    f"<td>{best_roi:+.1f}%</td><td>{rec}</td>"
                    f"<td style='color:{col}'><b>{pct:.1f}%</b></td>"
