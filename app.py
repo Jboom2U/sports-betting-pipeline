@@ -2746,9 +2746,32 @@ def calibration_fit():
                      f"over {cv[2]} folds " +
                      ("<span style='color:#3fb950'>(improves)</span>" if cv[1] < cv[0]
                       else "<span style='color:#f85149'>(does NOT improve — do not apply)</span>"))
-            tbl = "".join(
-                f"<tr><td>{int(sc*100)}%</td><td><b>{_apply(sc,A,B)*100:.1f}%</b></td></tr>"
-                for sc in (0.55,0.60,0.65,0.70,0.75,0.80,0.85))
+            # ACTUAL record per band. The fitted curve is inference; this is fact.
+            # Also marks bands the model CANNOT produce (RL is capped at 0.68 in
+            # mlb_model.py), so an impressive-looking calibrated value in an
+            # impossible band is not mistaken for a real result. That trap is why
+            # the first version of this page made run lines look strong at 85%.
+            lo_c, hi_c = min(confs), max(confs)
+            bands = [(0.50,0.55),(0.55,0.60),(0.60,0.65),(0.65,0.70),
+                     (0.70,0.75),(0.75,0.80),(0.80,1.01)]
+            tbl = ""
+            for b_lo, b_hi in bands:
+                sel = [(c, y) for c, y in zip(confs, ys) if b_lo <= c < b_hi]
+                mid = (b_lo + b_hi) / 2 if b_hi <= 1.0 else 0.85
+                calv = _apply(mid, A, B) * 100
+                if not sel:
+                    reach = "" if b_lo <= hi_c else " &mdash; above this model's cap"
+                    tbl += (f"<tr style='opacity:.45'><td>{int(b_lo*100)}-{int(b_hi*100)}%</td>"
+                            f"<td>{calv:.1f}%</td><td colspan='2'><i>no picks{reach}</i></td></tr>")
+                    continue
+                nb = len(sel); wb = sum(y for _, y in sel)
+                act = 100.0 * wb / nb
+                col = "#3fb950" if act >= 52.38 else "#f85149"
+                thin = " <span style='color:#d29922'>thin</span>" if nb < 25 else ""
+                tbl += (f"<tr><td>{int(b_lo*100)}-{int(b_hi*100)}%</td>"
+                        f"<td>{calv:.1f}%</td>"
+                        f"<td>{wb}-{nb-wb}</td>"
+                        f"<td style='color:{col}'><b>{act:.1f}%</b>{thin}</td></tr>")
             be = next((f"{int(sc*100)}%" for sc in [x/100 for x in range(50,96)]
                        if _apply(sc,A,B) >= 0.5238), "never in range")
             blocks += head + f"""
@@ -2756,7 +2779,12 @@ def calibration_fit():
               <p>in-sample Brier {b_raw:.4f} raw &rarr; {b_cal:.4f} calibrated<br>{cvtxt}</p>
               <p>First stated confidence whose calibrated value clears the 52.38%
                  break-even: <b>{be}</b></p>
-              <table><tr><th>stated</th><th>calibrated</th></tr>{tbl}</table>"""
+              <table><tr><th>stated band</th><th>calibrated</th><th>actual W-L</th>
+                <th>actual win%</th></tr>{tbl}</table>
+              <p class="note">The <b>actual</b> columns are the record, not a model output.
+              Trust those over the fitted curve. Green clears the 52.38% break-even.
+              Greyed rows are bands this bet type never produces, so any calibrated
+              value shown there is extrapolation fitted on nothing.</p>"""
             if ptype not in ("ALL", "?"):
                 envlines.append(f"CAL_A_{ptype}={A:.6f}\nCAL_B_{ptype}={B:.6f}")
 

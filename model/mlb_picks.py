@@ -102,24 +102,73 @@ def tier_emoji(t: str) -> str:
 #
 # Flip the gate on with EV_GATE=1 on Railway. OFF by default so deploying this
 # change alone cannot alter tonight's board.
-_CAL_A = float(os.getenv("CAL_A", "1.440066"))
-_CAL_B = float(os.getenv("CAL_B", "-1.407709"))
+# ── PER-TYPE CALIBRATION, fitted 2026-08-11 on 661 graded picks since 07-21 ──
+# Source: /admin/calibration-fit against the live picks table.
+#
+#   type   n     record    stated  actual   gap    out-of-sample Brier
+#   ML     277   140-137   64.5%   50.5%   -13.9   0.2602 -> 0.2513  IMPROVES
+#   RL     229   126-103   58.9%   55.0%    -3.9   0.2327 -> 0.2573  WORSE
+#   TOTAL  155    72-83    55.7%   46.5%    -9.3   0.2599 -> 0.2518  IMPROVES
+#
+# RL IS DELIBERATELY ABSENT. Its calibration made out-of-sample Brier WORSE,
+# because there is barely any miscalibration left to correct: stated 58.9% vs
+# actual 55.0% is a 3.9 point gap, and 55.0% sits ABOVE the 52.38% break-even.
+# The run line is the one bet type whose confidence is roughly honest, which is
+# what you would expect from the only type already gated on EV against a real
+# price. Fitting a curve to it would be fitting noise. Leave it alone.
+#
+# SUPERSEDES the earlier single global fit (A=1.440066, B=-1.407709). That was
+# estimated on 121 ML_TOP5 rows scraped from the consensus D1 database, which is
+# the five HIGHEST-confidence picks per day, not the pick population. Mean stated
+# confidence there was 71.9% against 64.5% across all 277 ML picks, so the fit was
+# biased and far too harsh: it read stated 60% as 30.5% when the real answer is
+# 47.1%. Do not reintroduce a single global curve.
+#
+# Override per type on Railway without a redeploy: CAL_A_ML / CAL_B_ML etc.
+# Refit monthly at /admin/calibration-fit and only adopt a type whose
+# out-of-sample Brier improves.
+def _cal_pair(ptype, a_default, b_default):
+    return (float(os.getenv(f"CAL_A_{ptype}", str(a_default))),
+            float(os.getenv(f"CAL_B_{ptype}", str(b_default))))
+
+CAL_COEFFS = {
+    "ML":    _cal_pair("ML",    0.621123, -0.368625),
+    "TOTAL": _cal_pair("TOTAL", 0.178915, -0.183981),
+}
+if os.getenv("CAL_A_RL") and os.getenv("CAL_B_RL"):
+    # Only if you have explicitly decided to, after a refit shows it improves.
+    CAL_COEFFS["RL"] = _cal_pair("RL", 1.369136, -0.293049)
 
 EV_GATE_ENABLED       = os.getenv("EV_GATE", "0").strip().lower() in ("1", "true", "yes", "on")
 EV_GATE_TYPES         = {"ML", "TOTAL"}
 EV_GATE_MIN_EV        = float(os.getenv("EV_GATE_MIN_EV", "0.0"))
 EV_GATE_KEEP_UNPRICED = True    # no price => keep and flag, never silently drop
 
+# TOTALS CANNOT CLEAR BREAK-EVEN. total_conf_base is hard capped at 0.68
+# (mlb_model.py), and the calibrated value at that cap is 48.8%, below the 52.38%
+# break-even. So no total pick the model can currently produce is a positive-EV
+# bet. The fitted slope A=0.179 is nearly flat as well: 30 points of stated
+# confidence (55->85) map to under 7 points of real probability, meaning the
+# totals number carries almost no information. Record since the boundary is
+# 72-83 (46.5%). Totals are display-only until the projection is rebuilt.
+TOTALS_CAN_CLEAR_BREAKEVEN = False
 
-def calibrated_conf(conf):
+
+def calibrated_conf(conf, pick_type="ML"):
     """Map raw model confidence onto its historically observed win rate.
 
-    Use for bet sizing and value/EV only. Never for display or tiering.
+    Returns None when the bet type has no trustworthy fit (RL), so callers show
+    "not calibrated" instead of a borrowed number from a different bet type.
+    Use for sizing, value and EV only. Never for display confidence or tiering.
     """
     if conf is None:
         return None
+    pair = CAL_COEFFS.get(pick_type)
+    if pair is None:
+        return None
+    A, B = pair
     c = min(max(float(conf), 0.01), 0.99)
-    z = _CAL_A * math.log(c / (1.0 - c)) + _CAL_B
+    z = A * math.log(c / (1.0 - c)) + B
     return 1.0 / (1.0 + math.exp(-z))
 
 
@@ -147,7 +196,7 @@ def honest_ev(pick: dict) -> dict:
     """
     from model.value import american_to_decimal
 
-    cal_p = calibrated_conf(pick.get("conf"))
+    cal_p = calibrated_conf(pick.get("conf"), pick.get("type", "ML"))
     d     = american_to_decimal(_price_for(pick))
     if d is None or cal_p is None:
         return {"cal_p": cal_p, "ev": None, "priced": False,

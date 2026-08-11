@@ -281,7 +281,7 @@ def prep_picks(picks, kalshi_data: dict = None):
         try:
             from model.mlb_picks import calibrated_conf as _cc
             from model.value import american_to_decimal as _a2d
-            _cal = _cc(_p) if ptype == "ML" else None
+            _cal = _cc(_p, ptype)   # returns None for types with no trusted fit (RL)
             _cal_conf = round(_cal * 100, 1) if _cal is not None else None
             _d = _a2d(_pick_price)
             if _d and _cal is not None:
@@ -2299,14 +2299,21 @@ function honestReadHtml(p){
   if(p.cal_conf==null){
     // No calibration for this bet type yet. Say so plainly. A missing number is
     // information; a borrowed one from another bet type would be a lie.
-    if(p.type==="RL" || p.type==="TOTAL"){
+    if(p.type==="RL"){
       const be = (p.breakeven!=null) ? ` Price needs <b>${p.breakeven}%</b>.` : "";
-      return `<div class="honest-read hr-none">
-        <span class="hr-title">HONEST READ &middot; NOT CALIBRATED</span>
-        <span class="hr-body">${p.type==="RL"
-          ? "Run line confidence is a Poisson cover probability, not a win rate, so the ML calibration does not apply."
-          : "Totals confidence is a distance-to-line heuristic, not a win probability, so the ML calibration does not apply."}
-          ${be} Needs its own fit before this number can be trusted.</span></div>`;
+      // RL is intentionally uncalibrated. Fitted 2026-08-11 on 229 graded run
+      // lines: stated 58.9% vs actual 55.0%, only a 3.9 point gap, and the
+      // out-of-sample Brier got WORSE when a curve was applied. There is little
+      // miscalibration to correct, which is what you expect from the one bet
+      // type already gated on EV against a real price.
+      return `<div class="honest-read hr-play">
+        <span class="hr-title">HONEST READ &middot; ROUGHLY CALIBRATED</span>
+        <span class="hr-body">Run line confidence has been close to honest:
+          <b>126-103 (55.0%)</b> since 2026-07-21 against a stated 58.9%, a gap of
+          under 4 points. No correction applied because fitting one made
+          out-of-sample accuracy worse.${be}
+          <br><span style="color:#8b949e">Above the 52.4% break-even, though n=229
+          is not yet statistically conclusive (p=0.23).</span></span></div>`;
     }
     return "";
   }
@@ -2315,6 +2322,21 @@ function honestReadHtml(p){
       <span class="hr-title">HONEST READ</span>
       <span class="hr-body">Model ${p.conf}% &rarr; calibrated <b>${p.cal_conf}%</b>
       &middot; no clean price, so no breakeven to compare against</span></div>`;
+  }
+  if(p.type==="TOTAL"){
+    // Structural, not a per-pick judgement: total_conf is hard capped at 0.68 in
+    // mlb_model.py and the calibrated value at that cap is 48.8%, under the
+    // 52.38% break-even. No total the model can currently produce is +EV. The
+    // fitted slope is also nearly flat (30 pts of stated conf -> under 7 pts of
+    // real probability), so the number barely ranks. Record 72-83 (46.5%).
+    return `<div class="honest-read hr-avoid">
+      <span class="hr-title">HONEST READ &middot; NOT A BET</span>
+      <span class="hr-body">Model ${p.conf}% &rarr; calibrated <b>${p.cal_conf}%</b>.
+        Totals confidence is capped at 68%, which calibrates to 48.8% — below the
+        52.4% break-even, so <b>no total can currently clear it</b>. Record 72-83
+        (46.5%) since 2026-07-21.
+        <br><span style="color:#8b949e">Shown for research. The run projection
+        needs rebuilding before totals are bettable.</span></span></div>`;
   }
   const m = +(p.cal_conf - p.breakeven).toFixed(1);
   const v = p.read_verdict || "";
