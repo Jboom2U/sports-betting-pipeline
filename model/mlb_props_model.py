@@ -823,7 +823,11 @@ def _load_pinnacle_props(date: str) -> dict:
 
 # Model prop_type -> Pinnacle market key. Only these two batter markets exist
 # with real lines. HITS, RBI, R and SB have NO real market and stay projections.
-PROP_TYPE_TO_BOOK = {"HR": "HR", "TB": "TB"}
+# HR and TB come from Pinnacle (free, automatic, every slate).
+# HITS, RBI and R only exist if someone pulled them from the Odds API via
+# /admin/props-pull, which costs a credit per market per game. When absent the
+# prop keeps its invented line and stays a research projection.
+PROP_TYPE_TO_BOOK = {"HR": "HR", "TB": "TB", "HITS": "HITS", "RBI": "RBI", "R": "R"}
 
 # Never lay more than this on a prop. Props are the least reliable output in the
 # model, and heavy juice turns a small estimation error into a large loss.

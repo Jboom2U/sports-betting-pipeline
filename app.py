@@ -1723,6 +1723,8 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
     <a class="card" href="/admin/pinnacle-odds-test"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Pinnacle odds diagnostic</div>
       <div class="card-desc">Dry-run ML/RL/total parse, no writes, no quota</div></a>
+    <a class="card" href="/admin/props-pull"><span class="badge badge-admin">Admin</span>
+      <b>Pull batter props</b><span>Odds API, on demand. SPENDS QUOTA. Shows cost before you commit.</span></a>
     <a class="card" href="/admin/strategy-backtest"><span class="badge badge-admin">Admin</span>
       <b>Strategy backtest</b><span>Threshold rules replayed on graded history, walk-forward validated.</span></a>
     <a class="card" href="/admin/calibration-fit"><span class="badge badge-admin">Admin</span>
@@ -2636,6 +2638,128 @@ h2{{color:#58a6ff}} td,th{{padding:5px 12px;border-bottom:1px solid #21262d;font
 <p><b>{len(lines)}</b> pitcher K lines parsed.</p>
 <table><tr><th>Pitcher</th><th>Line</th><th>Over</th><th>Under</th></tr>{rows}</table>
 <p><a href="/admin">&larr; Admin</a></p></body></html>"""
+    return Response(html, mimetype="text/html")
+
+
+@app.route("/admin/props-pull", methods=["GET", "POST"])
+def props_pull():
+    """ON-DEMAND batter prop lines from The Odds API. SPENDS QUOTA.
+
+    Pinnacle carries Total Bases, Home Runs, Strikeouts, Hits Allowed and
+    Pitching Outs for free. It carries NO batter Hits, RBI or Runs, the props
+    the model still scores against a line it invents.
+    This is the only way to price those against a real book.
+
+    Billing is 1 credit PER MARKET PER EVENT (1 region). Three markets across a
+    15 game slate is 45 credits against a 500/month quota, so this is manual by
+    design: pick the games, pick the markets, see the cost, then confirm.
+    Nothing here is ever called by a scheduler.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/props-pull")
+    import html as _h, traceback
+    from scrapers.mlb_oddsapi_props import (
+        AVAILABLE_MARKETS, list_events, fetch_event_props,
+        merge_into_prop_lines, estimate_cost, get_api_key)
+
+    msg = ""
+    if request.method == "POST":
+        ev_ids  = request.form.getlist("events")
+        markets = request.form.getlist("markets")
+        if not ev_ids or not markets:
+            msg = ("<div class='warn'>Pick at least one game and one market. "
+                   "Nothing was pulled, no credits spent.</div>")
+        else:
+            cost = estimate_cost(len(ev_ids), len(markets))
+            try:
+                total, remaining = {}, "?"
+                for eid in ev_ids:
+                    got, remaining = fetch_event_props(eid, markets)
+                    for k, v in got.items():
+                        total.setdefault(k, {}).update(v)
+                counts = merge_into_prop_lines(total)
+                got_n = sum(len(v) for v in total.values())
+                with _cache_lock:
+                    _cache["generated_at"] = 0
+                _regenerate_in_background()
+                msg = (f"<div class='ok'>Pulled <b>{got_n}</b> prop line(s) across "
+                       f"{len(ev_ids)} game(s) &times; {len(markets)} market(s). "
+                       f"Spent <b>{cost}</b> credit(s). "
+                       f"<b>{_h.escape(str(remaining))}</b> remaining.<br>"
+                       f"File now holds: {_h.escape(str(counts))}. "
+                       f"Board is rescoring.</div>")
+            except Exception:
+                msg = (f"<div class='warn'><b>Pull failed.</b> Credits may still have "
+                       f"been spent for any event that completed.<pre>"
+                       f"{_h.escape(traceback.format_exc())}</pre></div>")
+
+    if not get_api_key():
+        return Response("<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        "No ODDS_API_KEY set. Nothing to do.</pre>",
+                        mimetype="text/html")
+    try:
+        events, remaining = list_events()
+    except Exception:
+        return Response(f"<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        f"{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
+
+    ev_rows = "".join(
+        f"<label class='row'><input type='checkbox' name='events' value='{_h.escape(e['id'] or '')}' "
+        f"onchange='recost()'> <span>{_h.escape(e['away'])} @ {_h.escape(e['home'])}"
+        f"</span> <span class='t'>{_h.escape(e['start_et'])}</span></label>"
+        for e in events)
+    mk_rows = "".join(
+        f"<label class='row'><input type='checkbox' name='markets' value='{k}' "
+        f"onchange='recost()'> <span>{_h.escape(v['label'])}</span> "
+        f"<span class='t'>&rarr; {v['key']}</span></label>"
+        for k, v in AVAILABLE_MARKETS.items())
+
+    html = f"""<!doctype html><html><head><meta charset=utf-8><title>Pull batter props</title>
+<style>body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:760px;margin:0 auto}}
+h2{{color:#58a6ff}} h3{{color:#e6edf3;margin:22px 0 8px;font-size:15px}}
+.row{{display:flex;align-items:center;gap:10px;padding:7px 10px;border-bottom:1px solid #21262d;font-size:13px;cursor:pointer}}
+.row:hover{{background:#161b22}} .row .t{{margin-left:auto;color:#8b949e;font-size:12px}}
+.note{{color:#8b949e;font-size:12px;line-height:1.6}}
+.cost{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 16px;margin:16px 0;font-size:14px}}
+.big{{font-size:26px;font-weight:700;color:#ffd479}}
+button{{background:#238636;border:0;color:#fff;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}}
+button:disabled{{background:#30363d;color:#8b949e;cursor:not-allowed}}
+.ok{{background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.4);padding:12px 16px;border-radius:8px;margin:12px 0;font-size:13px}}
+.warn{{background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.4);padding:12px 16px;border-radius:8px;margin:12px 0;font-size:13px}}
+pre{{white-space:pre-wrap;font-size:11px}}</style></head><body>
+<h2>Pull batter props (Odds API)</h2>
+{msg}
+<p class="note"><b>This spends quota.</b> Billing is 1 credit per market per game.
+Pinnacle already provides Total Bases, Home Runs, Strikeouts, Hits Allowed and
+Pitching Outs for free, so only the markets it does NOT carry are offered here.
+<br>Credits remaining per the API: <b>{_h.escape(str(remaining))}</b></p>
+<form method="post">
+<h3>Games ({len(events)} today)</h3>
+{ev_rows or "<p class='note'>No games listed for today.</p>"}
+<h3>Markets</h3>
+{mk_rows}
+<div class="cost">Estimated cost: <span class="big" id="cost">0</span> credit(s)
+<div class="note" id="brk">Pick games and markets.</div></div>
+<button type="submit" id="go" disabled>Pull selected props</button>
+</form>
+<p class="note" style="margin-top:18px">Pulled lines merge into today's prop file
+alongside Pinnacle's. Pinnacle always wins a conflict. The board rescores
+automatically afterwards, and any prop with a real line and price becomes
+eligible for Top Props on EV.</p>
+<p><a href="/admin">&larr; Admin</a></p>
+<script>
+function recost(){{
+  var e=document.querySelectorAll("input[name=events]:checked").length;
+  var m=document.querySelectorAll("input[name=markets]:checked").length;
+  var c=e*m;
+  document.getElementById("cost").textContent=c;
+  document.getElementById("brk").textContent = (e&&m)
+    ? e+" game(s) x "+m+" market(s) = "+c+" credit(s)"
+    : "Pick games and markets.";
+  document.getElementById("go").disabled = !(e&&m);
+}}
+</script></body></html>"""
     return Response(html, mimetype="text/html")
 
 
