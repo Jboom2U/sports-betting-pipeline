@@ -750,8 +750,29 @@ def score_k_prop(pitcher_name: str, pitcher_stats: dict,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _knorm(n: str) -> str:
-    """Normalize a pitcher name for matching Pinnacle <-> schedule."""
-    return " ".join((n or "").strip().split()).lower()
+    """Normalize a player name for cross-source matching.
+
+    HARDENED 2026-08-12. This used to only lowercase and collapse whitespace,
+    so ANY accent difference missed. Sportsbooks disagree with each other and
+    with MLB on diacritics: the Odds API file held "andres gimenez" while the
+    model had "andres gimenez" WITH accents, and the same file also held
+    "agustin ramirez" WITH them. 88 real prop lines matched zero model props
+    because of it, after credits had already been spent pulling them.
+
+    Now strips diacritics, punctuation and common suffixes so the same human
+    matches regardless of source spelling.
+    """
+    import unicodedata, re as _re
+    t = (n or "").strip()
+    # Decompose and drop combining marks: "Giménez" -> "Gimenez"
+    t = unicodedata.normalize("NFKD", t)
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = t.lower()
+    # Drop punctuation that varies by source: J.T. / JT, O'Neill / ONeill
+    t = t.replace(".", "").replace("'", "").replace("`", "").replace("-", " ")
+    # Trailing generational suffixes are inconsistently included
+    t = _re.sub(r"\b(jr|sr|ii|iii|iv)\b", " ", t)
+    return " ".join(t.split())
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -173,6 +173,20 @@ else:
         else:
             errors.append("[ROUTE ERROR]  " + route + " returned HTTP " + code)
 
+# ── Second-model review (advisory) ────────────────────────────────────────────
+# Runs only when the checks above have found no ERRORS, so it reviews code that
+# is otherwise deployable. ADVISORY ONLY: it prints findings and never changes
+# the exit code. Added 2026-08-12 after four reference-error bugs shipped in two
+# days, all syntactically valid and therefore invisible to py_compile.
+if not errors:
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from gemini_review import safe_review as _gemini_review
+        _gemini_review()
+    except Exception as _ge:
+        print("  [skip] second-model review unavailable: " + str(_ge))
+
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 print()
 if warnings:
