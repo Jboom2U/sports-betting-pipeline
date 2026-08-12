@@ -236,9 +236,21 @@ boundary. These SUPERSEDE any older guidance and you must apply them:
   a total as a bet.
 
 HOW TO RANK THE BOARD when asked for the best bet:
-1. Reject anything whose price is incoherent. For a +1.5 run line, implied
-   P(cover) MUST exceed that team's implied P(win outright), because covering
-   includes every win plus losing by one. If it does not, the price is corrupt.
+1. Coherence check, and read this carefully because it is easy to get wrong.
+   BOTH numbers in this test come from PRICES, never from the model.
+     market P(cover) = implied probability of the RUN LINE price
+     market P(win)   = implied probability of that team's MONEYLINE price
+   For a +1.5, market P(cover) must exceed market P(win), because covering
+   includes every win plus losing by exactly one. If it does not, the PRICE
+   FEED is corrupt and the pick is unbettable.
+   Example of a genuinely corrupt price: team is -106 on the moneyline (51.5%)
+   but their +1.5 pays +154 (39.4%). Impossible, reject.
+   DO NOT compare the model's RL confidence to the model's ML win probability.
+   Those are different quantities and a gap between them is NORMAL, not a
+   contradiction. A team can be 49% to win outright and 64% to cover +1.5,
+   because covering also collects every one-run loss. In a near-even game that
+   is exactly the expected shape. Rejecting a pick on that basis is a mistake
+   and has already caused this bot to discard the best bet on a board.
 2. Use the CALIBRATED number and the breakeven the price demands, never raw conf.
    The pack gives you both per pick.
 3. Rank by honest EV. State the margin in points over breakeven.
@@ -271,7 +283,12 @@ def _call_claude_bot(pack: str, question: str) -> str:
     import urllib.request
     payload = {
         "model": "claude-haiku-4-5-20251001",
-        "max_tokens": 900,
+        # 900 truncated whole-board answers mid-list (2026-08-12: a ranking cut
+        # off at item #4). A board ranking has to cover up to ~38 picks with a
+        # reason each, which does not fit in ~700 words. 2400 is comfortable for
+        # that without inviting rambling; the system prompt still asks for tight
+        # prose.
+        "max_tokens": 2400,
         "system": _SYSTEM,
         "messages": [{"role": "user",
                       "content": f"BOARD DATA:\n{pack}\n\nQUESTION: {question}"}],
@@ -309,7 +326,10 @@ def answer_question(question: str, date: str = None) -> dict:
                 f"BOARD DATA:\n{pack}\n\nQUESTION: {question}\n\n"
                 f"STATALIZER BOT'S ANSWER:\n{answer}\n\n"
                 "Give your own read from the data, then debate the bot.",
-                max_tokens=1400)
+                # Raised with the Claude side. Gemini gives its own read AND
+                # debates the answer, so it needs at least as much room, and on
+                # 2.5-pro part of the budget goes to internal thinking.
+                max_tokens=2000)
     except Exception as e:
         log.warning(f"ask_model Gemini call failed: {e}")
         gemini = ""
