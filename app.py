@@ -2660,7 +2660,7 @@ def props_pull():
     import html as _h, traceback
     from scrapers.mlb_oddsapi_props import (
         AVAILABLE_MARKETS, list_events, fetch_event_props,
-        merge_into_prop_lines, estimate_cost, get_api_key)
+        merge_into_prop_lines, estimate_cost, get_api_key, already_pulled)
 
     msg = ""
     if request.method == "POST":

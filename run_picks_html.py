@@ -1416,6 +1416,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .bb-head{font-size:1.02rem;font-weight:800;color:var(--gold);margin-bottom:10px}
 .bb-sub{font-size:.68rem;font-weight:500;color:var(--sub);margin-left:6px;letter-spacing:.02em}
 .bb-empty{font-size:.82rem;color:var(--sub);line-height:1.5}
+.bb-stake{color:var(--green);font-size:.72rem;font-weight:600}
 .bb-basis{color:var(--sub);font-size:.68rem;line-height:1.4}
 .bb-note{font-size:.7rem;color:var(--sub);line-height:1.45;margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
 .bb-row{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--border)}
@@ -1450,7 +1451,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .pick-card.tier-TOSSUP{border-left:3px solid rgba(127,119,221,.75);border-radius:0 8px 8px 0;opacity:.78}
 .pick-card.hidden{display:none}
 
-.pick-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+.pick-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;flex-wrap:wrap;gap:4px;padding-right:54px}
 .pick-type-badge{
   font-size:.68rem;font-weight:700;letter-spacing:.8px;padding:3px 9px;border-radius:4px;
   text-transform:uppercase;
@@ -1483,7 +1484,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .tb-TOSSUP{background:rgba(127,119,221,.12);color:#a09ae0;border:1px solid rgba(127,119,221,.3)}
 
 .pick-label{font-size:1.08rem;font-weight:700;color:var(--text);margin-bottom:4px;padding-right:60px}
-.pick-team-emblem{position:absolute;top:40px;right:10px;width:44px;height:44px;object-fit:contain;opacity:.6;pointer-events:none;z-index:0;filter:drop-shadow(0 0 1px rgba(255,255,255,.5))}
+.pick-team-emblem{position:absolute;top:8px;right:10px;width:40px;height:40px;object-fit:contain;opacity:.55;pointer-events:none;z-index:0;filter:drop-shadow(0 0 1px rgba(255,255,255,.5))}
 .pick-game{font-size:.78rem;color:var(--sub);margin-bottom:12px;padding-right:60px}
 
 .conf-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
@@ -2697,6 +2698,28 @@ function renderBestBets(){
     // Say WHERE the number came from. An RL best bet rests on an observed band
     // record; an ML one rests on a fitted calibration curve. Those are different
     // levels of evidence and the card should not blur them.
+    // CALIBRATED QUARTER-KELLY. The card's own Kelly figure is computed off raw
+    // confidence, which overstates by ~14 points on ML, so it sizes far too big.
+    // Kelly f* = (p*(d-1) - (1-p)) / (d-1). Using the band's OBSERVED rate for RL
+    // and the Platt-calibrated probability for ML, both against the real price.
+    //
+    // QUARTER, not half. Kelly assumes you know p exactly. Here p is estimated
+    // from 94 graded picks, so the edge itself has error bars, and overbetting a
+    // mis-estimated edge is how bankrolls die. Quarter-Kelly is the standard
+    // fraction for an uncertain edge.
+    //
+    // The 8% cap is a backstop, deliberately set high enough that it rarely
+    // binds. A first attempt used a 5% cap and it flattened everything to 5%,
+    // which destroyed the whole point: a +25% EV bet and a +9% EV bet showed the
+    // SAME stake. The stake has to move with the edge or it teaches nothing.
+    const _dec = p.pick_price > 0 ? 1 + p.pick_price/100 : 1 + 100/Math.abs(p.pick_price);
+    const _b   = _dec - 1;
+    const _f   = (e.trueP * _b - (1 - e.trueP)) / _b;
+    const _half = Math.max(0, Math.min(0.08, _f / 4));
+    const _bank = (typeof BANKROLL !== "undefined" && BANKROLL > 0) ? BANKROLL : null;
+    const stake = `<span class="bb-stake">stake ${(_half*100).toFixed(1)}% of bankroll`
+      + (_bank ? ` &middot; $${(_bank*_half).toFixed(2)} on $${_bank}` : "")
+      + `</span>`;
     const basis = (kind === "RL")
       ? `<span class="bb-basis">RL ${Math.round(e.band.lo*100)}-${Math.round(e.band.hi*100)}% band has gone <b>${e.band.rec}</b> (${(e.band.rate*100).toFixed(0)}%) · needs ${e.need.toFixed(1)}%</span>`
       : `<span class="bb-basis">calibrated ${Math.round(e.trueP*100)}% vs market</span>`;
@@ -2711,6 +2734,7 @@ function renderBestBets(){
         <span class="bb-game">${teamLogo(p.away,14)}${teamLogo(p.home,14)}${p.game}</span>
       </div>
       <div class="bb-meta">${basis}</div>
+      <div class="bb-meta">${stake}</div>
     </div>`;
   }).join("");
   box.innerHTML = `<div class="bb-wrap">
