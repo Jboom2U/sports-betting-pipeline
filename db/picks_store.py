@@ -286,7 +286,11 @@ def get_graded_detail(pick_date: str) -> list:
                 """
                 SELECT p.game, p.pick_type, p.label, p.team, p.conf, p.tier,
                        p.actual_result, p.away_final, p.home_final,
-                       p.market_signal, sg.ml_signal, sg.sharp_side
+                       p.market_signal, sg.ml_signal, sg.sharp_side,
+                       -- Price columns added 2026-08-11. NULL for anything
+                       -- graded before that, which is why the learn view shows
+                       -- "not captured" on older picks rather than guessing.
+                       p.odds, p.closing_odds
                 FROM picks p
                 LEFT JOIN scored_games sg
                   ON sg.score_date = p.pick_date
@@ -312,6 +316,14 @@ def get_graded_detail(pick_date: str) -> list:
                     if d.get(_k) is not None:
                         try:
                             d[_k] = int(d[_k])
+                        except Exception:
+                            d[_k] = None
+                # Same Decimal hazard as conf. json.dumps cannot serialize a
+                # Decimal and it takes the whole dashboard render down.
+                for _k in ("odds", "closing_odds"):
+                    if d.get(_k) is not None:
+                        try:
+                            d[_k] = float(d[_k])
                         except Exception:
                             d[_k] = None
                 rows.append(d)

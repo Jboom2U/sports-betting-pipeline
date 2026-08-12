@@ -2167,6 +2167,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <!-- PANEL: YESTERDAY'S RESULTS -->
   <div class="section-panel" id="panel-yesterday">
     <div id="yesterdayFull"></div>
+    <div id="learnFromYesterday"></div>
   </div>
 
   <!-- PANEL: SHARP ACTION -->
@@ -3485,6 +3486,102 @@ function renderSharpMoney(){
 }
 
 // ── Yesterday's Results Banner ────────────────────────────────────────────────
+// ── LEARN FROM YESTERDAY ─────────────────────────────────────────────────────
+// Applies the SAME checks to every graded run line pick, side by side, on games
+// whose outcome is already known. Built so the checks can be practised where the
+// answer is visible, rather than only on live picks where it is not.
+//
+// The three checks, in the order they should be applied:
+//   1. Is the price coherent? P(cover +1.5) must exceed P(win outright), since
+//      covering includes every win PLUS losing by one. If not, the price is
+//      broken and nothing else matters.
+//   2. Is the confidence inside the 57-65% band?
+//   3. Does the band's observed rate beat what the price demands?
+//
+// Deliberately shows losses that passed every check. Those exist and always
+// will: a 67% bet loses a third of the time. Hunting for a cause in them is how
+// a model gets tuned on noise.
+const LEARN_BANDS = [
+  { lo: 57, hi: 60, rate: 53.3, rec: "40-35" },
+  { lo: 60, hi: 65.1, rate: 67.4, rec: "29-14" }
+];
+function _imp(a){ return a < 0 ? Math.abs(a)/(Math.abs(a)+100) : 100/(a+100); }
+
+function renderLearn(){
+  const box = document.getElementById("learnFromYesterday");
+  if(!box || !DATA_YESTERDAY) return;
+  const gp = DATA_YESTERDAY.graded_picks || [];
+  const rl = gp.filter(p => (p.pick_type || p.type) === "RL");
+  if(!rl.length){ box.innerHTML = ""; return; }
+
+  const rows = rl.map(p => {
+    const conf = (p.conf > 1.5 ? p.conf : p.conf * 100);
+    const res  = (p.actual_result || p.result || "").toUpperCase();
+    const band = LEARN_BANDS.find(b => conf >= b.lo && conf < b.hi);
+    const price = p.odds != null ? p.odds : null;
+    const needs = price != null ? _imp(price) * 100 : null;
+    const sharp = p.sharp_side && p.team
+      ? (p.sharp_side.trim() === p.team.trim() ? "agrees" : "against") : "—";
+    let verdict, vcolor;
+    if(!band){ verdict = "outside band"; vcolor = "var(--sub)"; }
+    else if(price == null){ verdict = "price not captured"; vcolor = "var(--sub)"; }
+    else if(band.rate <= needs){ verdict = "price too steep"; vcolor = "var(--red)"; }
+    else { verdict = "playable"; vcolor = "var(--green)"; }
+    const score = (p.away_final != null && p.home_final != null)
+      ? `${p.away_final}-${p.home_final}` : "—";
+    const rc = res === "WIN" ? "var(--green)" : res === "LOSS" ? "var(--red)" : "var(--sub)";
+    return `<tr>
+      <td style="padding:9px 10px;font-weight:600">${p.label || ""}</td>
+      <td style="padding:9px 10px">${conf.toFixed(1)}%</td>
+      <td style="padding:9px 10px">${band ? "yes" : "<span style='color:var(--sub)'>no</span>"}</td>
+      <td style="padding:9px 10px">${price != null ? (price>0?"+":"")+Math.round(price) : "<span style='color:var(--sub)'>—</span>"}</td>
+      <td style="padding:9px 10px">${needs != null ? needs.toFixed(1)+"%" : "—"}</td>
+      <td style="padding:9px 10px">${band ? band.rate+"%" : "—"}</td>
+      <td style="padding:9px 10px;color:${sharp==='agrees'?'var(--green)':sharp==='against'?'var(--red)':'var(--sub)'}">${sharp}</td>
+      <td style="padding:9px 10px;color:${vcolor}">${verdict}</td>
+      <td style="padding:9px 10px">${score}</td>
+      <td style="padding:9px 10px;font-weight:700;color:${rc}">${res||"—"}</td>
+    </tr>`;
+  }).join("");
+
+  const played = rl.filter(p => {
+    const c = (p.conf > 1.5 ? p.conf : p.conf*100);
+    const b = LEARN_BANDS.find(x => c >= x.lo && c < x.hi);
+    return b && p.odds != null && b.rate > _imp(p.odds)*100;
+  });
+  const pw = played.filter(p => (p.actual_result||p.result||"").toUpperCase()==="WIN").length;
+  const summary = played.length
+    ? `Following the rule would have bet <b>${played.length}</b> of these and gone <b>${pw}-${played.length-pw}</b>.`
+    : `No pick cleared all three checks. Prices were not stored before 2026-08-11, so older days show blanks.`;
+
+  box.innerHTML = `
+    <div style="margin-top:22px">
+      <div class="section-title">🎓 Learn from yesterday — run lines</div>
+      <div style="font-size:.8rem;color:var(--sub);margin:-6px 0 12px;line-height:1.55">
+        The same three checks applied to picks whose result you already know.
+        Read left to right: is the price sane, is the confidence in the band,
+        does the band's real record beat what the price demands.
+      </div>
+      <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:.78rem">
+        <tr style="color:var(--sub);text-align:left">
+          <th style="padding:8px 10px">Pick</th><th style="padding:8px 10px">Conf</th>
+          <th style="padding:8px 10px">In band</th><th style="padding:8px 10px">Price</th>
+          <th style="padding:8px 10px">Needs</th><th style="padding:8px 10px">Band rate</th>
+          <th style="padding:8px 10px">Sharp</th><th style="padding:8px 10px">Verdict</th>
+          <th style="padding:8px 10px">Score</th><th style="padding:8px 10px">Result</th>
+        </tr>
+        ${rows}
+      </table></div>
+      <div style="font-size:.8rem;color:var(--sub);margin-top:12px;line-height:1.55">
+        ${summary}
+        <br><br>Some losses will have passed every check. That is expected, not a
+        flaw: a 67% bet loses roughly one time in three. The picks worth learning
+        from are the ones the checks <i>rejected</i> before the game started.
+      </div>
+    </div>`;
+}
+
 function renderYesterday(){
   if(!DATA_YESTERDAY || !DATA_YESTERDAY.date) return;
 
@@ -5282,6 +5379,7 @@ function renderDailySummary(){
 
 renderTicker();
 renderYesterday();
+renderLearn();
 renderPicks();
 renderSurfacedProps();
 
