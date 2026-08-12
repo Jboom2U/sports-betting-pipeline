@@ -1723,6 +1723,8 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
     <a class="card" href="/admin/pinnacle-odds-test"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Pinnacle odds diagnostic</div>
       <div class="card-desc">Dry-run ML/RL/total parse, no writes, no quota</div></a>
+    <a class="card" href="/admin/prop-match-diag"><span class="badge badge-admin">Admin</span>
+      <b>Prop match diagnostic</b><span>Why a real prop line is not reaching the board. Read-only.</span></a>
     <a class="card" href="/admin/props-pull"><span class="badge badge-admin">Admin</span>
       <b>Pull batter props</b><span>Odds API, on demand. SPENDS QUOTA. Shows cost before you commit.</span></a>
     <a class="card" href="/admin/strategy-backtest"><span class="badge badge-admin">Admin</span>
@@ -2639,6 +2641,89 @@ h2{{color:#58a6ff}} td,th{{padding:5px 12px;border-bottom:1px solid #21262d;font
 <table><tr><th>Pitcher</th><th>Line</th><th>Over</th><th>Under</th></tr>{rows}</table>
 <p><a href="/admin">&larr; Admin</a></p></body></html>"""
     return Response(html, mimetype="text/html")
+
+
+@app.route("/admin/prop-match-diag")
+def prop_match_diag():
+    """WHY is a real prop line not reaching the board? Read-only, no quota.
+
+    The chain is: pull -> file -> _load_pinnacle_props -> name match in
+    _finalize_prop/_fin -> reprice -> bettable -> prep_props projection_only ->
+    Top Props. A break anywhere shows as "no bettable props" with no explanation.
+    This prints every link so the break is visible instead of guessed at.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/prop-match-diag")
+    import html as _h, traceback
+    try:
+        from model.mlb_props_model import (
+            _load_pinnacle_props, _knorm, PROP_TYPE_TO_BOOK,
+            PROP_PRICE_FLOOR, MAX_PROP_MARKET_GAP, score_all_props)
+        from datetime import datetime as _dt
+        today = _dt.now(ET).strftime("%Y-%m-%d")
+
+        book = _load_pinnacle_props(today)
+        book_counts = {k: len(v) for k, v in book.items() if k != "_meta"}
+        book_names = {k: sorted(v.keys())[:8] for k, v in book.items() if k != "_meta"}
+
+        props = score_all_props(today) or []
+        by_type = {}
+        for p in props:
+            by_type.setdefault(p.get("prop_type"), []).append(p)
+
+        rows = ""
+        for ptype, plist in sorted(by_type.items()):
+            bk = PROP_TYPE_TO_BOOK.get(ptype)
+            pool = book.get(bk, {}) if bk else {}
+            matched = [p for p in plist if p.get("book_line") is not None]
+            bettable = [p for p in matched if p.get("bettable")]
+            blocked = {}
+            for p in matched:
+                if not p.get("bettable"):
+                    blocked[p.get("blocked") or "EV <= 0"] = blocked.get(p.get("blocked") or "EV <= 0", 0) + 1
+            unmatched = [p.get("player_name","") for p in plist
+                         if p.get("book_line") is None][:6]
+            rows += (f"<tr><td><b>{_h.escape(str(ptype))}</b></td>"
+                     f"<td>{len(plist)}</td>"
+                     f"<td>{_h.escape(str(bk)) if bk else '<i>no book market</i>'}</td>"
+                     f"<td>{len(pool)}</td>"
+                     f"<td style='color:{'#3fb950' if matched else '#f85149'}'>{len(matched)}</td>"
+                     f"<td style='color:{'#3fb950' if bettable else '#d29922'}'>{len(bettable)}</td>"
+                     f"<td style='font-size:11px'>{_h.escape(str(blocked) if blocked else '')}</td>"
+                     f"<td style='font-size:11px;color:#8b949e'>{_h.escape(', '.join(unmatched))}</td></tr>")
+
+        samples = ""
+        for k, names in book_names.items():
+            samples += (f"<p><b>{_h.escape(k)}</b> file keys (normalised): "
+                        f"<span style='color:#8b949e;font-size:12px'>"
+                        f"{_h.escape(', '.join(names))}</span></p>")
+        model_names = sorted({_knorm(p.get("player_name","")) for p in props})[:12]
+
+        html = f"""<!doctype html><html><head><meta charset=utf-8><title>Prop match diag</title>
+<style>body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:1050px;margin:0 auto}}
+h2{{color:#58a6ff}} td,th{{padding:6px 11px;border-bottom:1px solid #21262d;font-size:13px;text-align:left;vertical-align:top}}
+.note{{color:#8b949e;font-size:12px;line-height:1.6}}</style></head><body>
+<h2>Prop line match diagnostic</h2>
+<p class="note">Date {today}. Read-only, no API calls, no quota.<br>
+Guards in force: price floor <b>{PROP_PRICE_FLOOR}</b>, max model-vs-market gap
+<b>{MAX_PROP_MARKET_GAP:.0%}</b>.</p>
+<p class="note">File holds: <b>{_h.escape(str(book_counts))}</b></p>
+<table><tr><th>prop type</th><th>scored</th><th>book key</th><th>lines in file</th>
+<th>matched</th><th>bettable</th><th>blocked by</th><th>sample unmatched</th></tr>{rows}</table>
+<h3 style="color:#e6edf3;margin-top:22px;font-size:15px">Name comparison</h3>
+{samples}
+<p><b>model</b> player names (normalised): <span style='color:#8b949e;font-size:12px'>
+{_h.escape(', '.join(model_names))}</span></p>
+<p class="note">If <b>matched</b> is 0 while <b>lines in file</b> is large, the names
+do not agree and that is the break. Compare the two lists above.<br>
+If matched is high but bettable is 0, the guards rejected them and the
+<b>blocked by</b> column says which.</p>
+<p><a href="/admin">&larr; Admin</a></p></body></html>"""
+        return Response(html, mimetype="text/html")
+    except Exception:
+        return Response(f"<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        f"{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
 
 
 @app.route("/admin/props-pull", methods=["GET", "POST"])
