@@ -2670,24 +2670,37 @@ def props_pull():
             msg = ("<div class='warn'>Pick at least one game and one market. "
                    "Nothing was pulled, no credits spent.</div>")
         else:
+            # Refuse to spend a credit on an event already pulled today. The
+            # checkbox is only a visual warning; this is the actual guard.
+            _dupes = [e for e in ev_ids if str(e) in already_pulled()]
+            ev_ids = [e for e in ev_ids if str(e) not in already_pulled()]
+            _dupe_note = (f"<div class='warn'>Skipped <b>{len(_dupes)}</b> game(s) "
+                          f"already pulled today. No credits spent on those.</div>"
+                          if _dupes else "")
+            if not ev_ids:
+                # Every selected game was already pulled. Fall through to render
+                # the page with the notice; do NOT early-return to a helper that
+                # does not exist.
+                msg = _dupe_note or "<div class='warn'>Nothing to pull.</div>"
+                markets = []
             cost = estimate_cost(len(ev_ids), len(markets))
             try:
                 total, remaining = {}, "?"
-                for eid in ev_ids:
+                for eid in (ev_ids if markets else []):
                     got, remaining = fetch_event_props(eid, markets)
                     for k, v in got.items():
                         total.setdefault(k, {}).update(v)
-                counts = merge_into_prop_lines(total)
+                counts = merge_into_prop_lines(total, event_ids=ev_ids)
                 got_n = sum(len(v) for v in total.values())
                 with _cache_lock:
                     _cache["generated_at"] = 0
                 _regenerate_in_background()
-                msg = (f"<div class='ok'>Pulled <b>{got_n}</b> prop line(s) across "
+                msg = _dupe_note + (f"<div class='ok'>Pulled <b>{got_n}</b> prop line(s) across "
                        f"{len(ev_ids)} game(s) &times; {len(markets)} market(s). "
                        f"Spent <b>{cost}</b> credit(s). "
                        f"<b>{_h.escape(str(remaining))}</b> remaining.<br>"
                        f"File now holds: {_h.escape(str(counts))}. "
-                       f"Board is rescoring.</div>")
+                       f"Board is rescoring.</div>") if markets else msg
             except Exception:
                 msg = (f"<div class='warn'><b>Pull failed.</b> Credits may still have "
                        f"been spent for any event that completed.<pre>"
@@ -2706,10 +2719,9 @@ def props_pull():
 
     # Flag games already pulled today. Every request bills and there is no free
     # refresh, so re-pulling a game you already have is a wasted credit.
-    _have = already_pulled()
+    _have = already_pulled()          # set of event ids pulled today
     def _seen(ev):
-        toks = [t for t in (ev.get("away","") + " " + ev.get("home","")).lower().split() if len(t) > 3]
-        return any(any(t in n for t in toks) for n in _have)
+        return str(ev.get("id") or "") in _have
     def _dup(ev):
         return "<span class='dup'>already pulled</span>" if _seen(ev) else ""
     ev_rows = "".join(

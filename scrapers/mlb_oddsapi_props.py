@@ -175,11 +175,16 @@ def fetch_event_props(event_id: str, markets: list) -> tuple[dict, str]:
 
 
 def already_pulled(date: str = None) -> set:
-    """Player names already in today's prop file that came from the Odds API.
+    """EVENT IDs already pulled from the Odds API today.
 
-    Used to warn before spending a credit on a game already pulled. Every
-    request bills, there is no free refresh, so re-pulling a game you already
-    have is money for nothing.
+    REWRITTEN 2026-08-12. The first version tried to infer this by matching team
+    name tokens against PLAYER names in the file, which cannot work: "Cleveland
+    Guardians" never appears inside "Jose Ramirez". The marker therefore never
+    displayed and gave no protection at all.
+
+    Now the event id is recorded explicitly at merge time under a _meta key.
+    Every Odds API request bills and there is no free refresh, so re-pulling a
+    game you already have is money for nothing.
     """
     date = date or _today_et()
     path = RAW_DIR / f"mlb_pinnacle_props_{date}.json"
@@ -189,15 +194,12 @@ def already_pulled(date: str = None) -> set:
         data = json.loads(path.read_text(encoding="utf-8")) or {}
     except Exception:
         return set()
-    names = set()
-    for players in data.values():
-        for player, row in (players or {}).items():
-            if isinstance(row, dict) and row.get("source") == "oddsapi":
-                names.add(player.strip().lower())
-    return names
+    meta = data.get("_meta") or {}
+    return set(meta.get("pulled_event_ids") or [])
 
 
-def merge_into_prop_lines(new_props: dict, date: str = None) -> dict:
+def merge_into_prop_lines(new_props: dict, date: str = None,
+                          event_ids: list = None) -> dict:
     """Merge Odds API props into today's prop-line file, next to Pinnacle's.
 
     Pinnacle WINS on any conflict: it is free, sharper, and already validated.
@@ -212,12 +214,22 @@ def merge_into_prop_lines(new_props: dict, date: str = None) -> dict:
         except Exception as e:
             log.warning(f"[OddsAPI props] could not read {path.name}: {e}")
     for pkey, players in (new_props or {}).items():
+        if pkey == "_meta":
+            continue
         bucket = existing.setdefault(pkey, {})
         for player, row in players.items():
             if player not in bucket:      # never overwrite a Pinnacle line
                 bucket[player] = row
+    # Record which events were pulled so the UI can stop a double-charge.
+    if event_ids:
+        meta = existing.setdefault("_meta", {})
+        seen = set(meta.get("pulled_event_ids") or [])
+        seen.update(str(e) for e in event_ids if e)
+        meta["pulled_event_ids"] = sorted(seen)
+        meta["last_pull_et"] = datetime.now(ET).strftime("%Y-%m-%d %H:%M")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(existing, indent=1), encoding="utf-8")
-    log.info("[OddsAPI props] merged -> %s: %s",
-             path.name, {k: len(v) for k, v in existing.items()})
-    return {k: len(v) for k, v in existing.items()}
+    counts = {k: len(v) for k, v in existing.items() if k != "_meta"}
+    log.info("[OddsAPI props] merged -> %s: %s", path.name, counts)
+    return counts
