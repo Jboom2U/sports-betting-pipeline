@@ -135,10 +135,38 @@ def build_board_pack(force: bool = False) -> str:
                 if ph:
                     for p in ph:
                         v = p.get("value", {}) or {}
-                        out.append(f"  MODEL PICK {p.get('type')}: {p.get('label')} | conf "
-                                   f"{p.get('conf',0):.0%} | tier {p.get('tier')} | value {v.get('tag','')} "
-                                   f"| EV {_fmt_ev(v)} | model {p.get('conf',0):.0%} vs market "
-                                   f"{'' if v.get('market_prob') is None else round(v['market_prob']*100)}%")
+                        # CALIBRATED read + the price actually being bet. Raw conf
+                        # overstates by ~14 pts on ML, so a pack that only carries
+                        # conf leads the bot to the same wrong conclusions the
+                        # board used to show. Give it the honest numbers.
+                        _cal = _price = _need = _hev = None
+                        try:
+                            from model.mlb_picks import calibrated_conf
+                            from db.picks_store import _pick_price
+                            from model.value import american_to_decimal
+                            _cal = calibrated_conf(p.get("conf"), p.get("type", "ML"))
+                            _price = _pick_price(p)
+                            _d = american_to_decimal(_price)
+                            if _d:
+                                _need = 100.0 / _d
+                                if _cal is not None:
+                                    _hev = _cal * (_d - 1.0) - (1.0 - _cal)
+                        except Exception:
+                            pass
+                        _bits = [f"  MODEL PICK {p.get('type')}: {p.get('label')} | conf "
+                                 f"{p.get('conf',0):.0%} | tier {p.get('tier')}"]
+                        if _price is not None:
+                            _bits.append(f"price {int(_price):+d}")
+                        if _need is not None:
+                            _bits.append(f"breakeven {_need:.1f}%")
+                        if _cal is not None:
+                            _bits.append(f"CALIBRATED {_cal*100:.1f}%")
+                        else:
+                            _bits.append("CALIBRATED n/a (RL is uncalibrated by design)")
+                        if _hev is not None:
+                            _bits.append(f"honest EV {_hev*100:+.1f}%")
+                        _bits.append(f"raw value {v.get('tag','')} {_fmt_ev(v)}")
+                        out.append(" | ".join(_bits))
                 else:
                     out.append("  MODEL PICK: none — the model passed here (no qualifying edge or TBD "
                                "starters). Give YOUR OWN read from the data above.")
@@ -192,10 +220,33 @@ If the model has NO pick on a game, do NOT go silent - give your own read from t
 data anyway; that is the most interesting case. Use ONLY the data provided; NEVER
 invent numbers, lines, or games.
 
-Calibration truths to apply to the model's numbers: it is well-calibrated only at
-85%+ confidence and OVERCONFIDENT at 75-84% (predicts ~80%, hits ~64%); confidence
-is NOT value (chalk can be a bad price); the run line is newly rebuilt and unproven.
-Be direct and tight - a few short paragraphs, opinion clearly distinct from the model."""
+CALIBRATION TRUTHS, measured 2026-08-11 on 661 graded picks since the 2026-07-21
+boundary. These SUPERSEDE any older guidance and you must apply them:
+
+- RUN LINE is the ONLY validated edge. Walk-forward (threshold chosen on data it
+  never saw): 51-21, 70.8%, p=0.0011. Usable band is 57-65% confidence, where the
+  observed record is 29-14 (67.4%). It COLLAPSES above 65% (15-14 at the 0.68 cover
+  cap). RL confidence is roughly honest already (stated 58.9% vs actual 55.0%), so
+  it is deliberately left uncalibrated.
+- MONEYLINE did NOT hold up. Walk-forward 48-42, 53.3%, p=0.47, which is noise.
+  ML picks skew to favourites priced -130 to -160 where breakeven is 56.5-61.5%,
+  so they lose at real prices. Raw ML confidence overstates by ~14 points.
+- TOTALS cannot clear breakeven structurally. total_conf is capped at 0.68, which
+  calibrates to 48.8%, below the 52.38% breakeven. Record 72-83. Never recommend
+  a total as a bet.
+
+HOW TO RANK THE BOARD when asked for the best bet:
+1. Reject anything whose price is incoherent. For a +1.5 run line, implied
+   P(cover) MUST exceed that team's implied P(win outright), because covering
+   includes every win plus losing by one. If it does not, the price is corrupt.
+2. Use the CALIBRATED number and the breakeven the price demands, never raw conf.
+   The pack gives you both per pick.
+3. Rank by honest EV. State the margin in points over breakeven.
+4. Say plainly when NOTHING qualifies. A day with no bet is a real answer and a
+   correct one. Do not manufacture a pick to be helpful.
+
+Confidence is NOT value: a 70% team at -240 is a bad bet. Be direct and tight, a
+few short paragraphs, your opinion clearly distinct from the model's."""
 
 
 # Gemini's role on the bot: its OWN independent read from the raw data, then a debate
@@ -206,8 +257,10 @@ question, and Statalizer Bot's answer. Do TWO things: (1) give YOUR OWN read fro
 data — starters/ERA, bullpen, offense RPG/OPS, park, weather, market price, your own take
 on edge and value; (2) DEBATE the bot — state clearly where you AGREE and where you
 DISAGREE and why, and push back on any overconfident or unsupported claim. Use ONLY the
-data provided; never invent numbers, lines, or games. Apply the calibration truths: the
-model is well-calibrated only at 85%+ and overconfident at 75-84%; confidence is not
+data provided; never invent numbers, lines, or games. Apply the 2026-08-11 calibration:
+the run line 57-65% band is the only walk-forward validated edge (51-21, 70.8%), moneyline
+did not hold up out of sample (p=0.47) and loses at favourite prices, totals cannot clear
+breakeven because conf is capped at 0.68 (calibrates to 48.8%); confidence is not
 value; the run line is unproven. Be direct and tight."""
 
 

@@ -181,13 +181,24 @@ numbers — use only the data provided. Structure your answer with these section
    Only cite a pattern if it has a usable sample (n>=20 game picks, n>=10 props)
    and is clearly above or below break-even. This window is SMALL and recent, so
    samples will be thin — say so explicitly and do NOT over-conclude from n<20.
-4. IDEAS TO IMPROVE — concrete next steps tied to a number in the data. Note that
-   the run line was rebuilt, HR/SB props are already suppressed, and confidence
-   was recalibrated — do NOT recommend those as if they're outstanding.
+4. IDEAS TO IMPROVE — concrete next steps tied to a number in the data. Do NOT
+   recommend anything already done: the run line was rebuilt, HR/SB/HITS/RBI/R/TB
+   props are suppressed unless they have a real book line, per-type calibration is
+   live, real Pinnacle prop lines are wired in, and prices are now stored per pick.
 
-CONTEXT: the run line, totals, and confidence engines were changed recently, so
-this post-fix window is the FIRST clean read on them. Treat it as an early signal,
-not a verdict. Keep it tight. No hedging filler. If a section has no signal, say so."""
+ESTABLISHED FINDINGS (2026-08-11, 661 graded picks since the 2026-07-21 boundary).
+Treat these as settled and do not re-derive or contradict them without new data:
+  - RUN LINE is the only walk-forward validated edge: 51-21, 70.8%, p=0.0011, in
+    the 57-65% confidence band. It collapses above 65% (15-14 at the cover cap).
+  - MONEYLINE did not hold up out of sample: 48-42, 53.3%, p=0.47. It also loses
+    at the favourite prices it actually gets (-130 to -160 needs 56.5-61.5%).
+  - TOTALS cannot clear breakeven structurally: conf is capped at 0.68, which
+    calibrates to 48.8% against a 52.38% breakeven. Do not propose raising the cap;
+    that relabels the same non-information. The run projection needs rebuilding.
+  - Per-type Platt: ML A=0.621123 B=-0.368625, TOTAL A=0.178915 B=-0.183981. RL is
+    deliberately uncalibrated because fitting it made out-of-sample Brier worse.
+
+Keep it tight. No hedging filler. If a section has no signal, say so."""
 
 
 def build_report(date: str = None) -> dict:
