@@ -55,7 +55,18 @@ SYNC_PATTERNS = [
                             "mlb_umpires_*.json",
                             "mlb_bullpen_fatigue_*.json",
                             "mlb_lineups_*.json",
-                            "mlb_pinnacle_k_lines_*.json"]),  # real K lines
+                            "mlb_pinnacle_k_lines_*.json",   # real K lines
+                            # Real BATTER prop lines (Pinnacle TB/HR + any Odds
+                            # API HITS/RBI/R pulled by hand). MISSING THIS COST
+                            # REAL MONEY on 2026-08-12: 5 Odds API credits were
+                            # spent, the file was written, then the next deploy
+                            # restarted the container and Railway's ephemeral
+                            # filesystem destroyed it. The board showed "no
+                            # bettable props" and the diagnostic showed an empty
+                            # file. Same class as the 2026-07-20 umpire/lineup
+                            # loss. Anything under data/raw/ that the model reads
+                            # MUST be listed here or it does not survive a restart.
+                            "mlb_pinnacle_props_*.json"]),
 ]
 
 

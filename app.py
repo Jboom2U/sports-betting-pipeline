@@ -2653,7 +2653,7 @@ def prop_match_diag():
     This prints every link so the break is visible instead of guessed at.
     """
     if _ADMIN_PASS and not session.get("admin_auth"):
-        return redirect("/admin/prop-match-diag")
+        return redirect("/admin/login?next=/admin/prop-match-diag")
     import html as _h, traceback
     try:
         from model.mlb_props_model import (
@@ -2776,6 +2776,17 @@ def props_pull():
                     for k, v in got.items():
                         total.setdefault(k, {}).update(v)
                 counts = merge_into_prop_lines(total, event_ids=ev_ids)
+                # PUSH TO R2 IMMEDIATELY. These lines cost real credits and
+                # Railway's filesystem is ephemeral: on 2026-08-12 a 5-credit
+                # pull was wiped by the next deploy before the board ever read
+                # it. Never leave paid-for data sitting only on local disk.
+                try:
+                    from db.csv_sync import upload_all, storage_available
+                    if storage_available():
+                        upload_all()
+                        log.info("[props-pull] prop lines pushed to R2")
+                except Exception as _se:
+                    log.warning(f"[props-pull] R2 upload failed: {_se}")
                 got_n = sum(len(v) for v in total.values())
                 with _cache_lock:
                     _cache["generated_at"] = 0
