@@ -174,6 +174,29 @@ def fetch_event_props(event_id: str, markets: list) -> tuple[dict, str]:
     return out, remaining
 
 
+def already_pulled(date: str = None) -> set:
+    """Player names already in today's prop file that came from the Odds API.
+
+    Used to warn before spending a credit on a game already pulled. Every
+    request bills, there is no free refresh, so re-pulling a game you already
+    have is money for nothing.
+    """
+    date = date or _today_et()
+    path = RAW_DIR / f"mlb_pinnacle_props_{date}.json"
+    if not path.exists():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return set()
+    names = set()
+    for players in data.values():
+        for player, row in (players or {}).items():
+            if isinstance(row, dict) and row.get("source") == "oddsapi":
+                names.add(player.strip().lower())
+    return names
+
+
 def merge_into_prop_lines(new_props: dict, date: str = None) -> dict:
     """Merge Odds API props into today's prop-line file, next to Pinnacle's.
 

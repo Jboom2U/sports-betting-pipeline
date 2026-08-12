@@ -2704,10 +2704,19 @@ def props_pull():
                         f"{_h.escape(traceback.format_exc())}</pre>",
                         mimetype="text/html"), 500
 
+    # Flag games already pulled today. Every request bills and there is no free
+    # refresh, so re-pulling a game you already have is a wasted credit.
+    _have = already_pulled()
+    def _seen(ev):
+        toks = [t for t in (ev.get("away","") + " " + ev.get("home","")).lower().split() if len(t) > 3]
+        return any(any(t in n for t in toks) for n in _have)
+    def _dup(ev):
+        return "<span class='dup'>already pulled</span>" if _seen(ev) else ""
     ev_rows = "".join(
         f"<label class='row'><input type='checkbox' name='events' value='{_h.escape(e['id'] or '')}' "
         f"onchange='recost()'> <span>{_h.escape(e['away'])} @ {_h.escape(e['home'])}"
-        f"</span> <span class='t'>{_h.escape(e['start_et'])}</span></label>"
+        f"</span>{_dup(e)}"
+        f" <span class='t'>{_h.escape(e['start_et'])}</span></label>"
         for e in events)
     mk_rows = "".join(
         f"<label class='row'><input type='checkbox' name='markets' value='{k}' "
@@ -2720,6 +2729,7 @@ def props_pull():
 h2{{color:#58a6ff}} h3{{color:#e6edf3;margin:22px 0 8px;font-size:15px}}
 .row{{display:flex;align-items:center;gap:10px;padding:7px 10px;border-bottom:1px solid #21262d;font-size:13px;cursor:pointer}}
 .row:hover{{background:#161b22}} .row .t{{margin-left:auto;color:#8b949e;font-size:12px}}
+.dup{{background:rgba(210,153,34,.18);color:#ffd479;font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px}}
 .note{{color:#8b949e;font-size:12px;line-height:1.6}}
 .cost{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 16px;margin:16px 0;font-size:14px}}
 .big{{font-size:26px;font-weight:700;color:#ffd479}}
@@ -2733,7 +2743,9 @@ pre{{white-space:pre-wrap;font-size:11px}}</style></head><body>
 <p class="note"><b>This spends quota.</b> Billing is 1 credit per market per game.
 Pinnacle already provides Total Bases, Home Runs, Strikeouts, Hits Allowed and
 Pitching Outs for free, so only the markets it does NOT carry are offered here.
-<br>Credits remaining per the API: <b>{_h.escape(str(remaining))}</b></p>
+<br>Credits remaining per the API: <b>{_h.escape(str(remaining))}</b>
+<br>A game marked <span class="dup">already pulled</span> already has Odds API lines in
+today's file. Pulling it again bills a second time for the same data.</p>
 <form method="post">
 <h3>Games ({len(events)} today)</h3>
 {ev_rows or "<p class='note'>No games listed for today.</p>"}
