@@ -61,38 +61,16 @@ DRIFT_THRESH  = 3
 TOTAL_STEAM_THRESH = 1.0
 TOTAL_DRIFT_THRESH = 0.5
 
-SNAPSHOT_FIELDNAMES = [
-    "snapshot_id", "snapshot_time", "game_id", "game_date", "game_time_utc",
-    "away_team", "home_team",
-    # Moneyline consensus
-    "ml_away", "ml_home",
-    # Run line
-    "rl_away_line", "rl_away_price", "rl_home_line", "rl_home_price",
-    # Totals consensus
-    "total_line", "total_over_price", "total_under_price",
-    # Total line range across books (for line shopping display)
-    "total_line_min", "total_line_max",
-    # Book count
-    "books_used",
-    # DraftKings specific (softest public book — best for value spotting)
-    "dk_ml_away", "dk_ml_home", "dk_total",
-    # Discrepancy: DraftKings vs consensus (positive = DK offers more value on that side)
-    "disc_ml_away", "disc_ml_home", "disc_total",
-]
-
-MOVEMENT_FIELDNAMES = [
-    "game_id", "away_team", "home_team", "game_date",
-    "snap1_time", "snap2_time",
-    # ML movement
-    "ml_away_open", "ml_away_now", "ml_away_move",
-    "ml_home_open", "ml_home_now", "ml_home_move",
-    # Total movement
-    "total_open", "total_now", "total_move",
-    # Signals
-    "ml_signal", "total_signal",
-    "sharp_side",   # team that sharp money is on
-    "timestamp",
-]
+# Schema and writer live in scrapers/odds_schema.py so this scraper and the
+# Pinnacle scraper cannot drift apart again. They both append to
+# data/clean/mlb_odds_master.csv; when their column lists disagreed, DictWriter
+# wrote values positionally under the other's header and every consumer read
+# shifted data. See odds_schema.py for the full history.
+from scrapers.odds_schema import (          # noqa: E402
+    SNAPSHOT_FIELDNAMES,
+    MOVEMENT_FIELDNAMES,
+    write_snapshot_rows,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,6 +220,48 @@ def _avg(prices: list) -> float | None:
     return round(sum(prices) / len(prices)) if prices else None
 
 
+def _avg_american(prices: list) -> float | None:
+    """Consensus of American odds, averaged in IMPLIED PROBABILITY space.
+
+    WHY NOT A PLAIN MEAN (fixed 2026-08-14)
+    American odds are not a linear scale. They jump discontinuously across the
+    ±100 boundary: -105 and +105 are about one point of probability apart, but
+    210 apart as numbers. A plain mean therefore lands nowhere near the true
+    consensus whenever books straddle even money, and it can even produce a
+    value in the impossible -100..+100 gap.
+
+    Worked example, three books on the same team:
+        -300 (75.0%), -200 (66.7%), +120 (45.5%)
+        plain mean of the numbers    -> -127  (implied 55.9%)
+        mean of the probabilities    -> 62.4% -> -166
+
+    That is a 6.5 point probability error, and it always errs toward making the
+    price look BETTER than it is, which inflates EV and pushes a pick up the
+    Best Bets ranking. Same family as the run line averaging bug: the arithmetic
+    was applied to a representation it does not hold for.
+
+    The vig is deliberately left in. This is a consensus PRICE, not a fair
+    probability; de-vigging happens downstream in model/value.py.
+    """
+    probs = []
+    for p in prices:
+        if p is None:
+            continue
+        try:
+            p = float(p)
+        except (TypeError, ValueError):
+            continue
+        if abs(p) < 100:            # not a valid American odd
+            continue
+        probs.append((-p) / ((-p) + 100.0) if p < 0 else 100.0 / (p + 100.0))
+    if not probs:
+        return None
+    q = sum(probs) / len(probs)
+    if not (0.0 < q < 1.0):
+        return None
+    return round(-100.0 * q / (1.0 - q)) if q >= 0.5 else round(100.0 * (1.0 - q) / q)
+
+
 def _avg_half(values: list) -> float | None:
     """Average rounded to nearest 0.5 — correct for total lines (always in 0.5 increments)."""
     values = [v for v in values if v is not None]
@@ -267,10 +287,28 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
     else:
         g_date = ""
 
-    ml_away_prices, ml_home_prices        = [], []
-    rl_away_lines,  rl_home_lines         = [], []
-    rl_away_prices, rl_home_prices        = [], []
-    total_lines, over_prices, under_prices = [], [], []
+    ml_away_prices, ml_home_prices = [], []
+
+    # TOTALS: keyed by line, for the same reason as the run line below. Books
+    # post different totals (8.5 vs 9.0), and the over price at 8.5 is not
+    # comparable to the over price at 9.0. The old code appended every over
+    # price to one list regardless of which number it belonged to.
+    totals_by_line: dict = {}     # line -> {"over": [prices], "under": [prices]}
+
+    # RUN LINE: keyed by handicap, NEVER a flat list of prices.
+    #
+    # THE BUG THIS REPLACES (fixed 2026-08-14). This used to collect
+    # rl_home_prices as one flat list across every book and average it, without
+    # recording which LINE each book was quoting. Books split on which side is
+    # laying -1.5, so the list mixed plus money (a team at -1.5, e.g. +148) with
+    # minus money (the same team at +1.5, e.g. -168). Averaging across the sign
+    # boundary lands near -100 every time, which is why two unrelated games both
+    # published -109 on 2026-08-13 — a price no book on earth was offering.
+    #
+    # A price is only meaningful next to the handicap it was quoted for. Group
+    # first, average only within a group.
+    rl_home_by_line: dict = {}    # handicap -> [prices]
+    rl_away_by_line: dict = {}
 
     # DraftKings specific (softest public book — best value signal)
     dk_ml_away = dk_ml_home = dk_total = None
@@ -297,30 +335,63 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
 
             elif key == "spreads":
                 for o in outcomes:
+                    pt, pr = o.get("point"), o.get("price")
+                    if pt is None or pr is None:
+                        continue
+                    try:
+                        pt, pr = float(pt), float(pr)
+                    except (TypeError, ValueError):
+                        continue
+                    # |price| < 100 is not a valid American odd. Guarding here
+                    # keeps garbage out of the average instead of catching it
+                    # three layers downstream in value.american_to_decimal.
+                    if abs(pr) < 100:
+                        continue
                     if o["name"] == home:
-                        rl_home_lines.append(o.get("point"))
-                        rl_home_prices.append(o.get("price"))
+                        rl_home_by_line.setdefault(pt, []).append(pr)
                     elif o["name"] == away:
-                        rl_away_lines.append(o.get("point"))
-                        rl_away_prices.append(o.get("price"))
+                        rl_away_by_line.setdefault(pt, []).append(pr)
 
             elif key == "totals":
                 for o in outcomes:
-                    total_lines.append(o.get("point"))
+                    pt, pr = o.get("point"), o.get("price")
+                    if pt is None:
+                        continue
+                    try:
+                        pt = float(pt)
+                        pr = float(pr) if pr is not None else None
+                    except (TypeError, ValueError):
+                        continue
+                    if pr is not None and abs(pr) < 100:
+                        pr = None
+                    slot = totals_by_line.setdefault(pt, {"over": [], "under": []})
                     if o["name"] == "Over":
-                        over_prices.append(o.get("price"))
+                        if pr is not None:
+                            slot["over"].append(pr)
                         if bk == "draftkings":
-                            dk_total = o.get("point")
+                            dk_total = pt
                     elif o["name"] == "Under":
-                        under_prices.append(o.get("price"))
+                        if pr is not None:
+                            slot["under"].append(pr)
 
     books_used    = max(len(ml_away_prices), 1)
-    cons_ml_away  = _avg(ml_away_prices)
-    cons_ml_home  = _avg(ml_home_prices)
-    cons_total    = _avg_half(total_lines)   # rounded to nearest 0.5, not integer
+    cons_ml_away  = _avg_american(ml_away_prices)
+    cons_ml_home  = _avg_american(ml_home_prices)
+
+    # MAIN TOTAL = the line the most books posted, priced only from those books.
+    # Ties prefer the lower line, which is the conventional main number.
+    if totals_by_line:
+        _main_total = max(
+            totals_by_line.items(),
+            key=lambda kv: (len(kv[1]["over"]) + len(kv[1]["under"]), -kv[0]))
+        cons_total       = _main_total[0]
+        cons_over_price  = _avg_american(_main_total[1]["over"])
+        cons_under_price = _avg_american(_main_total[1]["under"])
+    else:
+        cons_total = cons_over_price = cons_under_price = None
 
     # Line range across books — used for line shopping display on pick cards
-    unique_totals  = sorted(set(v for v in total_lines if v is not None))
+    unique_totals  = sorted(totals_by_line.keys())
     total_line_min = unique_totals[0]  if unique_totals else None
     total_line_max = unique_totals[-1] if unique_totals else None
 
@@ -329,6 +400,29 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
         if dk is None or cons is None:
             return None
         return round(dk - cons, 1)
+
+    # ── RUN LINE: average WITHIN a handicap, never across handicaps ───────────
+    def _price_at(by_line: dict, handicap: float):
+        return _avg(by_line.get(handicap) or [])
+
+    rl_home_m15_price = _price_at(rl_home_by_line, -1.5)
+    rl_home_p15_price = _price_at(rl_home_by_line,  1.5)
+    rl_away_m15_price = _price_at(rl_away_by_line, -1.5)
+    rl_away_p15_price = _price_at(rl_away_by_line,  1.5)
+
+    # Legacy display fields. Take the MAIN line — the handicap the most books
+    # quoted — and price only from the books quoting that same handicap. On a
+    # tie prefer the standard ±1.5. Anything computing EV must read the four
+    # explicit fields above, not these.
+    def _main_line(by_line: dict):
+        if not by_line:
+            return None, None
+        best = max(by_line.items(),
+                   key=lambda kv: (len(kv[1]), abs(kv[0]) == 1.5))
+        return best[0], _avg(best[1])
+
+    rl_home_line, rl_home_price = _main_line(rl_home_by_line)
+    rl_away_line, rl_away_price = _main_line(rl_away_by_line)
 
     return {
         "snapshot_id":      f"{game.get('id','')[:8]}_{snapshot_time[:13]}",
@@ -340,13 +434,17 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
         "home_team":        home,
         "ml_away":          cons_ml_away,
         "ml_home":          cons_ml_home,
-        "rl_away_line":     _avg(rl_away_lines),
-        "rl_away_price":    _avg(rl_away_prices),
-        "rl_home_line":     _avg(rl_home_lines),
-        "rl_home_price":    _avg(rl_home_prices),
+        "rl_away_line":     rl_away_line,
+        "rl_away_price":    rl_away_price,
+        "rl_home_line":     rl_home_line,
+        "rl_home_price":    rl_home_price,
+        "rl_home_m15_price": rl_home_m15_price,
+        "rl_home_p15_price": rl_home_p15_price,
+        "rl_away_m15_price": rl_away_m15_price,
+        "rl_away_p15_price": rl_away_p15_price,
         "total_line":       cons_total,
-        "total_over_price": _avg(over_prices),
-        "total_under_price":_avg(under_prices),
+        "total_over_price": cons_over_price,
+        "total_under_price":cons_under_price,
         "total_line_min":   total_line_min,
         "total_line_max":   total_line_max,
         "books_used":       books_used,
@@ -481,14 +579,14 @@ def load_previous_snapshot(today: str) -> list:
 # SAVE
 # ─────────────────────────────────────────────────────────────────────────────
 def save_snapshot(rows: list):
-    master = os.path.join(CLEAN_DIR, "mlb_odds_master.csv")
-    write_header = not os.path.exists(master)
-    with open(master, "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=SNAPSHOT_FIELDNAMES)
-        if write_header:
-            w.writeheader()
-        w.writerows(rows)
-    log.info(f"Saved {len(rows)} odds snapshots to {master}")
+    """Delegates to the shared schema-aware writer.
+
+    This used to append blindly under whatever header was on disk. Pinnacle
+    writes the same file with a longer column list, so Odds API rows landed
+    positionally misaligned and total_line came back holding a run line price.
+    """
+    write_snapshot_rows(os.path.join(CLEAN_DIR, "mlb_odds_master.csv"),
+                        rows, source="OddsAPI")
 
 
 def save_movement(rows: list, today: str):

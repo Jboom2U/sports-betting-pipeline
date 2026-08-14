@@ -111,30 +111,16 @@ REAL_TEAMS = set(TEAM_NAME_MAP.values())
 # main number. -105/-115 => 10. -400/+300 => 100.
 MAX_MAIN_TOTAL_PRICE_SKEW = 40
 
-SNAPSHOT_FIELDNAMES = [
-    "snapshot_id", "snapshot_time", "game_id", "game_date", "game_time_utc",
-    "away_team", "home_team",
-    "ml_away", "ml_home",
-    "rl_away_line", "rl_away_price", "rl_home_line", "rl_home_price",
-    "rl_home_m15_price", "rl_home_p15_price",
-    "rl_away_m15_price", "rl_away_p15_price",
-    "total_line", "total_over_price", "total_under_price",
-    "total_line_min", "total_line_max",
-    "books_used",
-    "dk_ml_away", "dk_ml_home", "dk_total",
-    "disc_ml_away", "disc_ml_home", "disc_total",
-]
-
-MOVEMENT_FIELDNAMES = [
-    "game_id", "away_team", "home_team", "game_date",
-    "snap1_time", "snap2_time",
-    "ml_away_open", "ml_away_now", "ml_away_move",
-    "ml_home_open", "ml_home_now", "ml_home_move",
-    "total_open", "total_now", "total_move",
-    "ml_signal", "total_signal",
-    "sharp_side",
-    "timestamp",
-]
+# Schema and writer are shared with mlb_odds_scraper via scrapers/odds_schema.py.
+# These two scrapers append to the SAME mlb_odds_master.csv. They previously kept
+# private copies of the column list, the copies drifted by four columns, and
+# DictWriter wrote positionally under the other's header. Add columns in
+# odds_schema.py only.
+from scrapers.odds_schema import (          # noqa: E402
+    SNAPSHOT_FIELDNAMES,
+    MOVEMENT_FIELDNAMES,
+    write_snapshot_rows,
+)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; mlb-betting-pipeline/1.0)",
@@ -873,44 +859,8 @@ def save_snapshot(rows: list):
     not match, rewrite the whole file under the union schema so columns can never
     shift again. Old rows get "" for new columns.
     """
-    master = CLEAN_DIR / "mlb_odds_master.csv"
-
-    existing_hdr, existing_rows = None, []
-    if master.exists():
-        try:
-            with open(master, newline="", encoding="utf-8") as f:
-                r = csv.DictReader(f)
-                existing_hdr = list(r.fieldnames or [])
-                if existing_hdr == list(SNAPSHOT_FIELDNAMES):
-                    existing_hdr = None          # schema matches, plain append
-                else:
-                    existing_rows = list(r)
-        except Exception as e:
-            log.warning(f"[Pinnacle] could not read odds master, rewriting: {e}")
-            existing_hdr, existing_rows = [], []
-
-    if existing_hdr is None and master.exists():
-        with open(master, "a", newline="", encoding="utf-8") as f:
-            csv.DictWriter(f, fieldnames=SNAPSHOT_FIELDNAMES).writerows(rows)
-        log.info(f"[Pinnacle] Saved {len(rows)} snapshot rows to mlb_odds_master.csv")
-        return
-
-    # Schema changed (or first write). Rewrite under the current field list.
-    # Rows written under a DIFFERENT header are dropped rather than migrated:
-    # their values are positionally misaligned and there is no safe way to
-    # recover them. Snapshots are cheap to re-pull (Pinnacle is free), whereas a
-    # silently misaligned row poisons every downstream price and total.
-    dropped = len(existing_rows)
-    with open(master, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=SNAPSHOT_FIELDNAMES, extrasaction="ignore")
-        w.writeheader()
-        w.writerows(rows)
-    if dropped:
-        log.warning(f"[Pinnacle] odds master schema changed "
-                    f"({len(existing_hdr or [])} -> {len(SNAPSHOT_FIELDNAMES)} cols). "
-                    f"Rewrote file and DROPPED {dropped} misaligned row(s). "
-                    f"Snapshots re-pull for free; re-run the odds pull.")
-    log.info(f"[Pinnacle] Saved {len(rows)} snapshot rows to mlb_odds_master.csv")
+    write_snapshot_rows(str(CLEAN_DIR / "mlb_odds_master.csv"),
+                        rows, source="Pinnacle")
 
 
 def save_movement(rows: list, today: str):

@@ -183,8 +183,24 @@ def _price_for(pick: dict):
         over = (pick.get("side") == "over") or ("OVER" in (pick.get("label", "") or "").upper())
         return g.get("total_over_price") if over else g.get("total_under_price")
     if t == "RL":
-        away = pick.get("team") == g.get("away_team", "")
-        return g.get("rl_away_price") if away else g.get("rl_home_price")
+        # Price by the ACTUAL handicap, matching model/value.value_for_pick.
+        #
+        # This read `rl_away_price` / `rl_home_price` until 2026-08-14. Those two
+        # legacy fields are keyed to the MARKET favorite, while the model picks
+        # its run line side from the MODEL favorite, so whenever the two disagree
+        # a "+1.5" pick was priced with that team's "-1.5" number. On top of that,
+        # the Odds API filled them by averaging every book's run line price
+        # WITHOUT pairing each price to the line it was quoted for, which pooled
+        # plus money with minus money and landed near -109 — a price no book
+        # offers. Both defects inflate EV, and this function feeds the EV gate.
+        #
+        # No fallback to the legacy fields. A missing price must stay missing:
+        # honest_ev() already treats None as unpriced and refuses to gate on it,
+        # which is the safe outcome. A wrong price is not.
+        away  = pick.get("team") == g.get("away_team", "")
+        side  = "away" if away else "home"
+        hcap  = "p15" if "+1.5" in (pick.get("label", "") or "") else "m15"
+        return g.get(f"rl_{side}_{hcap}_price")
     return None
 
 

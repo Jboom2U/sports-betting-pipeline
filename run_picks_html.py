@@ -1428,6 +1428,14 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .bb-stake{color:var(--green);font-size:.72rem;font-weight:600}
 .bb-basis{color:var(--sub);font-size:.68rem;line-height:1.4}
 .bb-note{font-size:.7rem;color:var(--sub);line-height:1.45;margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
+/* Universal price check — on EVERY card. Neutral grey until a price is typed,
+   so it does not read as a recommendation the way the green Best Bets block
+   does. It turns green/amber/red only in response to a real number. */
+.pc-rule{margin:8px 0 2px;padding:8px 11px;background:rgba(139,148,158,.08);
+  border-left:3px solid #30363d;border-radius:0;line-height:1.5}
+.pc-lead{display:inline;font-size:.68rem;font-weight:700;letter-spacing:.06em;color:#8b949e}
+.pc-feed{font-size:.68rem;color:var(--sub)}
+.pc-feed-bad{color:#d29922;font-weight:600}
 .bb-row{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--border)}
 .bb-row:first-of-type{border-top:none}
 .bb-main{display:flex;align-items:center;gap:10px}
@@ -2611,6 +2619,118 @@ function bbCheck(id, p){
   if(note) note.style.opacity = .5;
 }
 
+// ── UNIVERSAL PRICE CHECK (2026-08-14) ──────────────────────────────────────
+// Every card gets this, not just Best Bets.
+//
+// WHY. The site cannot know what YOUR book is charging. It shows a consensus
+// price, and on 2026-08-13 that consensus was fabricated: run line prices were
+// averaged across books without pairing each price to the line it was quoted
+// for, so two unrelated games both published -109, a number no book offered.
+// The scraper is fixed, but the deeper point stands and is permanent — Hard
+// Rock, DraftKings and Pinnacle disagree by 10 to 20 cents on the same game,
+// which is often the entire edge. On 2026-08-13 the Pirates were -144 at DK and
+// -155 at Hard Rock: same bet, and only one of those two prices is playable.
+//
+// So the only honest answer to "should I bet this" comes from the price YOU can
+// actually get. Type it, get a verdict and a stake sized on your number.
+//
+// The probability used is per bet type, never borrowed across types:
+//   RL  in the 57-65% band -> that band's OBSERVED record (uncalibrated by
+//                             design; its Platt fit made out-of-sample Brier
+//                             worse, so there is little to correct)
+//   RL  outside the band   -> the overall realized RL rate, flagged as weaker
+//   ML / TOTAL             -> the per-type calibrated probability
+function pcProbFor(p){
+  if(p.type === "RL"){
+    const c = (p.conf||0)/100;
+    const band = RL_BAND_RATES.find(b => c >= b.lo && c < b.hi);
+    if(band) return { prob: band.rate, strong: true,
+      basis: `RL ${Math.round(band.lo*100)}-${Math.round(band.hi*100)}% band has gone `
+           + `<b>${band.rec}</b> (${(band.rate*100).toFixed(0)}%)` };
+    return { prob: 0.550, strong: false,
+      basis: `outside the validated 57-65% band — using the overall RL rate `
+           + `<b>126-103 (55.0%)</b>, which is much weaker evidence` };
+  }
+  if(p.cal_conf == null) return null;
+  if(p.type === "TOTAL")
+    return { prob: p.cal_conf/100, strong: false,
+      basis: `calibrated <b>${p.cal_conf}%</b> — totals are capped at 68% stated, `
+           + `which calibrates below break-even, so expect PASS` };
+  return { prob: p.cal_conf/100, strong: false,
+    basis: `calibrated <b>${p.cal_conf}%</b> — note ML did not survive `
+         + `walk-forward testing (p=0.47), so treat any green here with caution` };
+}
+
+// Verdict for a typed price. Demands +8% EV rather than break-even: these rates
+// are estimated from a few hundred graded picks, and betting at the exact
+// break-even leaves no room for the estimate being a couple of points off.
+function pcCheck(id, prob){
+  const el   = document.getElementById(id+"_in");
+  const out  = document.getElementById(id+"_out");
+  const wrap = document.getElementById(id+"_wrap");
+  if(!el || !out || !wrap) return;
+  const raw = (el.value||"").trim().replace(/[^0-9+\-]/g,"");
+  const a = parseInt(raw,10);
+  if(!raw || isNaN(a) || Math.abs(a) < 100){
+    out.textContent = raw ? "not a valid price" : "enter a price";
+    out.className = "bb-verdict";
+    wrap.className = "pc-rule";
+    return;
+  }
+  const d  = a > 0 ? 1 + a/100 : 1 + 100/Math.abs(a);
+  const ev = prob*(d-1) - (1-prob);
+  const f  = Math.max(0, Math.min(0.08, ((prob*(d-1)-(1-prob))/(d-1))/4));
+  const bank = (typeof BANKROLL !== "undefined" && BANKROLL > 0) ? BANKROLL : null;
+  if(ev >= 0.08){
+    out.innerHTML = "&#10004; BET IT &nbsp;<span class='bb-v-sub'>"
+      + (ev*100).toFixed(1) + "% EV &middot; stake " + (f*100).toFixed(1) + "%"
+      + (bank ? " &middot; $" + (bank*f).toFixed(2) : "") + "</span>";
+    out.className = "bb-verdict bb-v-yes";
+    wrap.className = "pc-rule bb-rule-yes";
+  } else if(ev > 0){
+    out.innerHTML = "&#9888; TOO THIN &nbsp;<span class='bb-v-sub'>only "
+      + (ev*100).toFixed(1) + "% EV at that price &middot; pass</span>";
+    out.className = "bb-verdict bb-v-thin";
+    wrap.className = "pc-rule bb-rule-thin";
+  } else {
+    out.innerHTML = "&#10008; PASS &nbsp;<span class='bb-v-sub'>"
+      + (ev*100).toFixed(1) + "% EV &middot; price is too short</span>";
+    out.className = "bb-verdict bb-v-no";
+    wrap.className = "pc-rule bb-rule-no";
+  }
+}
+
+function priceCheckHtml(p){
+  const info = pcProbFor(p);
+  if(!info) return "";
+  const id = "pc" + Math.abs(hashStr((p.label||"") + (p.game||"") + (p.type||"")));
+
+  // The price that makes this bet clear +8% EV. This is the number to shop for.
+  const dMin = (1 + 0.08) / info.prob;
+  const amMin = dMin >= 2 ? Math.round((dMin-1)*100) : Math.round(-100/(dMin-1));
+  const maxPrice = (amMin > 0 ? "+" : "") + amMin;
+
+  // Show the feed price for reference, and say plainly when it is unusable
+  // rather than printing a number that cannot be bet.
+  const fp = p.pick_price;
+  const feed = (fp == null)
+    ? `<span class="pc-feed pc-feed-bad">feed has no clean price for this line</span>`
+    : (Math.abs(fp) < 100)
+      ? `<span class="pc-feed pc-feed-bad">feed price ${Math.round(fp)} is corrupt — ignore it</span>`
+      : `<span class="pc-feed">feed shows ${fp>0?"+":""}${Math.round(fp)}</span>`;
+
+  return `<div class="pc-rule" id="${id}_wrap">
+    <div class="bb-rule-row">
+      <span class="pc-lead">CHECK YOUR PRICE</span>
+      <input type="text" inputmode="text" id="${id}_in" class="bb-price-in"
+             placeholder="e.g. -144" oninput="pcCheck('${id}', ${info.prob})">
+      <span class="bb-verdict" id="${id}_out">enter a price</span>
+    </div>
+    <span class="bb-rule-note">Bet only at <b>${maxPrice}</b> or better${info.strong?"":" (weak basis)"}
+      &middot; ${feed}<br>${info.basis}</span>
+  </div>`;
+}
+
 function rlBestBetEval(p){
   if(p.type !== "RL") return null;
   const c = (p.conf||0)/100;
@@ -3291,6 +3411,7 @@ function renderPicks(){
         ${kellyHtml}
         ${oddsHtml(p)}
         ${valueHtml(p)}${honestReadHtml(p)}
+        ${priceCheckHtml(p)}
         <div class="pick-reasoning">${p.reasoning}</div>
         ${p.narrative ? `<div class="pick-narrative">${p.narrative}</div>` : ""}
         ${(()=>{

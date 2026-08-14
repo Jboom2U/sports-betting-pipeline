@@ -1,5 +1,61 @@
 # Statalizers — Project Context for Claude
 
+## 2026-08-14: PRICES ARE FIXED AT THE SOURCE. Read before touching any odds code.
+
+Three price defects, all the same root error: **arithmetic applied to a
+representation that does not support it.** Every one inflated EV, so every one
+pushed bad picks UP the Best Bets ranking. A corrupt price does not produce a
+random result, it produces an attractive one.
+
+**1. Run line prices were averaged across handicaps.** `parse_game` collected
+every book's run line price for a team into one flat list and averaged it,
+without recording which LINE each book quoted. Books split on which side lays
+-1.5, so the list mixed plus money (a team at -1.5, +148) with minus money (that
+same team at +1.5, -168). Averaging across the sign boundary lands near -100
+every time. That is why two unrelated games both published **-109** on 08-13.
+FIX: group by handicap (`rl_home_by_line`), average only within a group, publish
+all four `rl_{side}_{m15,p15}_price` columns. `|price| < 100` rejected at intake.
+
+**2. Moneyline prices were averaged in odds space.** American odds are not
+linear and jump discontinuously across ±100. `-300, -200, +120` averaged to -127
+(55.9%) when the true consensus is 62.4% = -166. Always errs toward making the
+price look better. FIX: `_avg_american()` averages in implied-probability space.
+Vig is deliberately left in; de-vigging happens in `model/value.py`.
+
+**3. Totals mixed lines.** Over prices at 8.5 and 9.0 went into one list. FIX:
+`totals_by_line`, main line = the one most books posted, priced only from those
+books. `total_line_min/max` still carry the shopping range.
+
+**4. TWO SCHEMAS, ONE FILE (the column shift, third occurrence).**
+`mlb_odds_scraper` and `mlb_pinnacle_scraper` each declared their own
+`SNAPSHOT_FIELDNAMES` and both append to `mlb_odds_master.csv`. The lists had
+drifted by 4 columns, and DictWriter writes POSITIONALLY, so Odds API rows landed
+under Pinnacle's header with `total_line` reading `rl_home_m15_price`.
+FIX: **`scrapers/odds_schema.py` now owns the schema and the writer. Add a column
+there and nowhere else.** `write_snapshot_rows()` checks the on-disk header and
+rewrites rather than appending blindly; misaligned rows are DROPPED, never
+migrated, because their values are positionally wrong and unrecoverable.
+
+**5. `_price_for` in `mlb_picks.py` still read the legacy fields**, so the EV
+gate priced a "+1.5" pick with that team's "-1.5" number. Now matches
+`value.value_for_pick`: keyed by the actual handicap, **no fallback**.
+
+**The rule these all point at: a missing value is safe, a wrong value is not.**
+Missing is visible and drops the pick. Wrong looks like an answer, gets computed
+on, and rises to the top of a ranked list precisely because it is corrupt.
+`_price_for`, `_rl_price` and `value_for_pick` all return None rather than guess.
+
+**Universal price check on every card** (`priceCheckHtml` / `pcCheck` /
+`pcProbFor` in run_picks_html.py). The site cannot know what Hard Rock is
+charging, and books differ by 10-20 cents, which is often the whole edge. Type
+your price, get BET IT / TOO THIN / PASS plus a quarter-Kelly stake. Probability
+is per bet type and never borrowed: RL in 57-65% uses that band's observed
+record, RL outside it uses the 55.0% overall rate flagged as weak, ML and TOTAL
+use their calibrated value. Grey until a price is typed so it does not read as a
+recommendation.
+
+---
+
 ## 2026-08-11: FULL MODEL REVIEW. Read this before touching pick logic.
 
 Measured on 661 graded picks since the 2026-07-21 boundary, via the new
