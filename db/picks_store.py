@@ -49,12 +49,12 @@ def _pick_price(p: dict):
         elif t == "RL":
             side = "away" if p.get("team") == g.get("away_team") else "home"
             hcap = "p15" if "+1.5" in label else "m15"
+            # NO legacy fallback (removed 2026-08-14). The legacy field holds
+            # the Odds API's cross-book AVERAGE, which is not a real price. A
+            # stored wrong price silently corrupts every EV and CLV number
+            # computed from it later, and unlike a missing one it cannot be
+            # detected after the fact.
             v = g.get(f"rl_{side}_{hcap}_price")
-            if v is None:   # legacy fallback, only when the stored line matches
-                legacy = g.get(f"rl_{side}_line")
-                want = 1.5 if hcap == "p15" else -1.5
-                if legacy is not None and abs(float(legacy) - want) < 1e-6:
-                    v = g.get(f"rl_{side}_price")
         else:
             return None
         if v in (None, "", 0):

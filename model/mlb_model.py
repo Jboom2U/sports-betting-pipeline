@@ -324,6 +324,50 @@ class MLBModel:
                     merged["total_line_max"]    = src.get("total_line_max")
                     latest_snap[k] = merged
 
+            # ── RUN LINE PRICES: mirror image of the totals problem ──────────
+            # (added 2026-08-14) The Odds API scraper averages every book's run
+            # line price into ONE bucket regardless of whether that book quoted
+            # -1.5 or +1.5, and it does not write the four per-handicap columns
+            # at all. So whenever an Odds-API snapshot is the most recent row for
+            # a game, the per-handicap fields are empty and any fallback lands on
+            # that averaged number. Live on 2026-08-14: the board showed the
+            # IDENTICAL -109 on two unrelated games while Pinnacle, DraftKings
+            # and Hard Rock all agreed near -160. Every run line EV was inflated
+            # roughly threefold.
+            #
+            # Fix: backfill the per-handicap prices from the most recent snapshot
+            # that actually carries them, which is always a Pinnacle row.
+            _RL_COLS = ("rl_home_m15_price", "rl_home_p15_price",
+                        "rl_away_m15_price", "rl_away_p15_price")
+
+            def _has_rl(r):
+                return any(str(r.get(c, "")).strip() not in ("", "None") for c in _RL_COLS)
+
+            latest_rl = {}
+            for row in read_csv(odds_master):
+                if row.get("game_date") != today:
+                    continue
+                gt = row.get("game_time_utc", "")
+                st = row.get("snapshot_time", "")
+                if gt and st and st > gt:
+                    continue
+                k = (row.get("away_team", ""), row.get("home_team", ""))
+                if _has_rl(row) and (k not in latest_rl
+                        or st > latest_rl[k].get("snapshot_time", "")):
+                    latest_rl[k] = row
+
+            for k, row in list(latest_snap.items()):
+                if not _has_rl(row) and k in latest_rl:
+                    merged = dict(row)
+                    src = latest_rl[k]
+                    for c in _RL_COLS:
+                        merged[c] = src.get(c)
+                    merged["rl_home_line"]  = src.get("rl_home_line")
+                    merged["rl_home_price"] = src.get("rl_home_price")
+                    merged["rl_away_line"]  = src.get("rl_away_line")
+                    merged["rl_away_price"] = src.get("rl_away_price")
+                    latest_snap[k] = merged
+
             self.odds = latest_snap
             log.info(f"Odds loaded: {len(self.odds)} games "
                      f"({sum(1 for r in self.odds.values() if _has_total(r))} with totals)")
@@ -1254,13 +1298,20 @@ class MLBModel:
         # -113 moneyline). The scraper now publishes all four explicit prices,
         # so ask for the exact handicap being bet and never infer it.
         def _rl_price(team_side: str, handicap: float):
+            """Price for the EXACT handicap, or None.
+
+            NO legacy fallback (removed 2026-08-14). rl_home_price/rl_away_price
+            come from the Odds API, which averages every book's run line price
+            together regardless of the line each book quoted. That average is not
+            a real price anyone offers — it produced an identical -109 on two
+            different games while three books agreed near -160. Falling back to
+            it turned a fabricated number into a published +29% EV bet.
+
+            If the per-handicap column is missing, return None and let the pick
+            show "no clean price". Missing is recoverable; wrong is not.
+            """
             key = f"rl_{team_side}_{'m15' if handicap < 0 else 'p15'}_price"
-            v = sf(odds_snap.get(key))
-            if v is None:      # fall back to the legacy field only if it matches
-                legacy_line = sf(odds_snap.get(f"rl_{team_side}_line"))
-                if legacy_line is not None and abs(legacy_line - handicap) < 1e-6:
-                    v = sf(odds_snap.get(f"rl_{team_side}_price"))
-            return v
+            return sf(odds_snap.get(key))
 
         if home_wp >= away_wp:
             fav, dog       = home, away

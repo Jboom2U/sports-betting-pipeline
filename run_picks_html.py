@@ -253,15 +253,9 @@ def prep_picks(picks, kalshi_data: dict = None):
             _pa   = p["team"] == gd.get("away_team")
             _side = "away" if _pa else "home"
             _hcap = "p15" if "+1.5" in (p.get("label", "") or "") else "m15"
+            # NO legacy fallback (removed 2026-08-14) — see model/value.py.
+            # The legacy field is a cross-book average, not a quotable price.
             _pick_price = gd.get(f"rl_{_side}_{_hcap}_price")
-            if _pick_price is None:
-                _legacy_line = gd.get(f"rl_{_side}_line")
-                _want = 1.5 if _hcap == "p15" else -1.5
-                try:
-                    if _legacy_line is not None and abs(float(_legacy_line) - _want) < 1e-6:
-                        _pick_price = gd.get(f"rl_{_side}_price")
-                except (TypeError, ValueError):
-                    pass
         elif ptype == "TOTAL":
             _isover = "OVER" in (p.get("label", "").upper())
             _pick_price = gd.get("total_over_price") if _isover else gd.get("total_under_price")
@@ -1416,6 +1410,21 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .bb-head{font-size:1.02rem;font-weight:800;color:var(--gold);margin-bottom:10px}
 .bb-sub{font-size:.68rem;font-weight:500;color:var(--sub);margin-left:6px;letter-spacing:.02em}
 .bb-empty{font-size:.82rem;color:var(--sub);line-height:1.5}
+.bb-rule-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.bb-price-in{width:92px;padding:4px 8px;border-radius:6px;border:1px solid #30363d;
+  background:#0d1117;color:#e6edf3;font-size:.85rem;font-family:inherit;text-align:center}
+.bb-price-in:focus{outline:none;border-color:#4fc3f7}
+.bb-verdict{font-size:.85rem;font-weight:700;color:var(--sub)}
+.bb-v-sub{font-size:.7rem;font-weight:400;color:var(--sub)}
+.bb-v-yes{color:#3fb950}.bb-v-thin{color:#d29922}.bb-v-no{color:#f85149}
+.bb-rule-yes{background:rgba(63,185,80,.14);border-left-color:#3fb950}
+.bb-rule-thin{background:rgba(210,153,34,.12);border-left-color:#d29922}
+.bb-rule-no{background:rgba(248,81,73,.10);border-left-color:#f85149}
+.bb-rule{margin:8px 0 2px;padding:8px 11px;background:rgba(63,185,80,.10);
+  border-left:3px solid var(--green);border-radius:0;line-height:1.5}
+.bb-rule-lead{display:inline;font-size:.68rem;font-weight:700;letter-spacing:.06em;color:var(--green)}
+.bb-rule-price{display:inline;font-size:.95rem;font-weight:700;color:var(--green);margin-left:6px}
+.bb-rule-note{display:block;font-size:.68rem;color:var(--sub);margin-top:3px}
 .bb-stake{color:var(--green);font-size:.72rem;font-weight:600}
 .bb-basis{color:var(--sub);font-size:.68rem;line-height:1.4}
 .bb-note{font-size:.7rem;color:var(--sub);line-height:1.45;margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
@@ -2557,6 +2566,51 @@ const RL_BAND_RATES = [
   { lo: 0.60, hi: 0.651, rate: 0.674, rec: "29-14" }
 ];
 
+// Tiny stable hash so each Best Bet input gets its own id.
+function hashStr(x){ let h=0; for(let i=0;i<(x||"").length;i++){ h=((h<<5)-h+x.charCodeAt(i))|0; } return h; }
+
+// Verdict for a price the user typed. p is the band's OBSERVED rate.
+// Requires +8% EV rather than break-even, because that rate is estimated from
+// 94 graded picks and betting at the exact break-even leaves no room for the
+// estimate being a couple of points off.
+function bbCheck(id, p){
+  const el = document.getElementById(id+"_in");
+  const out = document.getElementById(id+"_out");
+  const note = document.getElementById(id+"_note");
+  const wrap = document.getElementById(id+"_wrap");
+  if(!el || !out) return;
+  const raw = (el.value||"").trim().replace(/[^0-9+\-]/g,"");
+  const a = parseInt(raw,10);
+  if(!raw || isNaN(a) || Math.abs(a) < 100){
+    out.textContent = "enter a price"; out.className = "bb-verdict";
+    wrap.className = "bb-rule";
+    if(note) note.style.opacity = 1;
+    return;
+  }
+  const d = a > 0 ? 1 + a/100 : 1 + 100/Math.abs(a);
+  const ev = p*(d-1) - (1-p);
+  const f = Math.max(0, Math.min(0.08, ((p*(d-1)-(1-p))/(d-1))/4));
+  const bank = (typeof BANKROLL !== "undefined" && BANKROLL > 0) ? BANKROLL : null;
+  if(ev >= 0.08){
+    out.innerHTML = "&#10004; BET IT &nbsp;<span class='bb-v-sub'>"
+      + (ev*100).toFixed(1) + "% EV &middot; stake " + (f*100).toFixed(1) + "%"
+      + (bank ? " &middot; $" + (bank*f).toFixed(2) : "") + "</span>";
+    out.className = "bb-verdict bb-v-yes";
+    wrap.className = "bb-rule bb-rule-yes";
+  } else if(ev > 0){
+    out.innerHTML = "&#9888; TOO THIN &nbsp;<span class='bb-v-sub'>only "
+      + (ev*100).toFixed(1) + "% EV at that price &middot; pass</span>";
+    out.className = "bb-verdict bb-v-thin";
+    wrap.className = "bb-rule bb-rule-thin";
+  } else {
+    out.innerHTML = "&#10008; PASS &nbsp;<span class='bb-v-sub'>"
+      + (ev*100).toFixed(1) + "% EV &middot; price is too short</span>";
+    out.className = "bb-verdict bb-v-no";
+    wrap.className = "bb-rule bb-rule-no";
+  }
+  if(note) note.style.opacity = .5;
+}
+
 function rlBestBetEval(p){
   if(p.type !== "RL") return null;
   const c = (p.conf||0)/100;
@@ -2720,6 +2774,39 @@ function renderBestBets(){
     const stake = `<span class="bb-stake">stake ${(_half*100).toFixed(1)}% of bankroll`
       + (_bank ? ` &middot; $${(_bank*_half).toFixed(2)} on $${_bank}` : "")
       + `</span>`;
+      // ── MAX PRICE YOU CAN ACCEPT ────────────────────────────────────────────
+    // The single number that makes this card actionable. The model's own price
+    // comes from Pinnacle and is often NOT what your book offers — on
+    // 2026-08-14 the board showed -109 on two games while Pinnacle, DraftKings
+    // and Hard Rock all sat near -160. Rather than asking you to redo the EV
+    // maths, we invert it: what is the WORST price at which this is still worth
+    // betting? Then you only have to compare one number to your book.
+    //
+    // Solve p*(d-1) - (1-p) = MIN_EV  ->  d = (1 + MIN_EV) / p
+    // At the band's 67.4%, break-even is -207. We require +8% EV instead, which
+    // gives -166, leaving margin for the 67.4% itself being an estimate from 94
+    // picks rather than a known truth.
+    const BET_MIN_EV = 0.08;
+    const _dMin = (1 + BET_MIN_EV) / e.trueP;
+    const _amMin = _dMin >= 2 ? Math.round((_dMin - 1) * 100)
+                              : Math.round(-100 / (_dMin - 1));
+    const _maxPrice = (_amMin > 0 ? "+" : "") + _amMin;
+    // Interactive check. The site CANNOT know your book's price, so asking for
+    // it is the only way to give a real yes/no. Type the price, get a verdict
+    // and a stake sized on YOUR number, not Pinnacle's.
+    const _id = "bb" + Math.abs(hashStr(p.label + p.game));
+    const priceRule = `<div class="bb-rule" id="${_id}_wrap">
+      <div class="bb-rule-row">
+        <span class="bb-rule-lead">YOUR BOOK'S PRICE</span>
+        <input type="text" inputmode="text" id="${_id}_in" class="bb-price-in"
+               placeholder="e.g. -144"
+               oninput="bbCheck('${_id}', ${e.trueP})">
+        <span class="bb-verdict" id="${_id}_out">enter a price</span>
+      </div>
+      <span class="bb-rule-note" id="${_id}_note">Anything better than
+        <b>${_maxPrice}</b> is a bet. The ${p.pick_price > 0 ? "+" : ""}${Math.round(p.pick_price)}
+        above is Pinnacle's price, not necessarily yours.</span>
+    </div>`;
     const basis = (kind === "RL")
       ? `<span class="bb-basis">RL ${Math.round(e.band.lo*100)}-${Math.round(e.band.hi*100)}% band has gone <b>${e.band.rec}</b> (${(e.band.rate*100).toFixed(0)}%) · needs ${e.need.toFixed(1)}%</span>`
       : `<span class="bb-basis">calibrated ${Math.round(e.trueP*100)}% vs market</span>`;
@@ -2735,6 +2822,7 @@ function renderBestBets(){
       </div>
       <div class="bb-meta">${basis}</div>
       <div class="bb-meta">${stake}</div>
+      ${priceRule}
     </div>`;
   }).join("");
   box.innerHTML = `<div class="bb-wrap">

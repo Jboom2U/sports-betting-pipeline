@@ -114,16 +114,14 @@ def value_for_pick(pick: dict) -> dict:
         other = "home" if picked_away else "away"
         hcap  = "p15" if "+1.5" in (pick.get("label", "") or "") else "m15"
         opp   = "m15" if hcap == "p15" else "p15"
+        # NO legacy fallback (removed 2026-08-14). rl_home_price/rl_away_price
+        # are the Odds API's AVERAGE of every book's run line price, pooled
+        # regardless of which line each book quoted. That average is not a price
+        # anyone offers: on 2026-08-14 it produced an identical -109 on two
+        # different games while Pinnacle, DraftKings and Hard Rock all sat near
+        # -160, inflating every run line EV roughly threefold.
         price_pick  = g.get(f"rl_{side}_{hcap}_price")
         price_other = g.get(f"rl_{other}_{opp}_price")
-        if price_pick is None:      # legacy fallback, only when the line matches
-            legacy_line = g.get(f"rl_{side}_line")
-            want = 1.5 if hcap == "p15" else -1.5
-            try:
-                if legacy_line is not None and abs(float(legacy_line) - want) < 1e-6:
-                    price_pick = g.get(f"rl_{side}_price")
-            except (TypeError, ValueError):
-                pass
 
     elif ptype == "TOTAL":
         is_over = (pick.get("side") == "over") or ("OVER" in (pick.get("label", "").upper()))
