@@ -2861,7 +2861,8 @@ today's file. Pulling it again bills a second time for the same data.</p>
 {mk_rows}
 <div class="cost">Estimated cost: <span class="big" id="cost">0</span> credit(s)
 <div class="note" id="brk">Pick games and markets.</div></div>
-<button type="submit" id="go" disabled>Pull selected props</button>
+<button type="submit" id="go">Pull selected props</button>
+<div class="note" id="why" style="margin-top:8px">Tick at least one game <b>and</b> at least one market to enable a pull.</div>
 </form>
 <p class="note" style="margin-top:18px">Pulled lines merge into today's prop file
 alongside Pinnacle's. Pinnacle always wins a conflict. The board rescores
@@ -2877,7 +2878,15 @@ function recost(){{
   document.getElementById("brk").textContent = (e&&m)
     ? e+" game(s) x "+m+" market(s) = "+c+" credit(s)"
     : "Pick games and markets.";
-  document.getElementById("go").disabled = !(e&&m);
+  // Say WHAT is missing. A silently greyed-out button reads as a broken page,
+  // which is exactly how this looked on the morning of 2026-08-16: games were
+  // ticked, markets were not, and nothing on screen said so.
+  var w=document.getElementById("why");
+  w.innerHTML = (e&&m) ? "Ready to pull <b>"+c+"</b> credit(s)."
+    : !e && !m ? "Tick at least one <b>game</b> and one <b>market</b> below."
+    : !m ? "Now tick at least one <b>market</b> (scroll down)."
+         : "Now tick at least one <b>game</b>.";
+  document.getElementById("go").style.opacity = (e&&m) ? 1 : .55;
 }}
 </script></body></html>"""
     return Response(html, mimetype="text/html")

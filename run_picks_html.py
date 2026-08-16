@@ -1427,6 +1427,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .bb-rule-note{display:block;font-size:.68rem;color:var(--sub);margin-top:3px}
 .bb-stake{color:var(--green);font-size:.72rem;font-weight:600}
 .bb-basis{color:var(--sub);font-size:.68rem;line-height:1.4}
+.bb-why{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
+.bb-why-row{display:flex;gap:9px;align-items:baseline;font-size:.72rem;color:var(--sub);padding:2px 0}
+.bb-why-n{min-width:22px;text-align:right;font-weight:700;color:var(--text)}
+.bb-why-bad{color:#d29922;font-weight:600}
+.bb-why-foot{margin-top:8px;font-size:.68rem;color:var(--sub)}
 .bb-note{font-size:.7rem;color:var(--sub);line-height:1.45;margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
 /* Universal price check — on EVERY card. Neutral grey until a price is typed,
    so it does not read as a recommendation the way the green Best Bets block
@@ -2731,17 +2736,23 @@ function priceCheckHtml(p){
   </div>`;
 }
 
-function rlBestBetEval(p){
-  if(p.type !== "RL") return null;
+function rlBestBetEval(p, why){
+  // `why` is an optional out-param. Every rejection records its reason so
+  // the empty state can explain itself instead of always claiming the model
+  // is protecting you. "No clean price" is a DATA failure and must never be
+  // reported as a judgement call.
+  const R = r => { if(why) why.reason = r; return null; };
+  if(p.type !== "RL") return R("not a run line");
   const c = (p.conf||0)/100;
-  if(c < RL_BEST_BET_MIN || c > RL_BEST_BET_MAX) return null;
-  if(p.pick_price == null) return null;
+  if(c < RL_BEST_BET_MIN || c > RL_BEST_BET_MAX)
+    return R("run line outside the validated 57-65% band");
+  if(p.pick_price == null) return R("NO CLEAN PRICE from the odds feed");
   const band = RL_BAND_RATES.find(b => c >= b.lo && c < b.hi);
-  if(!band) return null;
+  if(!band) return R("run line outside the validated 57-65% band");
   const price = p.pick_price;
   // Sanity: an American price under 100 in absolute terms is corrupt data (the
   // documented cross-book averaging bug). Never bet a price we cannot verify.
-  if(Math.abs(price) < 100) return null;
+  if(Math.abs(price) < 100) return R("NO CLEAN PRICE from the odds feed");
 
   // ── RUN LINE / MONEYLINE COHERENCE (2026-08-11) ──────────────────────────
   // Covering +1.5 includes EVERY outcome where the team wins outright, plus the
@@ -2765,22 +2776,25 @@ function rlBestBetEval(p){
   if(_ml != null && Math.abs(_ml) >= 100){
     const _impML = _ml < 0 ? Math.abs(_ml)/(Math.abs(_ml)+100) : 100/(_ml+100);
     const _impRL = price < 0 ? Math.abs(price)/(Math.abs(price)+100) : 100/(price+100);
-    if(_impRL <= _impML) return null;   // impossible: cover priced below the win
+    if(_impRL <= _impML)
+      return R("run line price contradicts its own moneyline (corrupt price)");
   }
   const dec = price > 0 ? 1 + price/100 : 1 + 100/Math.abs(price);
   const need = 100/dec;                       // break-even %
   const ev = band.rate*(dec-1) - (1-band.rate);
-  if(ev <= 0) return null;
+  if(ev <= 0) return R("price too short for the run line edge");
   return { ev, trueP: band.rate, need, band, price };
 }
 
-function bestBetEval(p){
-  if(!BEST_BET_TYPES.includes(p.type)) return null;
-  if(p.pick_price==null || p.market_prob==null) return null;
-  if(p.pick_price < BEST_BET_PRICE_FLOOR) return null;      // too much chalk
+function bestBetEval(p, why){
+  const R = r => { if(why) why.reason = r; return null; };
+  if(!BEST_BET_TYPES.includes(p.type)) return R("only moneylines are eligible here");
+  if(p.pick_price==null || p.market_prob==null) return R("NO CLEAN PRICE from the odds feed");
+  if(p.pick_price < BEST_BET_PRICE_FLOOR) return R("too much chalk (price below -180)");
   const model = p.conf/100, market = p.market_prob;
   const gapPts = (model - market)*100;
-  if(gapPts < 0 || gapPts > BEST_BET_MAX_GAP) return null;  // credible edge only
+  if(gapPts < 0) return R("model is below the market on this side");
+  if(gapPts > BEST_BET_MAX_GAP) return R("model-vs-market gap too wide to believe");
   // TRUE PROBABILITY — 2026-08-11.
   //
   // Was: trueP = 0.5*model + 0.5*market. That blend was far too weak. On 121
@@ -2797,7 +2811,7 @@ function bestBetEval(p){
   const trueP = (p.cal_conf!=null) ? p.cal_conf/100 : (0.5*model + 0.5*market);
   const dec = p.pick_price>0 ? 1 + p.pick_price/100 : 1 + 100/Math.abs(p.pick_price);
   const ev = trueP*(dec-1) - (1-trueP);                     // calibrated EV
-  if(ev <= 0) return null;
+  if(ev <= 0) return R("calibrated EV is negative at this price");
   return { ev, trueP, gapPts };
 }
 
@@ -2849,22 +2863,62 @@ function renderBestBets(){
   const box = document.getElementById("bestBets");
   if(!box) return;
   const src = (typeof ACTIVE_PICKS!=="undefined" && ACTIVE_PICKS.length) ? ACTIVE_PICKS : DATA_PICKS;
+  const _bbReasons = [];
   // Two independent rules. RL uses its observed band rate (validated edge);
   // ML uses the Platt-calibrated probability. Both must clear positive EV
   // against the REAL price. Tagged so the card can explain which applied.
   const ranked = (src||[])
     .map(p => {
-      const rl = rlBestBetEval(p);
+      const wRL = {}, wML = {};
+      const rl = rlBestBetEval(p, wRL);
       if(rl) return {p, e: rl, kind: "RL"};
-      const ml = bestBetEval(p);
-      return ml ? {p, e: ml, kind: "ML"} : null;
+      const ml = bestBetEval(p, wML);
+      if(ml) return {p, e: ml, kind: "ML"};
+      // Keep the more informative reason. A run line rejected for "not a run
+      // line" tells you nothing; the ML path's reason is the real one, and
+      // vice versa.
+      const rRL = wRL.reason || "", rML = wML.reason || "";
+      const pick = (p.type === "RL") ? rRL
+                 : (p.type === "ML") ? rML
+                 : "totals are not eligible (capped below break-even)";
+      _bbReasons.push(pick);
+      return null;
     })
     .filter(x => x)
     .sort((a,b) => b.e.ev - a.e.ev)
     .slice(0, 6);
   if(!ranked.length){
+    // WHY IT IS EMPTY (2026-08-15). This used to assert, always, that nothing
+    // qualified and the model was protecting you. That is only true when picks
+    // were rejected on JUDGEMENT (band, chalk, EV). When they are rejected for
+    // having NO PRICE, the board is broken, not cautious, and saying otherwise
+    // hides a data outage behind a reassuring sentence.
+    const tally = {};
+    _bbReasons.forEach(r => { tally[r] = (tally[r]||0) + 1; });
+    const rows = Object.entries(tally).sort((a,b) => b[1]-a[1]);
+    const noPrice = rows.filter(r => r[0].indexOf("NO CLEAN PRICE") >= 0)
+                        .reduce((n,r) => n + r[1], 0);
+    const total = _bbReasons.length;
+    const lead = (total === 0)
+      ? `<b>There are no picks on the board at all.</b> The pipeline has not
+         produced a slate — check <a href="/status">/status</a>.`
+      : (noPrice >= Math.max(3, total * 0.4))
+        ? `<b>This is a data problem, not a judgement.</b> ${noPrice} of ${total}
+           picks were dropped because the odds feed carried no usable price.
+           Run <a href="/admin/pinnacle-odds-test">/admin/pinnacle-odds-test</a>
+           and check that mlb_odds_master.csv has the
+           <code>rl_*_m15_price</code> / <code>rl_*_p15_price</code> columns.`
+        : `Nothing qualified today. Every pick was rejected on its merits, which
+           is the filter working. Prices were present and readable.`;
     box.innerHTML = `<div class="bb-wrap"><div class="bb-head">⭐ Best Bets</div>
-      <div class="bb-empty">No picks clear the bar today. The run line needs 57-65% confidence at a price the edge can survive; moneylines need calibrated probability above break-even. Nothing qualified — that is the model protecting you from bad spots, not a glitch.</div></div>`;
+      <div class="bb-empty">${lead}
+        <div class="bb-why">${rows.map(([r,n]) =>
+          `<div class="bb-why-row"><span class="bb-why-n">${n}</span>
+             <span class="${r.indexOf("NO CLEAN PRICE")>=0?"bb-why-bad":""}">${r}</span></div>`
+        ).join("")}</div>
+        <div class="bb-why-foot">Every pick is still on the board below, with a
+          CHECK YOUR PRICE box. Best Bets is a shortlist, not the whole card.</div>
+      </div></div>`;
     return;
   }
   const rows = ranked.map(({p, e, kind}) => {
