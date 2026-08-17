@@ -1,5 +1,48 @@
 # Statalizers — Project Context for Claude
 
+## 2026-08-17: WHY BEST BETS WAS ALWAYS EMPTY, AND THE PRICE PROBLEM UNDER IT
+
+**Best Bets scored moneylines off the Platt-calibrated probability. That was the
+wrong instrument.** The curve is monotonic by construction; the real ML record is
+not (55-60% stated wins 35.0%, 70-75% wins 65.6%, 75-80% wins 48.4%, 80%+ wins
+73.7%). A smooth rising line cannot fit a zig-zag, so it splits the difference and
+is wrong everywhere. Its practical effect, stated on `/admin/calibration-fit`: the
+first stated confidence whose calibrated value clears break-even is **69%**, and
+the model rarely produces an ML above 65%. So the shortlist was empty by
+construction, essentially every day.
+
+FIX: score off the **walk-forward validated threshold** instead. ML >= 68% went
+30-24 (55.6%) on the held-out half. We use 55.6%, NOT the 60.2% in-sample rate,
+because in-sample is the number the threshold was chosen on. RL bands refit on
+n=296 (was n=94): the usable window is **60-70%**, not 57-65%. 55-60% is a coin
+flip (51.6%) and was wrongly included; 65-70% is strong (64.8%) and was wrongly
+excluded. Constants: `ML_MIN_CONF`, `ML_OOS_RATE`, `ML_BAND_RATES`,
+`RL_BAND_RATES` in run_picks_html.py.
+
+**THE BIGGER PROBLEM, and the one to fix next.** The RL edge was measured at a
+flat -110. That assumption is false. The side the model picks is dog +1.5, which
+is the EXPENSIVE side of the spread: Rockies +1.5 was **-182** on 08-16, where
+break-even is 64.5%. The band wins 65.4%. **The whole +28.8% walk-forward ROI
+collapses to +1.3% at the real price.** The model also frequently picks the
+FAVORITE at +1.5, which Pinnacle's free feed does not quote at all (it carries
+only dog +1.5 / favorite -1.5), so those picks have no price and drop out.
+
+So the run line is not a validated edge at the prices actually available. It is a
+validated edge at a price we were assuming. **`/admin/real-roi` (new) recomputes
+every band from the `odds` column stored since 08-11, and splits RL by handicap
+because +1.5 and -1.5 have opposite price profiles.** Read that page, not the
+-110 backtest, before trusting any ROI number.
+
+The shop-for numbers that follow from this, at +8% EV (not break-even):
+**RL 60-70% only at -154 or better** (band rate 65.4%; break-even is -189).
+**ML 68%+ only at -106 or better** (out-of-sample rate 55.6%; break-even is -125).
+Both are on every card via the price check box.
+
+**Totals: do not chase.** 08-16 went 8-2 at real prices for +50% ROI, which is
+noise. Season is 104-98 (51.5%) and no threshold in the sweep is profitable.
+
+---
+
 ## 2026-08-14: PRICES ARE FIXED AT THE SOURCE. Read before touching any odds code.
 
 Three price defects, all the same root error: **arithmetic applied to a

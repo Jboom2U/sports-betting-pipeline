@@ -2892,6 +2892,141 @@ function recost(){{
     return Response(html, mimetype="text/html")
 
 
+@app.route("/admin/real-roi")
+def real_roi():
+    """ROI computed from the PRICE ACTUALLY STORED on each pick, not a flat -110.
+
+    WHY THIS EXISTS (2026-08-17)
+    /admin/strategy-backtest assumes every bet was placed at -110 and says so,
+    with the note "run line prices sit nearer -110, so that column is the more
+    trustworthy one". That assumption broke. The model now frequently picks the
+    market FAVORITE at +1.5, which is not a -110 bet at all: on 2026-08-16 the
+    one run line that carried a real price was -182, where break-even is 64.5%.
+    The run line band wins about 65%, so at that price the entire edge is gone.
+
+    A rule validated on an imaginary price is not validated. The `odds` column
+    has been populated since 2026-08-11, so this replays the same records
+    against what was really available.
+
+    RL is additionally split by handicap, because "+1.5" and "-1.5" are opposite
+    bets with opposite price profiles and pooling them hides exactly the problem
+    above.
+
+      ?since=YYYY-MM-DD   default 2026-08-11, when prices started being stored
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/real-roi")
+    import html as _h, traceback
+    since = request.args.get("since", "2026-08-11")
+
+    def _dec(a):
+        a = float(a)
+        if abs(a) < 100:
+            return None
+        return 1.0 + a/100.0 if a > 0 else 1.0 + 100.0/abs(a)
+
+    try:
+        from db.connection import db_conn
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT pick_type, label, conf, actual_result, odds
+                FROM picks
+                WHERE actual_result IN ('WIN','LOSS')
+                  AND conf IS NOT NULL AND odds IS NOT NULL
+                  AND pick_date >= %s
+            """, (since,))
+            rows = cur.fetchall(); cur.close()
+
+        recs = []
+        for t, lab, c, r, o in rows:
+            c = float(c)
+            if c > 1.5:
+                c /= 100.0
+            d = _dec(o)
+            if d is None or not (0.0 < c < 1.0):
+                continue
+            grp = t or "?"
+            if grp == "RL":
+                grp = "RL +1.5" if "+1.5" in (lab or "") else "RL -1.5"
+            recs.append((grp, c, 1 if r == "WIN" else 0, d, float(o)))
+
+        def block(name, sub):
+            if not sub:
+                return f"<h3>{_h.escape(name)}</h3><p class='note'>No priced picks yet.</p>"
+            out = (f"<h3>{_h.escape(name)} <span style='font-weight:400;color:#8b949e'>"
+                   f"n={len(sub)}</span></h3><table>"
+                   "<tr><th>stated band</th><th>picks</th><th>W-L</th><th>win%</th>"
+                   "<th>avg price</th><th>break-even</th><th>REAL ROI</th></tr>")
+            bands = [(.50,.55),(.55,.60),(.60,.65),(.65,.70),(.70,.75),(.75,1.01)]
+            for lo, hi in bands:
+                sel = [r for r in sub if lo <= r[1] < hi]
+                if not sel:
+                    continue
+                w = sum(r[2] for r in sel); l = len(sel) - w
+                pnl = sum((r[3]-1.0) if r[2] else -1.0 for r in sel)
+                roi = pnl/len(sel)*100.0
+                pct = 100.0*w/len(sel)
+                avgo = sum(r[4] for r in sel)/len(sel)
+                # Break-even implied by the AVERAGE price actually paid.
+                avgd = sum(r[3] for r in sel)/len(sel)
+                be = 100.0/avgd
+                col = "#3fb950" if roi > 0 else "#f85149"
+                thin = " <span style='color:#d29922'>thin</span>" if len(sel) < 25 else ""
+                out += (f"<tr><td>{int(lo*100)}-{int(hi*100)}%</td><td>{len(sel)}</td>"
+                        f"<td>{w}-{l}</td><td>{pct:.1f}%{thin}</td>"
+                        f"<td>{avgo:+.0f}</td><td>{be:.1f}%</td>"
+                        f"<td style='color:{col}'><b>{roi:+.1f}%</b></td></tr>")
+            w = sum(r[2] for r in sub); l = len(sub) - w
+            pnl = sum((r[3]-1.0) if r[2] else -1.0 for r in sub)
+            roi = pnl/len(sub)*100.0
+            col = "#3fb950" if roi > 0 else "#f85149"
+            out += (f"<tr style='border-top:2px solid #30363d'><td><b>all</b></td>"
+                    f"<td><b>{len(sub)}</b></td><td><b>{w}-{l}</b></td>"
+                    f"<td><b>{100.0*w/len(sub):.1f}%</b></td><td>&mdash;</td><td>&mdash;</td>"
+                    f"<td style='color:{col}'><b>{roi:+.1f}%</b></td></tr></table>")
+            return out
+
+        groups = ["ML", "RL +1.5", "RL -1.5", "TOTAL"]
+        body = "".join(block(g, [r for r in recs if r[0] == g]) for g in groups)
+
+        tot_pnl = sum((r[3]-1.0) if r[2] else -1.0 for r in recs)
+        tot_roi = (tot_pnl/len(recs)*100.0) if recs else 0.0
+        tcol = "#3fb950" if tot_roi > 0 else "#f85149"
+
+        html = f"""<!doctype html><html><head><meta charset=utf-8>
+<title>Real-price ROI</title><style>
+body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:900px;margin:0 auto}}
+h2{{color:#58a6ff}} h3{{color:#e6edf3;margin:26px 0 6px;font-size:15px}}
+table{{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:6px}}
+th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #21262d}}
+th{{color:#8b949e;font-weight:600;font-size:11px;text-transform:uppercase}}
+.note{{color:#8b949e;font-size:12.5px;line-height:1.65}}
+.hero{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:14px 0}}
+.big{{font-size:30px;font-weight:700;color:{tcol}}}</style></head><body>
+<h2>Real-price ROI</h2>
+<p class="note">Graded picks since <b>{_h.escape(since)}</b> that carry a stored
+price. Every figure below uses the price the pick was actually saved at, not a
+flat -110. <b>This is the only ROI on the site that is not an approximation.</b>
+<br>Run lines are split by handicap: <b>+1.5</b> and <b>-1.5</b> are opposite
+bets with opposite price profiles, and pooling them hides the fact that a
+favorite at +1.5 can cost -180 or worse.</p>
+<div class="hero">Overall on {len(recs)} priced picks:
+<div class="big">{tot_roi:+.1f}%</div>
+<span class="note">flat stake per pick</span></div>
+{body}
+<p class="note" style="margin-top:20px">If a band shows a healthy win% but a
+negative REAL ROI, the model is right about the game and wrong about whether it
+is worth the price. That is the single most important failure mode here, and a
+-110 backtest cannot see it.</p>
+<p><a href="/admin">&larr; Admin</a></p></body></html>"""
+        return Response(html, mimetype="text/html")
+    except Exception:
+        return Response(f"<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        f"{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
+
+
 @app.route("/admin/strategy-backtest")
 def strategy_backtest():
     """

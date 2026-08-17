@@ -2572,11 +2572,54 @@ const BEST_BET_TYPES       = ["ML"]; // ML path below; RL has its own rule
 // Band ceiling is 65%. Above that you approach the 0.68 cover cap where the
 // record collapses to 15-14 (51.7%), and prices there are typically -180 or
 // worse. Floor is 57% because 55-60% only returns 53.3%, which most prices eat.
-const RL_BEST_BET_MIN  = 0.57;
-const RL_BEST_BET_MAX  = 0.65;
+// ── BANDS REFIT 2026-08-17 on n=296 RL / n=360 ML graded picks ─────────────
+// The old window was 57-65% fitted on n=94. With three times the data the
+// picture sharpened: 55-60% is a coin flip (51.6%) and does not belong, while
+// 65-70% is strong (64.8%) and was being thrown away. Net effect is a WIDER
+// usable band, 60-70%, not a narrower one.
+const RL_BEST_BET_MIN  = 0.60;
+const RL_BEST_BET_MAX  = 0.70;
 const RL_BAND_RATES = [
-  { lo: 0.57, hi: 0.60, rate: 0.533, rec: "40-35" },
-  { lo: 0.60, hi: 0.651, rate: 0.674, rec: "29-14" }
+  { lo: 0.60, hi: 0.65,  rate: 0.662, rec: "43-22" },
+  { lo: 0.65, hi: 0.701, rate: 0.648, rec: "46-25" }
+];
+
+// ── MONEYLINE: OBSERVED RECORD, NOT THE FITTED CURVE (2026-08-17) ──────────
+// Best Bets used to score ML off the Platt-calibrated probability. That curve
+// is monotonic by construction, but the real ML record is not:
+//
+//   stated 55-60% -> 35.0% actual    stated 70-75% -> 65.6% actual
+//   stated 60-65% -> 41.9% actual    stated 75-80% -> 48.4% actual
+//   stated 65-70% -> 54.0% actual    stated 80%+   -> 73.7% actual
+//
+// A smooth rising line cannot fit a zig-zag, so it splits the difference and
+// is wrong everywhere. Its practical effect: the first stated confidence whose
+// calibrated value clears the 52.38% break-even is 69%, and the model rarely
+// produces an ML above 65%. So Best Bets returned nothing essentially every
+// day. An empty shortlist is not caution, it is a broken instrument.
+//
+// Replaced with the WALK-FORWARD VALIDATED threshold: choose the cut on the
+// first half of the period, apply it to the second half it never saw.
+// ML >= 68% returned 30-24 (55.6%) out of sample. We use that 55.6%, NOT the
+// 60.2% in-sample rate, because the in-sample number is the one the threshold
+// was chosen on and would overstate the edge.
+//
+// At 55.6% the break-even price is -125, so an ML at 68%+ is a bet only when
+// priced better than that. The EV check still does the real work.
+const ML_MIN_CONF  = 0.68;
+const ML_OOS_RATE  = 0.556;
+const ML_OOS_REC   = "30-24 (55.6%) out of sample";
+
+// Observed ML record per stated band. Used by the per-card price checker so a
+// card tells you the truth about its own band even when it is not a Best Bet.
+const ML_BAND_RATES = [
+  { lo: 0.50, hi: 0.55, rate: 0.589, rec: "33-23" },
+  { lo: 0.55, hi: 0.60, rate: 0.350, rec: "28-52" },
+  { lo: 0.60, hi: 0.65, rate: 0.419, rec: "26-36" },
+  { lo: 0.65, hi: 0.70, rate: 0.540, rec: "34-29" },
+  { lo: 0.70, hi: 0.75, rate: 0.656, rec: "21-11" },
+  { lo: 0.75, hi: 0.80, rate: 0.484, rec: "15-16" },
+  { lo: 0.80, hi: 1.01, rate: 0.737, rec: "14-5"  }
 ];
 
 // Tiny stable hash so each Best Bet input gets its own id.
@@ -2655,6 +2698,16 @@ function pcProbFor(p){
     return { prob: 0.550, strong: false,
       basis: `outside the validated 57-65% band — using the overall RL rate `
            + `<b>126-103 (55.0%)</b>, which is much weaker evidence` };
+  }
+  if(p.type === "ML"){
+    const c = (p.conf||0)/100;
+    const b = ML_BAND_RATES.find(x => c >= x.lo && c < x.hi);
+    if(b) return { prob: b.rate, strong: c >= ML_MIN_CONF,
+      basis: `moneylines at ${Math.round(b.lo*100)}-${Math.round(b.hi*100)}% stated `
+           + `have gone <b>${b.rec}</b> (${(b.rate*100).toFixed(1)}%) since 2026-07-21`
+           + (c >= ML_MIN_CONF ? `, and the ${Math.round(ML_MIN_CONF*100)}%+ cut `
+               + `held up walk-forward at ${ML_OOS_REC}`
+             : `. This is below the validated ${Math.round(ML_MIN_CONF*100)}% cut`) };
   }
   if(p.cal_conf == null) return null;
   if(p.type === "TOTAL")
@@ -2808,7 +2861,9 @@ function bestBetEval(p, why){
   //
   // Now uses the Platt-calibrated probability, the same one behind the HONEST
   // READ line on each card and the EV gate, so all three agree.
-  const trueP = (p.cal_conf!=null) ? p.cal_conf/100 : (0.5*model + 0.5*market);
+  if(model < ML_MIN_CONF)
+    return R(`moneyline below the validated ${Math.round(ML_MIN_CONF*100)}% threshold`);
+  const trueP = ML_OOS_RATE;
   const dec = p.pick_price>0 ? 1 + p.pick_price/100 : 1 + 100/Math.abs(p.pick_price);
   const ev = trueP*(dec-1) - (1-trueP);                     // calibrated EV
   if(ev <= 0) return R("calibrated EV is negative at this price");
