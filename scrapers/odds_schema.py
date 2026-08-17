@@ -109,17 +109,46 @@ def write_snapshot_rows(master_path: str, rows: list, source: str = "odds") -> N
                  f"{os.path.basename(master_path)}")
         return
 
-    dropped = len(existing_rows)
+    # MIGRATE vs DROP (refined 2026-08-17). The original rule dropped every
+    # existing row on any schema change, on the grounds that rows written under
+    # a different header are positionally misaligned and unrecoverable.
+    #
+    # That is true when a column is INSERTED mid-list, which is what happened on
+    # 08-11. It is NOT true when a column is merely APPENDED: DictReader read
+    # those rows using the file's own header, so every value is already correctly
+    # keyed by name and can be re-emitted safely.
+    #
+    # Dropping them anyway cost real data. Adding `books_json` wiped the whole
+    # day's snapshots, and because MLBModel freezes each game at first pitch, any
+    # game already underway lost its pre-game price permanently — the pick simply
+    # went priceless mid-afternoon. It also threw away a paid Odds API pull.
+    #
+    # So: if the old header is a SUBSET of the new one, the change is additive
+    # and the rows are carried forward with "" in the new columns. Only a genuine
+    # conflict still drops.
+    old_cols = set(existing_hdr or [])
+    additive = bool(old_cols) and old_cols.issubset(set(SNAPSHOT_FIELDNAMES))
+    carried = existing_rows if additive else []
+    dropped = 0 if additive else len(existing_rows)
+
     os.makedirs(os.path.dirname(master_path), exist_ok=True)
     with open(master_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=SNAPSHOT_FIELDNAMES,
                            extrasaction="ignore")
         w.writeheader()
+        for r in carried:
+            w.writerow({k: r.get(k, "") for k in SNAPSHOT_FIELDNAMES})
         w.writerows(rows)
+
+    if additive and carried:
+        log.info(f"[{source}] odds master schema grew "
+                 f"({len(existing_hdr)} -> {len(SNAPSHOT_FIELDNAMES)} cols, "
+                 f"additive). MIGRATED {len(carried)} existing row(s); new "
+                 f"columns are blank on them.")
     if dropped:
-        log.warning(f"[{source}] odds master schema changed "
-                    f"({len(existing_hdr or [])} -> {len(SNAPSHOT_FIELDNAMES)} "
-                    f"cols). Rewrote file and DROPPED {dropped} misaligned "
-                    f"row(s). Snapshots re-pull for free; re-run the odds pull.")
+        log.warning(f"[{source}] odds master schema CONFLICTS "
+                    f"({len(existing_hdr or [])} cols, not a subset of "
+                    f"{len(SNAPSHOT_FIELDNAMES)}). Rewrote and DROPPED "
+                    f"{dropped} row(s) whose values cannot be trusted by name.")
     log.info(f"[{source}] Saved {len(rows)} snapshot rows to "
              f"{os.path.basename(master_path)}")

@@ -140,6 +140,37 @@ STATISTICAL ERRORS
 - A threshold chosen after looking at the outcomes, then reported with a
   p-value as if it were chosen in advance.
 - A calibration or transform applied to a quantity it was not fitted on.
+- A strategy validated at an ASSUMED price (e.g. a flat -110) and then described
+  as validated. The prices actually paid are in the `odds` column.
+
+COMPARING THINGS THAT ARE NOT COMPARABLE — the single most common defect here.
+It has shipped five separate times: run-line prices averaged across different
+handicaps, totals pooled across 8.5 and 9.0, two CSV schemas written to one
+file, per-book "best price" compared across different total lines, and average
+American odds printed on the ROI page. Hunt it specifically:
+- Two prices compared, averaged, or ranked without first checking they describe
+  the SAME wager: same handicap, same total line, same side, same market.
+- Arithmetic (mean, sum, sort) applied to AMERICAN ODDS. They are non-linear and
+  discontinuous across +/-100; averaging -300 with +120 is meaningless. Convert
+  to decimal or implied probability first.
+- A "best" or "worst" selected across a set whose members are not interchangeable.
+
+WRITTEN BUT NOT PERSISTED
+- Railway's filesystem is EPHEMERAL. Anything written under data/ that is not
+  uploaded to R2 is destroyed on the next restart. Flag any new file written
+  without a corresponding upload, or missing from SYNC_PATTERNS in db/csv_sync.py.
+- An expensive/paid API result written to local disk and not synced.
+
+DESTRUCTIVE MIGRATION
+- Code that DROPS or overwrites existing rows/records on a schema or format
+  change. Ask whether the change is purely additive, in which case the old data
+  can and should be carried forward. Data loss must be the last resort, not the
+  default.
+
+CLAIMS THAT CONTRADICT THE CODE
+- A docstring, log line, UI label, or route name asserting behaviour the function
+  does not implement (for example a route named "force X" that only reaches X in
+  a fallback branch that never executes).
 
 For each issue give: file, the line or symbol, what breaks, and the one-line
 fix. Order by severity. Maximum six issues.
