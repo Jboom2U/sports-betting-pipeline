@@ -797,12 +797,26 @@ Runs daily at 6am ET via app.py scheduler. Key steps:
 ---
 
 ## Pick Generation (model/mlb_picks.py)
-**Confidence tiers:**
-- LOCK: 75%+
-- STRONG: 68-75%
-- LEAN: 60-68%
-- TOSSUP: 48-60% (shown, no Kelly)
+**Confidence tiers** — VERIFIED against the code 2026-08-17, all 13 picks on
+that day's board matched. The values below are `LOCK_THRESH` etc. in
+model/mlb_picks.py; anything else written elsewhere is stale.
+- LOCK: 68%+
+- STRONG: 62-68%
+- LEAN: 52-62%
+- TOSSUP: 48-52% (shown, no Kelly)
 - PASS: <48% (not shown)
+
+This file previously documented 75 / 68 / 60 / 48, which matched nothing. That
+error was then "confirmed" as a tier/conf mismatch BUG in the calibration notes
+and chased more than once. There was never a bug: the code has always been
+self-consistent and the document was wrong.
+
+**A TIER IS NOT A BETTING RECOMMENDATION.** It reports how confident the model
+is, nothing more. Best Bets reports whether the PRICE is wrong, which is a
+different question and frequently disagrees. On 2026-08-17 the 81.6% LOCK
+(Phillies at -240) was the WORST bet on the board at -31.4% EV, while a 54.5%
+LEAN (Cardinals at -116) was the only qualifying bet at +9.7%. That is not a
+contradiction, it is the price doing the work.
 
 **RL minimum:** 60% edge required
 **TBD suppression:** TOTAL suppressed when either SP TBD; RL suppressed when either SP TBD; ML downgraded one tier when both TBD
@@ -961,12 +975,17 @@ Real edge exists only at the top: 75-80% wins 67.5% (n=40), 80%+ wins 63.8%
    TOSSUP 47.7%, LEAN 45.5%. LOCK at 65-70 wins 35.8% (n=53). STRONG is the only
    tier above break-even; LOCK is the worst-performing high tier.
 
-### Tier/conf mismatch (unresolved)
+### Tier/conf mismatch — RESOLVED 2026-08-17, it was never real
 
-`tier` and `conf` are assigned from different numbers. CLAUDE.md documents
-LOCK as 75%+, but LOCK contains picks at 65-70% conf; STRONG (doc: 68-75) holds
-picks at 60-65. Probably pre- vs post-adjustment confidence. Any tier-based
-analysis is untrustworthy until this is traced.
+This section claimed tier and conf came from different numbers. They do not.
+`_tier()` in model/mlb_picks.py reads the same `conf` shown on the card, and on
+2026-08-17 all 13 picks matched it exactly. The apparent mismatch came entirely
+from comparing against the WRONG THRESHOLDS documented above (75/68/60/48 rather
+than the real 68/62/52/48).
+
+Cost: this phantom was listed as a blocker on the Active Work Queue and
+re-investigated at least twice. **Check a claim against the code before treating
+it as a finding, including claims written in this file.**
 
 ### Open data-integrity question (resolve before acting on the above)
 

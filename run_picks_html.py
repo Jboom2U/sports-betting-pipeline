@@ -1433,6 +1433,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .bb-why-n{min-width:22px;text-align:right;font-weight:700;color:var(--text)}
 .bb-why-bad{color:#d29922;font-weight:600}
 .bb-why-foot{margin-top:8px;font-size:.68rem;color:var(--sub)}
+.pick-bestbet{border-color:#e3b341;box-shadow:0 0 0 1px rgba(227,179,65,.35)}
+.bb-flag{position:absolute;top:-1px;left:-1px;background:#e3b341;color:#3d2c00;
+  font-size:.6rem;font-weight:700;letter-spacing:.08em;padding:3px 9px;border-radius:12px 0 12px 0}
 .bb-note{font-size:.7rem;color:var(--sub);line-height:1.45;margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
 /* Universal price check — on EVERY card. Neutral grey until a price is typed,
    so it does not read as a recommendation the way the green Best Bets block
@@ -3673,12 +3676,24 @@ function renderPicks(){
           </div>
         </div>`;
     } else {
-    const _tg = (p.tier === "LEAN" && filterTier === "all")
+    // A BEST BET IS NEVER HIDDEN (fixed 2026-08-17).
+    //
+    // Tier and Best Bets answer different questions. Tier is the model's raw
+    // confidence; Best Bets is EV against the real price. They disagree by
+    // design — the ML band that actually makes money is 50-55% stated, which
+    // lands in LEAN. So the top of the shortlist was being routed into a
+    // collapsed drawer labelled "lower confidence — watch only", telling the
+    // reader to bet it and ignore it on the same screen.
+    //
+    // Anything the shortlist promotes stays in the main grid regardless of tier.
+    const _isBB = !!bestBetEval(p, {});
+    const _tg = (p.tier === "LEAN" && filterTier === "all" && !_isBB)
       ? (leanGridEl || grid) : grid;
     pickData.push(p);
     const _legIdx = pickData.length - 1;
     _tg.innerHTML += `
-      <div class="pick-card tier-${p.tier}${_isFinal(_findScore(p))?' pick-done':''}${_isHighConf(p)?' pick-highconf':''}" data-type="${p.type}" data-tier="${p.tier}" data-highconf="${_isHighConf(p)?'1':'0'}">
+      <div class="pick-card tier-${p.tier}${_isBB?' pick-bestbet':''}${_isFinal(_findScore(p))?' pick-done':''}${_isHighConf(p)?' pick-highconf':''}" data-type="${p.type}" data-tier="${p.tier}" data-highconf="${_isHighConf(p)?'1':'0'}">
+        ${_isBB ? '<div class="bb-flag">&#9733; BEST BET</div>' : ''}
         ${teamEmblem(p.team)}
         <div class="pick-top">
           <span class="pick-type-badge badge-${p.type}">${p.type==="TOTAL"?"Over/Under":p.type==="ML"?"Win Bet":p.type==="RL"?"Spread":p.type}</span>
@@ -3741,7 +3756,8 @@ function renderPicks(){
   if(leanToggle){
     if(filterTier === "all" && leanCount > 0){
       leanToggle.style.display = "block";
-      leanLabel.textContent = `Show ${leanCount} Lean pick${leanCount===1?"":"s"} (lower confidence — watch only)`;
+      leanLabel.textContent = `Show ${leanCount} Lean pick${leanCount===1?"":"s"} `
+        + `(lower confidence, and none of them cleared Best Bets)`;
     } else {
       leanToggle.style.display = "none";
     }
