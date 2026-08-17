@@ -765,6 +765,18 @@ def run() -> dict:
     save_movement(movements, today)
 
     log.info(f"Odds scraper complete | {len(curr_snaps)} snapshots | {len(movements)} movement records")
+    # PERSIST NOW — this pull was billed. See db.csv_sync.persist_paid_artifact.
+    # Doing it here rather than in the caller because there are six call sites
+    # (run_pipeline, run_afternoon, three app.py routes, the scheduler) and
+    # run_afternoon had no upload at all, so its credits were lost on every
+    # restart that followed.
+    try:
+        from db.csv_sync import persist_paid_artifact
+        persist_paid_artifact(os.path.join(CLEAN_DIR, "mlb_odds_master.csv"),
+                              "Odds API snapshot (3 credits)")
+    except Exception as _pe:
+        log.warning(f"Odds master persist failed (non-fatal): {_pe}")
+
     # Tag the SOURCE explicitly. The quota-guard branch returns Pinnacle's
     # result, so without this a caller cannot tell whether the Odds API was
     # actually reached — which is how /admin/force-oddsapi came to report on

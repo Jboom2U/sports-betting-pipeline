@@ -1501,20 +1501,8 @@ The month's cap is 500 credits and each pull costs 3.</p>
                    "<p class='warn'><b>Hard Rock NOT in this response.</b> It lives "
                    "in region us2 and is reached by naming it in SHOP_BOOKS.</p>")
 
-        # PUSH TO R2 IMMEDIATELY. Railway's filesystem is ephemeral, so a
-        # container restart re-downloads the odds master from storage. On
-        # 2026-08-17 a paid pull wrote books_json locally, was never uploaded,
-        # and the next `railway up` pulled the older copy back down — losing 3
-        # credits of data and every per-book price with it. Same failure as the
-        # raw JSONs missing from SYNC_PATTERNS in July: written but not synced.
-        try:
-            from db.csv_sync import upload_file, storage_available
-            if storage_available():
-                upload_file(os.path.join(CLEAN_DIR, "mlb_odds_master.csv"),
-                            "clean/mlb_odds_master.csv")
-                log.info("[force-oddsapi] odds master pushed to R2")
-        except Exception as _ue:
-            log.warning(f"[force-oddsapi] R2 upload failed (non-fatal): {_ue}")
+        # Persistence is handled inside the scraper now (persist_paid_artifact),
+        # so every caller gets it, not just this route.
 
         with _cache_lock:
             _cache["generated_at"] = 0

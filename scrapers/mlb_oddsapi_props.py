@@ -230,6 +230,16 @@ def merge_into_prop_lines(new_props: dict, date: str = None,
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(existing, indent=1), encoding="utf-8")
+
+    # PERSIST NOW. This is the priciest call in the system — 1 credit per market
+    # per event — and it is exactly the file that was destroyed once already
+    # after 5 credits had been spent on it.
+    try:
+        from db.csv_sync import persist_paid_artifact
+        persist_paid_artifact(path, f"Odds API batter props ({path.name})")
+    except Exception as _pe:
+        log.warning(f"[OddsAPI props] persist failed (non-fatal): {_pe}")
+
     counts = {k: len(v) for k, v in existing.items() if k != "_meta"}
     log.info("[OddsAPI props] merged -> %s: %s", path.name, counts)
     return counts

@@ -220,6 +220,46 @@ def upload_all() -> int:
     return uploaded
 
 
+def persist_paid_artifact(local_path, what: str = "paid API result") -> bool:
+    """Upload something that COST MONEY to fetch, immediately.
+
+    THE RULE THIS ENFORCES (added 2026-08-17):
+    Railway's filesystem is ephemeral. Anything written under data/ and not
+    pushed to object storage is destroyed on the next restart — which includes
+    every `railway up`. For free sources that is merely annoying; Pinnacle
+    re-pulls in 40 minutes. For BILLED sources it is money set on fire.
+
+    It has happened twice:
+      - batter props: 5 Odds API credits spent, file written under data/raw/,
+        never added to SYNC_PATTERNS, destroyed on the next restart.
+      - 2026-08-17: an Odds API pull wrote per-book prices, the deploy restarted
+        the container, and the older copy came back down from R2.
+
+    Both times the fix was applied at the CALLER, and both times a different
+    caller was left unprotected. So persistence now belongs to the code that
+    spends the credit, not to whoever happens to invoke it. Call this on the
+    same line of reasoning as "we just paid for this".
+
+    Never raises. A failed upload is logged loudly and the caller continues,
+    because losing the upload is bad but crashing the scrape is worse.
+    """
+    try:
+        if not storage_available():
+            log.warning(f"NOT PERSISTED: {what} — object storage unavailable. "
+                        f"This data dies on the next restart.")
+            return False
+        ok = upload_file(local_path)
+        if ok:
+            log.info(f"Persisted {what} to object storage.")
+        else:
+            log.warning(f"NOT PERSISTED: {what} — upload returned false. "
+                        f"This data dies on the next restart.")
+        return ok
+    except Exception as e:
+        log.warning(f"NOT PERSISTED: {what} — {e}. Dies on the next restart.")
+        return False
+
+
 def upload_file(local_path: str | Path, storage_key: str = None) -> bool:
     """
     Upload a single file to object storage.
