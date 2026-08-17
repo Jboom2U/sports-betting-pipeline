@@ -1439,6 +1439,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
    does. It turns green/amber/red only in response to a real number. */
 .shop{margin:8px 0 2px;background:rgba(56,139,253,.07);border-left:3px solid #388bfd;border-radius:0}
 .shop-sum{list-style:none;cursor:pointer;padding:7px 11px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.shop-sum:hover{background:rgba(56,139,253,.06)}
+.shop-caret{font-size:.7rem;color:#58a6ff;transition:transform .12s}
+details[open] .shop-caret{transform:rotate(90deg)}
+.shop-count{font-size:.66rem;color:var(--sub);border:1px solid var(--border);border-radius:9px;padding:1px 7px}
 .shop-sum::-webkit-details-marker{display:none}
 .shop-lead{font-size:.66rem;font-weight:700;letter-spacing:.06em;color:#58a6ff}
 .shop-best{font-size:.95rem;font-weight:700;color:#58a6ff}
@@ -2748,13 +2752,53 @@ function bookShopHtml(p){
   const books = p.books || {};
   const key = bookKeyFor(p);
   if(!key) return "";
-  const rows = [];
+
+  // TOTALS: a price is only comparable AT THE SAME LINE (fixed 2026-08-17).
+  // The first version compared the over price across every book regardless of
+  // which total each was quoting, and immediately produced a false positive on
+  // the live board: an OVER 8.0 card advertised "BEST +105" from books that
+  // were actually quoting 8.5. Over 8.5 pays plus money because it is a HARDER
+  // bet, not because it is a better price. Taking that "upgrade" would have
+  // been switching bets while believing you were shopping one.
+  //
+  // Same error as the run line prices averaged across handicaps, and the totals
+  // pooled across 8.5 and 9.0 in the scraper. A number is only comparable to
+  // another number describing the identical wager.
+  let pickLine = null;
+  if(p.type === "TOTAL"){
+    const m = (p.label || "").match(/(\d+(?:\.\d+)?)/);
+    if(m) pickLine = parseFloat(m[1]);
+  }
+
+  const rows = [], offLine = [];
   for(const b in books){
     const v = books[b] && books[b][key];
     if(v == null || Math.abs(v) < 100) continue;
+    if(pickLine != null){
+      const bl = books[b].tot;
+      if(bl == null || Math.abs(bl - pickLine) > 0.001){
+        offLine.push({ b, line: bl, price: v });
+        continue;
+      }
+    }
     rows.push({ b, price: v, dec: amDec(v) });
   }
-  if(!rows.length) return "";
+  if(!rows.length){
+    if(!offLine.length) return "";
+    // Every book is on a different number. Say so plainly instead of
+    // presenting an incomparable price as if it were an upgrade.
+    const alt = offLine.map(r =>
+      `<div class="shop-row"><span>${BOOK_LABELS[r.b] || r.b}</span>
+         <span class="shop-px">${r.line} @ ${fmtAm(r.price)}</span></div>`).join("");
+    return `<details class="shop">
+      <summary class="shop-sum">
+        <span class="shop-lead">NO BOOK ON ${pickLine}</span>
+        <span class="shop-mine">${offLine.length} book(s) quoting a different total</span>
+      </summary>
+      <div class="shop-body">${alt}
+        <div class="shop-foot">A different total is a different bet, not a
+          better price.</div></div></details>`;
+  }
   rows.sort((x, y) => y.dec - x.dec);          // best for the bettor first
   const best = rows[0];
   const mine = rows.find(r => r.b === MY_BOOK);
@@ -2765,12 +2809,12 @@ function bookShopHtml(p){
     ? ((best.dec - worst.dec) / worst.dec * 100).toFixed(1) : null;
 
   let mineTxt = "";
-  if(mine && mine.b !== best.b){
+  if(mine && mine.b !== best.b && Math.abs(mine.dec - best.dec) > 1e-9){
     const lost = ((best.dec - mine.dec) / mine.dec * 100).toFixed(1);
     mineTxt = `<span class="shop-mine">Hard Rock ${fmtAm(mine.price)}`
             + ` &middot; <b>${lost}% worse</b></span>`;
   } else if(mine){
-    mineTxt = `<span class="shop-mine shop-mine-ok">Hard Rock has the best price</span>`;
+    mineTxt = `<span class="shop-mine shop-mine-ok">Hard Rock matches the best price</span>`;
   } else {
     mineTxt = `<span class="shop-mine">Hard Rock not quoting this</span>`;
   }
@@ -2779,13 +2823,21 @@ function bookShopHtml(p){
     `<div class="shop-row${r.b === MY_BOOK ? " shop-row-mine" : ""}">
        <span>${BOOK_LABELS[r.b] || r.b}</span>
        <span class="shop-px">${fmtAm(r.price)}</span>
-     </div>`).join("");
+     </div>`).join("")
+   + (offLine.length ? `<div class="shop-foot">Not compared, quoting a different
+       total: ${offLine.map(r => `${BOOK_LABELS[r.b] || r.b} ${r.line}`).join(", ")}
+       &mdash; a different line is a different bet.</div>` : "");
 
+  // The caret and the book count exist because without them this read as a
+  // static line and nobody clicked it. An affordance that is not visible is
+  // not an affordance.
   return `<details class="shop">
     <summary class="shop-sum">
+      <span class="shop-caret">&#9656;</span>
       <span class="shop-lead">BEST</span>
       <span class="shop-best">${fmtAm(best.price)}</span>
       <span class="shop-book">${BOOK_LABELS[best.b] || best.b}</span>
+      <span class="shop-count">${rows.length} books</span>
       ${mineTxt}
     </summary>
     <div class="shop-body">${table}
