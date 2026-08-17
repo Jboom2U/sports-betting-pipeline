@@ -5160,7 +5160,13 @@ def warm_cache():
             _csv_ready.set()
 
         # ── Step 3: Pipeline ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        if _needs_pipeline_run():
+        # PREDEPLOY_SIM is set by scripts/predeploy_check.py. Without this guard
+        # the route simulation sees an empty DB, concludes today's pipeline has
+        # not run, and launches the FULL scrape on a developer machine. That is
+        # real network traffic and minutes of work to answer "does / return 200".
+        if os.environ.get("PREDEPLOY_SIM") == "1":
+            log.info("PREDEPLOY_SIM set -- skipping startup pipeline.")
+        elif _needs_pipeline_run():
             log.info("No pipeline data for today -- running full pipeline on startup...")
             _run_full_pipeline()
             # _schedule_adaptive_refresh() is called inside _run_full_pipeline()

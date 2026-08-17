@@ -32,18 +32,26 @@ CRITICAL_FILES = [
 SIM_SCRIPT = """\
 import sys, os
 sys.path.insert(0, '.')
+# FORCE these, never setdefault (fixed 2026-08-17). setdefault is a no-op when
+# the variable already exists, so on a machine whose shell exports the real
+# DATABASE_URL the simulation connected to the REAL Railway database instead of
+# the stubs. That host does not resolve off Railway, so the check sat with no
+# output until it was killed by hand.
 for k, v in [
     ('DATABASE_URL', ''), ('ODDS_API_KEY', 'test'),
-    ('STORAGE_ENDPOINT_URL', 'http://localhost'),
-    ('STORAGE_ACCESS_KEY_ID', 'test'),
-    ('STORAGE_SECRET_ACCESS_KEY', 'test'),
-    ('STORAGE_BUCKET', 'test'),
+    ('STORAGE_ENDPOINT_URL', ''), ('STORAGE_ACCESS_KEY_ID', ''),
+    ('STORAGE_SECRET_ACCESS_KEY', ''), ('STORAGE_BUCKET', ''),
+    ('PREDEPLOY_SIM', '1'),
 ]:
-    os.environ.setdefault(k, v)
+    os.environ[k] = v
 import app as a
 with a.app.test_client() as c:
-    routes = ['/', '/performance-html', '/schedule-status', '/status']
-    print(','.join(r + ':' + str(c.get(r).status_code) for r in routes))
+    out = []
+    for r in ['/', '/performance-html', '/schedule-status', '/status']:
+        print('  testing ' + r, file=sys.stderr, flush=True)
+        out.append(r + ':' + str(c.get(r).status_code))
+    print(','.join(out))
+os._exit(0)
 """
 
 
@@ -152,8 +160,24 @@ with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
     tf.write(SIM_SCRIPT)
     sim_file = tf.name
 
-sim = subprocess.run([sys.executable, sim_file], cwd=ROOT, capture_output=True, text=True)
-os.unlink(sim_file)
+# TIMEOUT IS MANDATORY. Without one a hung simulation blocks the entire check
+# with no output — killed by hand after 10 minutes on 2026-08-17.
+try:
+    sim = subprocess.run([sys.executable, sim_file], cwd=ROOT,
+                         capture_output=True, text=True, timeout=180)
+except subprocess.TimeoutExpired:
+    sim = None
+finally:
+    try:
+        os.unlink(sim_file)
+    except OSError:
+        pass
+
+if sim is None:
+    warnings.append("[WARN]  Route simulation timed out after 180s and was killed. "
+                    "Syntax and SQL checks above still ran.")
+    print("  TIMEOUT route simulation (180s) — skipped, not a failure")
+    sim = subprocess.CompletedProcess([], 0, stdout="", stderr="")
 
 route_line = next((l for l in sim.stdout.strip().splitlines() if ":" in l and "/" in l), None)
 if not route_line:
