@@ -2580,8 +2580,8 @@ const BEST_BET_TYPES       = ["ML"]; // ML path below; RL has its own rule
 const RL_BEST_BET_MIN  = 0.60;
 const RL_BEST_BET_MAX  = 0.70;
 const RL_BAND_RATES = [
-  { lo: 0.60, hi: 0.65,  rate: 0.662, rec: "43-22" },
-  { lo: 0.65, hi: 0.701, rate: 0.648, rec: "46-25" }
+  { lo: 0.60, hi: 0.65,  rate: 0.662, rec: "43-22", n: 65 },
+  { lo: 0.65, hi: 0.701, rate: 0.648, rec: "46-25", n: 71 }
 ];
 
 // ── MONEYLINE: OBSERVED RECORD, NOT THE FITTED CURVE (2026-08-17) ──────────
@@ -2606,20 +2606,53 @@ const RL_BAND_RATES = [
 //
 // At 55.6% the break-even price is -125, so an ML at 68%+ is a bet only when
 // priced better than that. The EV check still does the real work.
+// SUPERSEDED THE SAME DAY by /admin/real-roi. The 68% threshold came from a
+// walk-forward backtest that assumed a flat -110. At the prices actually paid,
+// ML 70-75% averaged -154 and 75%+ averaged -163, and the type lost 13.5% over
+// 82 priced picks. A threshold on confidence alone cannot see that, because the
+// thing that kills ML is the PRICE, not the pick. Kept only for display.
 const ML_MIN_CONF  = 0.68;
 const ML_OOS_RATE  = 0.556;
 const ML_OOS_REC   = "30-24 (55.6%) out of sample";
 
+// Observed TOTAL record per stated band, n=202 since 2026-07-21.
+// Totals were excluded from Best Bets outright on the grounds that the 0.68
+// confidence cap calibrates below break-even. /admin/real-roi says otherwise:
+// at real prices totals returned +5.6% and +19.8% in the two bands that carry
+// any volume. The a priori exclusion was costing money.
+const TOTAL_BAND_RATES = [
+  { lo: 0.50, hi: 0.55,  rate: 0.491, rec: "53-55", n: 108 },
+  { lo: 0.55, hi: 0.60,  rate: 0.620, rec: "31-19", n: 50  },
+  { lo: 0.60, hi: 0.65,  rate: 0.412, rec: "7-10",  n: 17  },
+  { lo: 0.65, hi: 1.01,  rate: 0.467, rec: "7-8",   n: 15  }
+];
+
+// One table per bet type. A band is usable only with enough graded picks behind
+// it; below MIN_BAND_N the rate is noise dressed as a probability.
+const MIN_BAND_N = 30;
+function bandFor(p){
+  const c = (p.conf||0)/100;
+  const t = p.type;
+  const tbl = t === "ML" ? ML_BAND_RATES
+            : t === "RL" ? RL_BAND_RATES
+            : t === "TOTAL" ? TOTAL_BAND_RATES : null;
+  if(!tbl) return null;
+  const b = tbl.find(x => c >= x.lo && c < x.hi);
+  if(!b) return null;
+  if(b.n != null && b.n < MIN_BAND_N) return null;
+  return b;
+}
+
 // Observed ML record per stated band. Used by the per-card price checker so a
 // card tells you the truth about its own band even when it is not a Best Bet.
 const ML_BAND_RATES = [
-  { lo: 0.50, hi: 0.55, rate: 0.589, rec: "33-23" },
-  { lo: 0.55, hi: 0.60, rate: 0.350, rec: "28-52" },
-  { lo: 0.60, hi: 0.65, rate: 0.419, rec: "26-36" },
-  { lo: 0.65, hi: 0.70, rate: 0.540, rec: "34-29" },
-  { lo: 0.70, hi: 0.75, rate: 0.656, rec: "21-11" },
-  { lo: 0.75, hi: 0.80, rate: 0.484, rec: "15-16" },
-  { lo: 0.80, hi: 1.01, rate: 0.737, rec: "14-5"  }
+  { lo: 0.50, hi: 0.55, rate: 0.589, rec: "33-23", n: 56 },
+  { lo: 0.55, hi: 0.60, rate: 0.350, rec: "28-52", n: 80 },
+  { lo: 0.60, hi: 0.65, rate: 0.419, rec: "26-36", n: 62 },
+  { lo: 0.65, hi: 0.70, rate: 0.540, rec: "34-29", n: 63 },
+  { lo: 0.70, hi: 0.75, rate: 0.656, rec: "21-11", n: 32 },
+  { lo: 0.75, hi: 0.80, rate: 0.484, rec: "15-16", n: 31 },
+  { lo: 0.80, hi: 1.01, rate: 0.737, rec: "14-5",  n: 19 }
 ];
 
 // Tiny stable hash so each Best Bet input gets its own id.
@@ -2840,34 +2873,47 @@ function rlBestBetEval(p, why){
 }
 
 function bestBetEval(p, why){
+  // PRICE FIRST, for every bet type (rewritten 2026-08-17 off /admin/real-roi).
+  //
+  // The old version accepted only moneylines, gated them on a confidence
+  // threshold, and excluded totals outright. Measured against the prices
+  // actually paid on 167 graded picks, all three of those choices were wrong:
+  //   ML     38-44, REAL ROI -13.5%   (negative in five of six bands)
+  //   RL+1.5 20-9,  REAL ROI +14.9%
+  //   TOTAL  band ROIs +5.6% and +19.8%, while being suppressed
+  //
+  // What separates them is not the pick, it is what the book charges. ML loses
+  // because its picks average -131 to -163; totals win because they sit near
+  // -100. So the rule is now identical for every type: take the band's OBSERVED
+  // win rate as the probability, and require positive EV against the REAL price
+  // with an 8% cushion. No type is admitted or excluded in advance.
   const R = r => { if(why) why.reason = r; return null; };
-  if(!BEST_BET_TYPES.includes(p.type)) return R("only moneylines are eligible here");
-  if(p.pick_price==null || p.market_prob==null) return R("NO CLEAN PRICE from the odds feed");
-  if(p.pick_price < BEST_BET_PRICE_FLOOR) return R("too much chalk (price below -180)");
-  const model = p.conf/100, market = p.market_prob;
-  const gapPts = (model - market)*100;
-  if(gapPts < 0) return R("model is below the market on this side");
-  if(gapPts > BEST_BET_MAX_GAP) return R("model-vs-market gap too wide to believe");
-  // TRUE PROBABILITY — 2026-08-11.
-  //
-  // Was: trueP = 0.5*model + 0.5*market. That blend was far too weak. On 121
-  // graded ML picks the model averaged 71.9% stated against 49.6% realized, so
-  // a 65% pick blended to ~57% when its historical win rate is ~37%. Best Bets
-  // was therefore built on a number that overstated by roughly 20 points, which
-  // is why the same near-even shape surfaced every single day: the -180 floor
-  // strips the chalk, the gap window strips the mirages, and what is left is
-  // the pick'em band where an inflated probability most easily clears a short
-  // price. That was the filter's geometry showing through, not value.
-  //
-  // Now uses the Platt-calibrated probability, the same one behind the HONEST
-  // READ line on each card and the EV gate, so all three agree.
-  if(model < ML_MIN_CONF)
-    return R(`moneyline below the validated ${Math.round(ML_MIN_CONF*100)}% threshold`);
-  const trueP = ML_OOS_RATE;
-  const dec = p.pick_price>0 ? 1 + p.pick_price/100 : 1 + 100/Math.abs(p.pick_price);
-  const ev = trueP*(dec-1) - (1-trueP);                     // calibrated EV
-  if(ev <= 0) return R("calibrated EV is negative at this price");
-  return { ev, trueP, gapPts };
+  const band = bandFor(p);
+  if(!band) return R(`no band with enough graded picks behind it (need ${MIN_BAND_N})`);
+  if(p.pick_price == null) return R("NO CLEAN PRICE from the odds feed");
+  const price = p.pick_price;
+  if(Math.abs(price) < 100) return R("NO CLEAN PRICE from the odds feed");
+
+  if(p.type === "RL"){
+    // Covering +1.5 includes every outcome where the team wins outright plus
+    // the ones where it loses by exactly 1, so P(cover) > P(win) is a hard
+    // requirement. A price that says otherwise is corrupt, not an opportunity.
+    const _isAway = (p.team === p.away);
+    const _ml = _isAway ? p.ml_away_odds : p.ml_home_odds;
+    if(_ml != null && Math.abs(_ml) >= 100 && (p.label||"").indexOf("+1.5") >= 0){
+      const _impML = _ml < 0 ? Math.abs(_ml)/(Math.abs(_ml)+100) : 100/(_ml+100);
+      const _impRL = price < 0 ? Math.abs(price)/(Math.abs(price)+100) : 100/(price+100);
+      if(_impRL <= _impML)
+        return R("run line price contradicts its own moneyline (corrupt price)");
+    }
+  }
+
+  const dec  = price > 0 ? 1 + price/100 : 1 + 100/Math.abs(price);
+  const need = 100/dec;
+  const ev   = band.rate*(dec-1) - (1-band.rate);
+  if(ev <= 0) return R(`price too short — needs ${need.toFixed(1)}%, band wins ${(band.rate*100).toFixed(1)}%`);
+  if(ev < 0.08) return R(`only ${(ev*100).toFixed(1)}% EV at this price — under the 8% cushion`);
+  return { ev, trueP: band.rate, need, band, price };
 }
 
 // ── Team logo helper (MLBAM stable team ids) ─────────────────────────────────
@@ -2924,19 +2970,10 @@ function renderBestBets(){
   // against the REAL price. Tagged so the card can explain which applied.
   const ranked = (src||[])
     .map(p => {
-      const wRL = {}, wML = {};
-      const rl = rlBestBetEval(p, wRL);
-      if(rl) return {p, e: rl, kind: "RL"};
-      const ml = bestBetEval(p, wML);
-      if(ml) return {p, e: ml, kind: "ML"};
-      // Keep the more informative reason. A run line rejected for "not a run
-      // line" tells you nothing; the ML path's reason is the real one, and
-      // vice versa.
-      const rRL = wRL.reason || "", rML = wML.reason || "";
-      const pick = (p.type === "RL") ? rRL
-                 : (p.type === "ML") ? rML
-                 : "totals are not eligible (capped below break-even)";
-      _bbReasons.push(pick);
+      const w = {};
+      const e = bestBetEval(p, w);
+      if(e) return {p, e, kind: p.type};
+      _bbReasons.push(w.reason || "rejected");
       return null;
     })
     .filter(x => x)

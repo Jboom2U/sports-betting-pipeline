@@ -1,5 +1,49 @@
 # Statalizers — Project Context for Claude
 
+## 2026-08-17 (LATER): REAL PRICES OVERTURNED THE MORNING'S CONCLUSION
+
+`/admin/real-roi` on 167 graded picks carrying a stored price. **Read this before
+trusting any -110 backtest, including `/admin/strategy-backtest`.**
+
+| type | W-L | REAL ROI |
+|---|---|---|
+| ML | 38-44 | **-13.5%** |
+| RL +1.5 | 20-9 | **+14.9%** |
+| RL -1.5 | 8-9 | +3.7% |
+| TOTAL | (bands) | **+5.6% and +19.8%** |
+
+**Everything believed about these three types was backwards, and the reason is
+always the price, never the pick.** ML picks average -131 to -163, so a 54% band
+against a 56.8% break-even loses. Totals sit near -100, so a 62% band prints.
+The -110 assumption flattered ML and buried totals.
+
+Three conclusions reversed in one day:
+- **ML 68%+ threshold, shipped this morning, is WRONG.** It came from a
+  walk-forward test at flat -110 (+6.1%). At real prices ML is negative in five
+  of six bands. A confidence threshold cannot see a price problem.
+- **Totals are NOT structurally unbettable.** The a priori exclusion was costing
+  money. TOTAL 55-60% returned +19.8%.
+- **RL +1.5 is the one genuinely profitable type**, +14.9%, which the 08-11
+  review had roughly right for the wrong reason.
+
+**Best Bets is now PRICE-FIRST and type-agnostic** (`bestBetEval` +
+`bandFor` in run_picks_html.py). Same rule for ML, RL and TOTAL: take that
+band's OBSERVED win rate as the probability, require positive EV against the
+REAL price with an 8% cushion, admit nothing and exclude nothing in advance.
+Bands with fewer than `MIN_BAND_N` (30) graded picks are refused outright,
+because a rate off n=15 is noise wearing a probability's clothes.
+
+Backtested against the real-price table, this rule agrees with the observed
+outcome in **7 of 10 bands**. All three misses are bands whose real-price sample
+is 6, 15 or 21 picks. Two misses are conservative (skipped a winner). The one
+aggressive miss is **ML 70-75%: the rule says bet, real ROI was -17.8% on n=6.**
+Watch that band specifically on `/admin/real-roi` as the sample grows.
+
+**Standing rule: a strategy validated at an assumed price is not validated.**
+Re-check every threshold on `/admin/real-roi` before believing it.
+
+---
+
 ## 2026-08-17: WHY BEST BETS WAS ALWAYS EMPTY, AND THE PRICE PROBLEM UNDER IT
 
 **Best Bets scored moneylines off the Platt-calibrated probability. That was the

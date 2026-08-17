@@ -2967,10 +2967,14 @@ def real_roi():
                 pnl = sum((r[3]-1.0) if r[2] else -1.0 for r in sel)
                 roi = pnl/len(sel)*100.0
                 pct = 100.0*w/len(sel)
-                avgo = sum(r[4] for r in sel)/len(sel)
-                # Break-even implied by the AVERAGE price actually paid.
+                # Average the DECIMAL, then convert back. Averaging American
+                # odds directly is the same sign-boundary error that produced
+                # the fabricated -109 run line: -300 and +120 average to -90,
+                # a price that cannot exist. Fixed 2026-08-17 after this page
+                # printed "avg price -45".
                 avgd = sum(r[3] for r in sel)/len(sel)
-                be = 100.0/avgd
+                be   = 100.0/avgd
+                avgo = (avgd-1.0)*100.0 if avgd >= 2.0 else -100.0/(avgd-1.0)
                 col = "#3fb950" if roi > 0 else "#f85149"
                 thin = " <span style='color:#d29922'>thin</span>" if len(sel) < 25 else ""
                 out += (f"<tr><td>{int(lo*100)}-{int(hi*100)}%</td><td>{len(sel)}</td>"
