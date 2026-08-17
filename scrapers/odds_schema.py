@@ -61,6 +61,10 @@ SNAPSHOT_FIELDNAMES = [
     # DraftKings specific (softest public book — best for value spotting)
     "dk_ml_away", "dk_ml_home", "dk_total",
     "disc_ml_away", "disc_ml_home", "disc_total",
+    # Per book prices as compact JSON. One column rather than books x markets
+    # columns, so adding a book never changes the schema. Pinnacle leaves this
+    # empty; only the Odds API pull populates it.
+    "books_json",
 ]
 
 MOVEMENT_FIELDNAMES = [

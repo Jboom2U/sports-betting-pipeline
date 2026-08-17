@@ -348,6 +348,7 @@ def prep_picks(picks, kalshi_data: dict = None):
             "market_prob":  _val.get("market_prob"),
             "value_chalk":  _val.get("chalk", False),
             "pick_price":   _pick_price,
+            "books":        gd.get("books") or {},
         })
     return out
 
@@ -1436,6 +1437,19 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 /* Universal price check — on EVERY card. Neutral grey until a price is typed,
    so it does not read as a recommendation the way the green Best Bets block
    does. It turns green/amber/red only in response to a real number. */
+.shop{margin:8px 0 2px;background:rgba(56,139,253,.07);border-left:3px solid #388bfd;border-radius:0}
+.shop-sum{list-style:none;cursor:pointer;padding:7px 11px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.shop-sum::-webkit-details-marker{display:none}
+.shop-lead{font-size:.66rem;font-weight:700;letter-spacing:.06em;color:#58a6ff}
+.shop-best{font-size:.95rem;font-weight:700;color:#58a6ff}
+.shop-book{font-size:.72rem;color:var(--text)}
+.shop-mine{font-size:.68rem;color:#d29922;margin-left:auto}
+.shop-mine-ok{color:#3fb950}
+.shop-body{padding:2px 11px 9px}
+.shop-row{display:flex;justify-content:space-between;font-size:.72rem;color:var(--sub);padding:2px 0}
+.shop-row-mine{color:#e6edf3;font-weight:600}
+.shop-px{font-variant-numeric:tabular-nums}
+.shop-foot{font-size:.66rem;color:var(--sub);margin-top:6px;padding-top:5px;border-top:1px solid var(--border)}
 .pc-rule{margin:8px 0 2px;padding:8px 11px;background:rgba(139,148,158,.08);
   border-left:3px solid #30363d;border-radius:0;line-height:1.5}
 .pc-lead{display:inline;font-size:.68rem;font-weight:700;letter-spacing:.06em;color:#8b949e}
@@ -2700,6 +2714,87 @@ function bbCheck(id, p){
   if(note) note.style.opacity = .5;
 }
 
+// ── LINE SHOPPING PER BOOK (2026-08-17) ─────────────────────────────────────
+// The consensus price is not bettable anywhere — it is an average of numbers
+// several different books offered. What matters is the best price YOU can
+// actually reach, and how your own book compares to it.
+//
+// Books are requested BY NAME from the Odds API (<=10 bills as one region), so
+// this costs nothing extra over the pull that was already happening. Hard Rock
+// lives in region us2 and had never been requested, which is why it was absent.
+const BOOK_LABELS = {
+  hardrockbet: "Hard Rock", draftkings: "DraftKings", fanduel: "FanDuel",
+  betmgm: "BetMGM", betrivers: "BetRivers", espnbet: "theScore",
+  ballybet: "Bally", betparx: "betPARX", fliff: "Fliff", bovada: "Bovada"
+};
+const MY_BOOK = "hardrockbet";
+
+function amDec(a){ return a > 0 ? 1 + a/100 : 1 + 100/Math.abs(a); }
+function fmtAm(a){ return (a > 0 ? "+" : "") + Math.round(a); }
+
+// Which per-book key corresponds to the bet on THIS card.
+function bookKeyFor(p){
+  if(p.type === "ML")    return (p.team === p.away) ? "ml_a" : "ml_h";
+  if(p.type === "TOTAL") return ((p.label||"").toUpperCase().indexOf("OVER") >= 0) ? "ov" : "un";
+  if(p.type === "RL"){
+    const side = (p.team === p.away) ? "a" : "h";
+    const hcap = ((p.label||"").indexOf("+1.5") >= 0) ? "p15" : "m15";
+    return "rl_" + side + "_" + hcap;
+  }
+  return null;
+}
+
+function bookShopHtml(p){
+  const books = p.books || {};
+  const key = bookKeyFor(p);
+  if(!key) return "";
+  const rows = [];
+  for(const b in books){
+    const v = books[b] && books[b][key];
+    if(v == null || Math.abs(v) < 100) continue;
+    rows.push({ b, price: v, dec: amDec(v) });
+  }
+  if(!rows.length) return "";
+  rows.sort((x, y) => y.dec - x.dec);          // best for the bettor first
+  const best = rows[0];
+  const mine = rows.find(r => r.b === MY_BOOK);
+
+  // The spread between best and worst IS the edge, on most of these bets.
+  const worst = rows[rows.length - 1];
+  const spreadPts = rows.length > 1
+    ? ((best.dec - worst.dec) / worst.dec * 100).toFixed(1) : null;
+
+  let mineTxt = "";
+  if(mine && mine.b !== best.b){
+    const lost = ((best.dec - mine.dec) / mine.dec * 100).toFixed(1);
+    mineTxt = `<span class="shop-mine">Hard Rock ${fmtAm(mine.price)}`
+            + ` &middot; <b>${lost}% worse</b></span>`;
+  } else if(mine){
+    mineTxt = `<span class="shop-mine shop-mine-ok">Hard Rock has the best price</span>`;
+  } else {
+    mineTxt = `<span class="shop-mine">Hard Rock not quoting this</span>`;
+  }
+
+  const table = rows.map(r =>
+    `<div class="shop-row${r.b === MY_BOOK ? " shop-row-mine" : ""}">
+       <span>${BOOK_LABELS[r.b] || r.b}</span>
+       <span class="shop-px">${fmtAm(r.price)}</span>
+     </div>`).join("");
+
+  return `<details class="shop">
+    <summary class="shop-sum">
+      <span class="shop-lead">BEST</span>
+      <span class="shop-best">${fmtAm(best.price)}</span>
+      <span class="shop-book">${BOOK_LABELS[best.b] || best.b}</span>
+      ${mineTxt}
+    </summary>
+    <div class="shop-body">${table}
+      ${spreadPts ? `<div class="shop-foot">Best to worst is
+        <b>${spreadPts}%</b> of return on the same bet.</div>` : ""}
+    </div>
+  </details>`;
+}
+
 // ── UNIVERSAL PRICE CHECK (2026-08-14) ──────────────────────────────────────
 // Every card gets this, not just Best Bets.
 //
@@ -3557,6 +3652,7 @@ function renderPicks(){
         ${kellyHtml}
         ${oddsHtml(p)}
         ${valueHtml(p)}${honestReadHtml(p)}
+        ${bookShopHtml(p)}
         ${priceCheckHtml(p)}
         <div class="pick-reasoning">${p.reasoning}</div>
         ${p.narrative ? `<div class="pick-narrative">${p.narrative}</div>` : ""}

@@ -1384,7 +1384,13 @@ render();
 
 @app.route("/force-odds")
 def force_odds():
-    """Force an immediate odds snapshot regardless of the 2-hour gate."""
+    """Force an immediate odds snapshot regardless of the 2-hour gate.
+
+    NOTE: this is PINNACLE-first. _run_odds_snapshot only falls through to the
+    Odds API when Pinnacle returns nothing, which essentially never happens, so
+    this route does NOT refresh per-book prices or the game total. For those use
+    /admin/force-oddsapi, which costs 3 credits and says so.
+    """
     def _worker():
         _run_odds_snapshot()
         with _cache_lock:
@@ -1392,7 +1398,103 @@ def force_odds():
         _regenerate_in_background()
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
-    return {"status": "ok", "message": "Odds snapshot started — dashboard will refresh automatically in ~60 seconds."}
+    return {"status": "ok", "source": "pinnacle",
+            "message": "Pinnacle snapshot started (free). This does NOT pull the Odds API — for per-book prices use /admin/force-oddsapi (3 credits)."}
+
+
+@app.route("/admin/force-oddsapi")
+def force_oddsapi():
+    """Pull THE ODDS API explicitly. Costs 3 credits. Populates per-book prices.
+
+    WHY THIS EXISTS (2026-08-17)
+    `/force-odds` is misleadingly named: it calls _run_odds_snapshot(), which
+    tries PINNACLE FIRST and only falls through to the Odds API when Pinnacle
+    returns nothing. Pinnacle essentially always works, so that route has never
+    once called the Odds API. Anyone hitting it expecting fresh DraftKings or
+    Hard Rock prices got Pinnacle and no error.
+
+    Per-book prices (books_json) come ONLY from the Odds API, so there needs to
+    be a way to ask for them by name. Cost is markets x regions = 3 credits for
+    the whole slate, regardless of game count.
+
+    Reports which books actually came back, so "is Hard Rock in there" is a
+    question the page answers rather than one you have to infer.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/force-oddsapi")
+    import html as _h, json as _json, traceback
+    try:
+        from scrapers.mlb_odds_scraper import run as run_odds, SHOP_BOOKS, BOOK_LABELS
+        result = run_odds() or {}
+
+        # Read back what actually landed, rather than trusting the return value.
+        import csv as _csv
+        from collections import Counter
+        path = os.path.join(CLEAN_DIR, "mlb_odds_master.csv")
+        seen, games_with_books, latest = Counter(), 0, {}
+        if os.path.exists(path):
+            with open(path, newline="", encoding="utf-8") as f:
+                for row in _csv.DictReader(f):
+                    gid = row.get("game_id", "")
+                    if gid:
+                        latest[gid] = row
+            for row in latest.values():
+                raw = (row.get("books_json") or "").strip()
+                if not raw:
+                    continue
+                try:
+                    bj = _json.loads(raw)
+                except Exception:
+                    continue
+                if bj:
+                    games_with_books += 1
+                    for b in bj:
+                        seen[b] += 1
+
+        rows = "".join(
+            f"<tr><td>{_h.escape(BOOK_LABELS.get(b, b))}</td>"
+            f"<td><code>{_h.escape(b)}</code></td><td>{n} game(s)</td></tr>"
+            for b, n in seen.most_common())
+        missing = [b for b in SHOP_BOOKS if b not in seen]
+        miss_html = ("<p class='warn'>Requested but absent from the response: "
+                     + ", ".join(f"<code>{_h.escape(b)}</code>" for b in missing)
+                     + ". A book can drop out temporarily, or may not price this "
+                       "sport.</p>") if missing else ""
+        hr = "hardrockbet"
+        hr_html = (f"<p class='ok'>Hard Rock present on <b>{seen[hr]}</b> game(s).</p>"
+                   if seen.get(hr) else
+                   "<p class='warn'><b>Hard Rock NOT in this response.</b> It lives "
+                   "in region us2 and is reached by naming it in SHOP_BOOKS.</p>")
+
+        with _cache_lock:
+            _cache["generated_at"] = 0
+        _regenerate_in_background()
+
+        html = f"""<!doctype html><html><head><meta charset=utf-8>
+<title>Odds API pull</title><style>
+body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:760px;margin:0 auto}}
+h2{{color:#58a6ff}} table{{border-collapse:collapse;width:100%;font-size:13px;margin:12px 0}}
+th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #21262d}}
+th{{color:#8b949e;font-size:11px;text-transform:uppercase}}
+code{{background:#161b22;padding:1px 5px;border-radius:4px;font-size:12px}}
+.ok{{background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.4);padding:10px 14px;border-radius:8px;font-size:13px}}
+.warn{{background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.4);padding:10px 14px;border-radius:8px;font-size:13px}}
+.note{{color:#8b949e;font-size:12.5px;line-height:1.6}}</style></head><body>
+<h2>Odds API pull complete</h2>
+<p class="note">Scraper returned: <code>{_h.escape(str(result))}</code><br>
+Cost is 3 credits (3 markets x 1 region) for the entire slate.</p>
+{hr_html}
+<p class="note"><b>{games_with_books}</b> game(s) now carry per-book prices.</p>
+<table><tr><th>book</th><th>key</th><th>coverage</th></tr>{rows}</table>
+{miss_html}
+<p class="note">The dashboard is rebuilding. Reload the board in ~60s and every
+card should show a blue BEST row listing each book's price for that exact bet.</p>
+<p><a href="/">&larr; Board</a> &nbsp; <a href="/admin">Admin</a></p></body></html>"""
+        return Response(html, mimetype="text/html")
+    except Exception:
+        return Response(f"<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        f"{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
 
 
 @app.route("/force-statcast")
@@ -1753,8 +1855,14 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
       <div class="card-title">Force pipeline</div>
       <div class="card-desc">Trigger the full 6am pipeline now</div></a>
     <a class="card" href="/force-odds"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Force odds snapshot</div>
-      <div class="card-desc">Fresh Pinnacle ML/RL pull + dashboard rebuild</div></a>
+      <div class="card-title">Force odds snapshot (Pinnacle, free)</div>
+      <div class="card-desc">Pinnacle ML/RL only — no per-book prices, no quota</div></a>
+    <a class="card" href="/admin/force-oddsapi"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Pull Odds API (3 credits)</div>
+      <div class="card-desc">Per-book prices incl. Hard Rock + the game total</div></a>
+    <a class="card" href="/admin/real-roi"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Real-price ROI</div>
+      <div class="card-desc">ROI from stored prices, not a flat -110</div></a>
     <a class="card" href="/admin/refresh-signals"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Refresh signals</div>
       <div class="card-desc">Umpire, bullpen, pitcher/team stats (no quota)</div></a>

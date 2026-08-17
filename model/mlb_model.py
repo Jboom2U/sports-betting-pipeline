@@ -153,6 +153,23 @@ def _canon_split(s: str) -> str:
     return ""
 
 
+
+def _parse_books(raw):
+    """books_json cell -> dict of per-book prices for line shopping.
+
+    Never raises. A malformed cell means no shopping data, which is a display
+    gap, not a scoring error, so it degrades to {} here once rather than
+    throwing somewhere downstream inside a template.
+    """
+    if not raw:
+        return {}
+    try:
+        v = json.loads(raw)
+        return v if isinstance(v, dict) else {}
+    except Exception:
+        return {}
+
+
 class MLBModel:
     """
     Loads all clean master data once, then scores any game on demand.
@@ -1472,6 +1489,10 @@ class MLBModel:
             "total_under_price":sf(odds_snap.get("total_under_price")),
             "total_line_min":   sf(odds_snap.get("total_line_min")),
             "total_line_max":   sf(odds_snap.get("total_line_max")),
+            # Per book prices for line shopping (2026-08-17). Parsed here rather
+            # than downstream so a malformed cell degrades to {} once, in one
+            # place, instead of throwing inside a template.
+            "books":            _parse_books(odds_snap.get("books_json")),
             "ml_signal":      movement.get("ml_signal", "NO_DATA"),
             "total_signal":   movement.get("total_signal", "NO_DATA"),
             "rl_home_m15_price": sf(odds_snap.get("rl_home_m15_price")),

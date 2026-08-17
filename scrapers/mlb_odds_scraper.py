@@ -41,9 +41,47 @@ ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 SPORT         = "baseball_mlb"
 ET            = ZoneInfo("America/New_York")
 
-# Books to average for consensus line (prioritized)
-CONSENSUS_BOOKS = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbet",
-                   "betonlineag", "bovada", "williamhill_us"]
+# ── BOOKS (rewritten 2026-08-17) ────────────────────────────────────────────
+# Requested BY NAME rather than by region. From the API docs: "Bookmakers can be
+# from any region. Every group of 10 bookmakers is the equivalent of 1 region."
+# So naming <=10 books costs exactly what regions=us costs today, while letting
+# us reach across regions.
+#
+# That matters because HARD ROCK — the book actually being bet at — sits in
+# region us2, which this scraper never requested. It was unreachable not because
+# the API lacks it but because we were asking for the wrong region.
+#
+# Two entries in the old list were dead keys and silently matched nothing:
+#   "caesars"   -> the real key is williamhill_us, and it is paid-tier only
+#   "pointsbet" -> US PointsBet was delisted; only pointsbetau remains
+# So the "8 book consensus" was really 5.
+#
+# KEEP THIS AT 10 OR FEWER. The 11th book doubles the quota cost per pull.
+SHOP_BOOKS = [
+    "hardrockbet",    # us2 — Justin's book, the price that actually matters
+    "draftkings",
+    "fanduel",
+    "betmgm",
+    "betrivers",
+    "espnbet",
+    "ballybet",
+    "betparx",
+    "fliff",
+    "bovada",
+]
+assert len(SHOP_BOOKS) <= 10, "11+ books doubles the Odds API quota cost"
+
+# Books averaged into the consensus line. Offshore and DFS-style books are
+# excluded from the AVERAGE (they move differently) but still collected per book
+# for shopping, which is what SHOP_BOOKS above is for.
+CONSENSUS_BOOKS = ["draftkings", "fanduel", "betmgm", "betrivers", "espnbet"]
+
+# Display names for the card. Anything absent falls back to the raw key.
+BOOK_LABELS = {
+    "hardrockbet": "Hard Rock", "draftkings": "DraftKings", "fanduel": "FanDuel",
+    "betmgm": "BetMGM", "betrivers": "BetRivers", "espnbet": "theScore",
+    "ballybet": "Bally", "betparx": "betPARX", "fliff": "Fliff", "bovada": "Bovada",
+}
 
 # Movement thresholds (American odds points)
 STEAM_THRESH  = 8
@@ -174,9 +212,11 @@ def _record_call(today: str):
 def fetch_odds(api_key: str) -> list:
     """Fetch current MLB odds from The Odds API."""
     url = f"{ODDS_API_BASE}/sports/{SPORT}/odds/"
+    # bookmakers= instead of regions=. Takes priority over regions when both are
+    # given, reaches across regions, and <=10 books bills as a single region.
     params = {
         "apiKey":      api_key,
-        "regions":     "us",
+        "bookmakers":  ",".join(SHOP_BOOKS),
         "markets":     "h2h,spreads,totals",
         "oddsFormat":  "american",
         "dateFormat":  "iso",
@@ -313,10 +353,18 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
     # DraftKings specific (softest public book — best value signal)
     dk_ml_away = dk_ml_home = dk_total = None
 
+    # PER BOOK, kept rather than averaged away (2026-08-17). The consensus is
+    # useful for the model; it is useless for placing a bet, because no book
+    # offers the consensus. On 2026-08-16 the same run line was -182 at Pinnacle
+    # and would have been materially cheaper elsewhere — and that gap is often
+    # the entire edge. Keys are short to keep the CSV cell small.
+    books = {}
+
     for bm in game.get("bookmakers", []):
         bk = bm.get("key", "")
-        if bk not in CONSENSUS_BOOKS:
+        if bk not in SHOP_BOOKS:
             continue
+        b = books.setdefault(bk, {})
 
         for market in bm.get("markets", []):
             key      = market.get("key", "")
@@ -325,11 +373,15 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
             if key == "h2h":
                 for o in outcomes:
                     if o["name"] == home:
-                        ml_home_prices.append(o["price"])
+                        b["ml_h"] = o["price"]
+                        if bk in CONSENSUS_BOOKS:
+                            ml_home_prices.append(o["price"])
                         if bk == "draftkings":
                             dk_ml_home = o["price"]
                     elif o["name"] == away:
-                        ml_away_prices.append(o["price"])
+                        b["ml_a"] = o["price"]
+                        if bk in CONSENSUS_BOOKS:
+                            ml_away_prices.append(o["price"])
                         if bk == "draftkings":
                             dk_ml_away = o["price"]
 
@@ -347,10 +399,15 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
                     # three layers downstream in value.american_to_decimal.
                     if abs(pr) < 100:
                         continue
+                    tag = "p15" if pt > 0 else "m15"
                     if o["name"] == home:
-                        rl_home_by_line.setdefault(pt, []).append(pr)
+                        b["rl_h_" + tag] = pr
+                        if bk in CONSENSUS_BOOKS:
+                            rl_home_by_line.setdefault(pt, []).append(pr)
                     elif o["name"] == away:
-                        rl_away_by_line.setdefault(pt, []).append(pr)
+                        b["rl_a_" + tag] = pr
+                        if bk in CONSENSUS_BOOKS:
+                            rl_away_by_line.setdefault(pt, []).append(pr)
 
             elif key == "totals":
                 for o in outcomes:
@@ -366,12 +423,14 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
                         pr = None
                     slot = totals_by_line.setdefault(pt, {"over": [], "under": []})
                     if o["name"] == "Over":
-                        if pr is not None:
+                        b["tot"], b["ov"] = pt, pr
+                        if pr is not None and bk in CONSENSUS_BOOKS:
                             slot["over"].append(pr)
                         if bk == "draftkings":
                             dk_total = pt
                     elif o["name"] == "Under":
-                        if pr is not None:
+                        b["un"] = pr
+                        if pr is not None and bk in CONSENSUS_BOOKS:
                             slot["under"].append(pr)
 
     books_used    = max(len(ml_away_prices), 1)
@@ -454,6 +513,10 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
         "disc_ml_away":     _disc(dk_ml_away, cons_ml_away),
         "disc_ml_home":     _disc(dk_ml_home, cons_ml_home),
         "disc_total":       _disc(dk_total, cons_total),
+        # Compact JSON so one column carries every book. Sorted for a stable
+        # diff; separators trimmed because this lands in a CSV cell.
+        "books_json":       json.dumps({k: v for k, v in sorted(books.items()) if v},
+                                       separators=(",", ":")),
     }
 
 

@@ -1,5 +1,33 @@
 # Statalizers — Project Context for Claude
 
+## 2026-08-17: LINE SHOPPING PER BOOK, INCLUDING HARD ROCK
+
+**The Odds API is now queried by BOOKMAKER NAME, not by region.** From the docs:
+"Bookmakers can be from any region. Every group of 10 bookmakers is the
+equivalent of 1 region." So `SHOP_BOOKS` (<=10, asserted at import) costs exactly
+what `regions=us` cost before. **Do not exceed 10 — the 11th doubles the quota.**
+
+This is how Hard Rock got added. It was never missing from the API; it sits in
+region `us2`, and the scraper only ever asked for `us`.
+
+Two entries in the old `CONSENSUS_BOOKS` were dead keys matching nothing:
+`caesars` (the real key is `williamhill_us`, paid tier only) and `pointsbet`
+(US PointsBet delisted; only `pointsbetau` survives). The "8 book consensus" was
+really 5.
+
+**Per-book prices are now kept, not averaged away.** New `books_json` column in
+`odds_schema.py` holds a compact dict per book. The consensus is still computed
+for the model, but the consensus is not bettable anywhere — it is an average of
+numbers different books offered. Every card now shows the BEST price, which book
+has it, and how far Hard Rock is off it, in a collapsed `<details>` block
+(`bookShopHtml`). Only the Odds API pull populates this; Pinnacle leaves it empty.
+
+This matters because the shopping spread is frequently the whole edge: RL 60-70%
+needs -154 to clear the 8% cushion, and the same run line was -152 at DraftKings
+and -165 at Hard Rock on a test slate. One is a bet, the other is not.
+
+---
+
 ## 2026-08-17 (LATER): REAL PRICES OVERTURNED THE MORNING'S CONCLUSION
 
 `/admin/real-roi` on 167 graded picks carrying a stored price. **Read this before
