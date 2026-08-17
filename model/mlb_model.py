@@ -385,9 +385,43 @@ class MLBModel:
                     merged["rl_away_price"] = src.get("rl_away_price")
                     latest_snap[k] = merged
 
+            # PER-BOOK PRICES: same carry-forward, third time (2026-08-17).
+            # Only the Odds API writes books_json; Pinnacle re-pulls every 40
+            # minutes and leaves it empty. Since the model takes the NEWEST
+            # snapshot per game, every per-book price vanished from the board
+            # the first time Pinnacle ran after a paid pull — roughly 40 minutes
+            # of usefulness for 3 credits.
+            #
+            # Identical shape to the totals and run-line backfills above, which
+            # is the tell: any column that only ONE source populates needs this.
+            def _has_books(r):
+                v = (r.get("books_json") or "").strip()
+                return v not in ("", "None", "{}")
+
+            latest_books = {}
+            for row in read_csv(odds_master):
+                if row.get("game_date") != today:
+                    continue
+                gt = row.get("game_time_utc", "")
+                st = row.get("snapshot_time", "")
+                if gt and st and st > gt:
+                    continue
+                k = (row.get("away_team", ""), row.get("home_team", ""))
+                if _has_books(row) and (k not in latest_books
+                        or st > latest_books[k].get("snapshot_time", "")):
+                    latest_books[k] = row
+
+            for k, row in list(latest_snap.items()):
+                if not _has_books(row) and k in latest_books:
+                    merged = dict(row)
+                    merged["books_json"] = latest_books[k].get("books_json")
+                    latest_snap[k] = merged
+
             self.odds = latest_snap
+            _nb = sum(1 for r in self.odds.values() if _has_books(r))
             log.info(f"Odds loaded: {len(self.odds)} games "
-                     f"({sum(1 for r in self.odds.values() if _has_total(r))} with totals)")
+                     f"({sum(1 for r in self.odds.values() if _has_total(r))} with totals, "
+                     f"{_nb} with per-book prices)")
 
         import glob
         movement_files = sorted(

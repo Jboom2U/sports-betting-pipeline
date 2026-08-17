@@ -2601,8 +2601,8 @@ const BEST_BET_TYPES       = ["ML"]; // ML path below; RL has its own rule
 const RL_BEST_BET_MIN  = 0.60;
 const RL_BEST_BET_MAX  = 0.70;
 const RL_BAND_RATES = [
-  { lo: 0.60, hi: 0.65,  rate: 0.662, rec: "43-22", n: 65 },
-  { lo: 0.65, hi: 0.701, rate: 0.648, rec: "46-25", n: 71 }
+  { lo: 0.60, hi: 0.65,  rate: 0.662, rec: "43-22", n: 65, be: 0.574 },
+  { lo: 0.65, hi: 0.701, rate: 0.648, rec: "46-25", n: 71, be: 0.625 }
 ];
 
 // ── MONEYLINE: OBSERVED RECORD, NOT THE FITTED CURVE (2026-08-17) ──────────
@@ -2642,8 +2642,8 @@ const ML_OOS_REC   = "30-24 (55.6%) out of sample";
 // at real prices totals returned +5.6% and +19.8% in the two bands that carry
 // any volume. The a priori exclusion was costing money.
 const TOTAL_BAND_RATES = [
-  { lo: 0.50, hi: 0.55,  rate: 0.491, rec: "53-55", n: 108 },
-  { lo: 0.55, hi: 0.60,  rate: 0.620, rec: "31-19", n: 50  },
+  { lo: 0.50, hi: 0.55,  rate: 0.491, rec: "53-55", n: 108, be: 0.531 },
+  { lo: 0.55, hi: 0.60,  rate: 0.620, rec: "31-19", n: 50, be: 0.506 },
   { lo: 0.60, hi: 0.65,  rate: 0.412, rec: "7-10",  n: 17  },
   { lo: 0.65, hi: 1.01,  rate: 0.467, rec: "7-8",   n: 15  }
 ];
@@ -2651,28 +2651,75 @@ const TOTAL_BAND_RATES = [
 // One table per bet type. A band is usable only with enough graded picks behind
 // it; below MIN_BAND_N the rate is noise dressed as a probability.
 const MIN_BAND_N = 30;
-function bandFor(p){
+
+// ── TWO GUARDS, ADDED 2026-08-17 AFTER THE RULE FLIPPED A BET ON ITSELF ─────
+//
+// A pick sat at -116 all afternoon. The model rescored, confidence moved
+// 54.5% -> 62.0%, and it crossed from the 50-55% band (58.9%) into the 60-65%
+// band (41.9%). Same bet, same price: EV +9.7% -> -22%. Getting MORE confident
+// made it a worse bet. Nothing was broken — the rule did what it was told.
+//
+// The fault is that these bands are a sawtooth, not a curve:
+//     58.9   35.0   41.9   54.0   65.6   48.4   73.7
+// Adjacent bands disagree by up to 24 points on n=31..80. That is sampling
+// noise, and scoring off a 5-point band treats the noise as signal.
+//
+// GUARD 1 — PLATEAU. Trust a band only if an ADJACENT band agrees within
+// PLATEAU_TOL. This is exactly the test the 2026-08-11 review used to accept
+// the run line ("a broad plateau across 55-65%, not one lucky cut") and that I
+// failed to apply to my own moneyline table. A lone spike next to a 24-point
+// cliff is not an edge.
+//
+// GUARD 2 — PRICE PROFILE. A band's win rate was measured on picks at a
+// particular PRICE. ML 60-65% was measured on picks averaging about -119
+// (break-even 54.4%). Applying that same 41.9% to a +231 underdog produced
+// "+38.7% EV" purely because the payout is larger. That is the same error as
+// pooling run line prices across handicaps, one level up: a number measured on
+// one population applied to another. So require the pick's break-even to sit
+// within PRICE_TOL of the break-even the band was actually measured at.
+const PLATEAU_TOL = 0.08;   // adjacent band must agree within 8 points
+const PRICE_TOL   = 0.10;   // break-even within 10 points of the band's own
+
+function bandFor(p, why){
+  const R = r => { if(why) why.reason = r; return null; };
   const c = (p.conf||0)/100;
   const t = p.type;
   const tbl = t === "ML" ? ML_BAND_RATES
             : t === "RL" ? RL_BAND_RATES
             : t === "TOTAL" ? TOTAL_BAND_RATES : null;
-  if(!tbl) return null;
-  const b = tbl.find(x => c >= x.lo && c < x.hi);
-  if(!b) return null;
-  if(b.n != null && b.n < MIN_BAND_N) return null;
+  if(!tbl) return R("no band table for this bet type");
+  const i = tbl.findIndex(x => c >= x.lo && c < x.hi);
+  if(i < 0) return R("confidence sits outside every measured band");
+  const b = tbl[i];
+  if(b.n != null && b.n < MIN_BAND_N)
+    return R(`band has only ${b.n} graded picks (need ${MIN_BAND_N})`);
+
+  const nbrs = [tbl[i-1], tbl[i+1]].filter(x => x && (x.n == null || x.n >= MIN_BAND_N));
+  if(!nbrs.some(x => Math.abs(x.rate - b.rate) <= PLATEAU_TOL))
+    return R(`${Math.round(b.lo*100)}-${Math.round(b.hi*100)}% is an isolated spike — `
+           + `neighbouring bands disagree by over ${Math.round(PLATEAU_TOL*100)} pts, so its `
+           + `${(b.rate*100).toFixed(1)}% is probably noise`);
+
+  if(b.be != null && p.pick_price != null && Math.abs(p.pick_price) >= 100){
+    const d  = p.pick_price > 0 ? 1 + p.pick_price/100 : 1 + 100/Math.abs(p.pick_price);
+    const be = 1/d;
+    if(Math.abs(be - b.be) > PRICE_TOL)
+      return R(`price is outside this band's measured profile (this bet needs `
+             + `${(be*100).toFixed(1)}%, the band was measured near `
+             + `${(b.be*100).toFixed(1)}%) — its win rate does not transfer`);
+  }
   return b;
 }
 
 // Observed ML record per stated band. Used by the per-card price checker so a
 // card tells you the truth about its own band even when it is not a Best Bet.
 const ML_BAND_RATES = [
-  { lo: 0.50, hi: 0.55, rate: 0.589, rec: "33-23", n: 56 },
-  { lo: 0.55, hi: 0.60, rate: 0.350, rec: "28-52", n: 80 },
-  { lo: 0.60, hi: 0.65, rate: 0.419, rec: "26-36", n: 62 },
-  { lo: 0.65, hi: 0.70, rate: 0.540, rec: "34-29", n: 63 },
-  { lo: 0.70, hi: 0.75, rate: 0.656, rec: "21-11", n: 32 },
-  { lo: 0.75, hi: 0.80, rate: 0.484, rec: "15-16", n: 31 },
+  { lo: 0.50, hi: 0.55, rate: 0.589, rec: "33-23", n: 56, be: 0.518 },
+  { lo: 0.55, hi: 0.60, rate: 0.350, rec: "28-52", n: 80, be: 0.512 },
+  { lo: 0.60, hi: 0.65, rate: 0.419, rec: "26-36", n: 62, be: 0.544 },
+  { lo: 0.65, hi: 0.70, rate: 0.540, rec: "34-29", n: 63, be: 0.568 },
+  { lo: 0.70, hi: 0.75, rate: 0.656, rec: "21-11", n: 32, be: 0.607 },
+  { lo: 0.75, hi: 0.80, rate: 0.484, rec: "15-16", n: 31, be: 0.62 },
   { lo: 0.80, hi: 1.01, rate: 0.737, rec: "14-5",  n: 19 }
 ];
 
@@ -3038,8 +3085,9 @@ function bestBetEval(p, why){
   // win rate as the probability, and require positive EV against the REAL price
   // with an 8% cushion. No type is admitted or excluded in advance.
   const R = r => { if(why) why.reason = r; return null; };
-  const band = bandFor(p);
-  if(!band) return R(`no band with enough graded picks behind it (need ${MIN_BAND_N})`);
+  const _bw = {};
+  const band = bandFor(p, _bw);
+  if(!band) return R(_bw.reason || "no usable band");
   if(p.pick_price == null) return R("NO CLEAN PRICE from the odds feed");
   const price = p.pick_price;
   if(Math.abs(price) < 100) return R("NO CLEAN PRICE from the odds feed");
