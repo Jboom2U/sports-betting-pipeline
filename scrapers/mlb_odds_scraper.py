@@ -765,7 +765,12 @@ def run() -> dict:
     save_movement(movements, today)
 
     log.info(f"Odds scraper complete | {len(curr_snaps)} snapshots | {len(movements)} movement records")
-    return {"snapshots": len(curr_snaps), "movements": len(movements)}
+    # Tag the SOURCE explicitly. The quota-guard branch returns Pinnacle's
+    # result, so without this a caller cannot tell whether the Odds API was
+    # actually reached — which is how /admin/force-oddsapi came to report on
+    # "the response" when there had been no response at all.
+    return {"snapshots": len(curr_snaps), "movements": len(movements),
+            "source": "oddsapi"}
 
 
 if __name__ == "__main__":

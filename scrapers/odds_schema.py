@@ -28,11 +28,18 @@ writer must verify the on-disk header before appending.
 
 RULES
 - Add a column HERE and nowhere else. Both scrapers import this list.
-- write_snapshot_rows() compares the on-disk header first. If it does not match,
-  the file is rewritten under the current schema and misaligned rows are DROPPED,
-  never migrated. Their values are positionally wrong and there is no safe way to
-  recover them. Snapshots re-pull for free from Pinnacle; a silently misaligned
-  row poisons every downstream price.
+- write_snapshot_rows() compares the on-disk header first, and reacts in one of
+  three ways (revised 2026-08-17):
+    header matches            -> plain append
+    header is a SUBSET (grew) -> rewrite, MIGRATING existing rows by name with
+                                 "" in the new columns
+    header CONFLICTS          -> rewrite and drop, because values that cannot be
+                                 trusted by name poison every downstream price
+- The migrate case exists because the drop-everything rule cost real data: adding
+  `books_json` wiped a day of snapshots, and since MLBModel freezes each game at
+  first pitch, games already underway lost their pre-game price for good.
+- NEVER let a column be inserted mid-list by a second writer. That is the case
+  the drop branch is for, and it is why this file is the only schema owner.
 """
 from __future__ import annotations
 

@@ -1425,7 +1425,42 @@ def force_oddsapi():
     import html as _h, json as _json, traceback
     try:
         from scrapers.mlb_odds_scraper import run as run_odds, SHOP_BOOKS, BOOK_LABELS
+
+        # OVERRIDE the self-imposed daily budget (default 2/day, env
+        # ODDS_API_DAILY_BUDGET). The monthly cap is 500 and a pull is 3 credits,
+        # so an occasional extra is affordable; the guard exists to stop a loop
+        # draining the month, not to block a deliberate human request.
+        _override = request.args.get("override") == "1"
+        if _override:
+            os.environ["ODDS_API_DAILY_BUDGET"] = "99"
         result = run_odds() or {}
+
+        # DID THE ODDS API ACTUALLY RUN? The guard branch inside run() returns
+        # PINNACLE's result dict, so a guarded call looks superficially like a
+        # success. Reporting book coverage off that is meaningless: it describes
+        # a response that was never requested. Say so instead.
+        if result.get("source") != "oddsapi":
+            reason = _h.escape(str(result.get("guard") or result.get("error")
+                                    or "the Odds API was not reached"))
+            return Response(f"""<!doctype html><html><head><meta charset=utf-8>
+<title>Odds API NOT pulled</title><style>
+body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:720px;margin:0 auto}}
+h2{{color:#d29922}} code{{background:#161b22;padding:1px 5px;border-radius:4px}}
+.warn{{background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.4);padding:12px 16px;border-radius:8px;font-size:13px;line-height:1.6}}
+.note{{color:#8b949e;font-size:12.5px;line-height:1.7}}</style></head><body>
+<h2>The Odds API was NOT called</h2>
+<div class="warn"><b>{reason}</b><br>
+Pinnacle ran instead, so moneyline and run line prices are fresh, but
+<b>no per-book prices were fetched</b> and nothing about Hard Rock can be
+concluded from this.</div>
+<p class="note">The daily budget is a self-imposed guard
+(<code>ODDS_API_DAILY_BUDGET</code>, default <b>2</b>), not the monthly quota.
+The month's cap is 500 credits and each pull costs 3.</p>
+<p class="note">To pull anyway:
+<a href="/admin/force-oddsapi?override=1">force-oddsapi?override=1</a>
+— spends 3 credits and ignores the daily budget for this one call.</p>
+<p><a href="/admin">&larr; Admin</a></p></body></html>""",
+                            mimetype="text/html")
 
         # Read back what actually landed, rather than trusting the return value.
         import csv as _csv
@@ -1496,6 +1531,7 @@ code{{background:#161b22;padding:1px 5px;border-radius:4px;font-size:12px}}
 .warn{{background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.4);padding:10px 14px;border-radius:8px;font-size:13px}}
 .note{{color:#8b949e;font-size:12.5px;line-height:1.6}}</style></head><body>
 <h2>Odds API pull complete</h2>
+<p class="note">Source: <b>Odds API</b> (confirmed, not a Pinnacle fallback).</p>
 <p class="note">Scraper returned: <code>{_h.escape(str(result))}</code><br>
 Cost is 3 credits (3 markets x 1 region) for the entire slate.</p>
 {hr_html}

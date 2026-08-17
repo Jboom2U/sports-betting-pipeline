@@ -202,11 +202,12 @@ else:
 # is otherwise deployable. ADVISORY ONLY: it prints findings and never changes
 # the exit code. Added 2026-08-12 after four reference-error bugs shipped in two
 # days, all syntactically valid and therefore invisible to py_compile.
+_gemini_issues = 0
 if not errors:
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from gemini_review import safe_review as _gemini_review
-        _gemini_review()
+        _gemini_issues = _gemini_review()
     except Exception as _ge:
         print("  [skip] second-model review unavailable: " + str(_ge))
 
@@ -231,6 +232,23 @@ else:
     if warnings:
         msg += " (" + str(len(warnings)) + " warning(s))"
     print(msg)
+
+    # SECOND-MODEL RESULT, IN THE SUMMARY. Findings printed mid-run scroll past
+    # and get missed, which is exactly how four reviewed-but-unread bugs shipped.
+    # A "[PASS]" with unread Gemini findings above it is worse than no review at
+    # all, because it reads as an all-clear.
+    print()
+    if _gemini_issues:
+        print("=" * 62)
+        print("  !! SECOND-MODEL REVIEW FLAGGED " + str(_gemini_issues)
+              + " POSSIBLE ISSUE(S) — SCROLL UP")
+        print("  Advisory, not a gate. Verify each claim before acting on it,")
+        print("  and before deploying decide explicitly to accept or fix them.")
+        print("  Full text saved under logs/gemini_review_*.txt")
+        print("=" * 62)
+    else:
+        print("  Second-model review: no issues raised.")
+
     print()
     print("Safe to deploy:")
     print("  git add <files>  |  git commit  |  git push  |  railway up")

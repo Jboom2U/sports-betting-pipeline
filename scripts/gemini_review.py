@@ -181,7 +181,12 @@ Here is the diff:
 
 
 def review(quiet: bool = False) -> int:
-    """Print findings. ALWAYS returns 0 — this never fails a build."""
+    """Print findings. Returns the NUMBER OF ISSUES found (0 = clean/skipped).
+
+    The return value never fails a build — predeploy_check uses it only to put a
+    loud line in the final summary. Findings printed mid-run were being scrolled
+    past and missed, which made the whole check pointless.
+    """
     key = _load_key()
     if not key:
         if not quiet:
@@ -225,6 +230,17 @@ def review(quiet: bool = False) -> int:
     if not text:
         print("  [skip] Gemini returned nothing.")
         return 0
+
+    # Persist every review so findings can be re-read after the terminal scrolls,
+    # and pasted somewhere for discussion.
+    try:
+        log_dir = BASE_DIR / "logs"
+        log_dir.mkdir(exist_ok=True)
+        stamp = __import__("datetime").datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        out_path = log_dir / f"gemini_review_{stamp}.txt"
+        out_path.write_text(text, encoding="utf-8")
+    except Exception:
+        out_path = None
     # call_gemini never raises; it returns a bracketed notice on failure.
     # Treat that as a skip rather than printing it as if it were a finding.
     if text.startswith("[") and text.endswith("]") and len(text) < 400:
@@ -240,15 +256,26 @@ def review(quiet: bool = False) -> int:
     if truncated:
         print("  " + truncated.strip())
     print("-" * 60)
-    if "NO ISSUES FOUND" not in text.upper():
+    clean = "NO ISSUES FOUND" in text.upper()
+    if not clean:
         print("  Read the above before deploying. It is advisory, not a gate:")
         print("  a second model is often wrong. Verify each claim yourself.")
+    if out_path:
+        print(f"  Saved to {out_path}")
     print()
-    return 0
+    if clean:
+        return 0
+    # Rough count: numbered or bulleted findings. Only used for the summary line.
+    import re as _re
+    n = len(_re.findall(r"^\s*(?:\d+[.)]|[-*])\s+\S", text, _re.M))
+    return max(1, n)
 
 
 def safe_review() -> int:
-    """review() wrapped so nothing here can ever break a deploy check."""
+    """review() wrapped so nothing here can ever break a deploy check.
+
+    Returns the issue count for the summary line; 0 on any failure.
+    """
     try:
         return review()
     except Exception as e:
