@@ -1459,6 +1459,23 @@ details[open] .shop-caret{transform:rotate(90deg)}
 .shop-row-mine{color:#e6edf3;font-weight:600}
 .shop-px{font-variant-numeric:tabular-nums}
 .shop-foot{font-size:.66rem;color:var(--sub);margin-top:6px;padding-top:5px;border-top:1px solid var(--border)}
+.calc-wrap{margin:0 0 14px;background:rgba(139,148,158,.06);border:1px solid var(--border);border-radius:12px}
+.calc-sum{list-style:none;cursor:pointer;padding:10px 14px;display:flex;align-items:baseline;gap:9px;font-size:.85rem}
+.calc-sum::-webkit-details-marker{display:none}
+.calc-sum:hover{background:rgba(139,148,158,.05)}
+.calc-caret{font-size:.7rem;color:var(--sub);transition:transform .12s}
+details[open] .calc-caret{transform:rotate(90deg)}
+.calc-sub{color:var(--sub);font-size:.72rem}
+.calc-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;padding:0 14px 14px}
+.calc-card{background:var(--card,#0d1117);border:1px solid var(--border);border-radius:8px;padding:11px 12px}
+.calc-h{font-size:.72rem;font-weight:700;letter-spacing:.04em;color:var(--sub);margin-bottom:8px}
+.calc-in2,.calc-in3{display:flex;gap:7px;flex-wrap:wrap}
+.calc-in2 .bb-price-in,.calc-in3 .bb-price-in{flex:1;min-width:88px}
+.calc-out{margin-top:9px;font-size:.78rem;line-height:1.6}
+.calc-row{display:flex;justify-content:space-between;gap:10px;padding:2px 0}
+.calc-row>span:first-child{color:var(--sub);font-size:.72rem}
+.calc-foot{margin-top:7px;padding-top:6px;border-top:1px solid var(--border);font-size:.68rem;color:var(--sub);line-height:1.5}
+.calc-good{color:#3fb950}.calc-warn{color:#d29922}.calc-bad{color:#f85149}.calc-mute{color:var(--sub)}
 .pc-rule{margin:8px 0 2px;padding:8px 11px;background:rgba(139,148,158,.08);
   border-left:3px solid #30363d;border-radius:0;line-height:1.5}
 .pc-lead{display:inline;font-size:.68rem;font-weight:700;letter-spacing:.06em;color:#8b949e}
@@ -2120,6 +2137,34 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
       above for tomorrow's slate.
     </div>
     <div id="hcTrackRecord" style="margin:0 0 14px;display:none;gap:10px;flex-wrap:wrap"></div>
+    <details class="calc-wrap">
+      <summary class="calc-sum"><span class="calc-caret">&#9656;</span>
+        <b>Calculators</b><span class="calc-sub">de-vig &middot; stake sizing &middot; odds conversion</span></summary>
+      <div class="calc-body">
+        <div class="calc-card">
+          <div class="calc-h">Remove the vig</div>
+          <div class="calc-in2">
+            <input id="dvA" class="bb-price-in" placeholder="side A e.g. -154" oninput="calcDevig()">
+            <input id="dvB" class="bb-price-in" placeholder="side B e.g. +130" oninput="calcDevig()">
+          </div>
+          <div id="dvOut" class="calc-out"><span class="calc-mute">enter both sides</span></div>
+        </div>
+        <div class="calc-card">
+          <div class="calc-h">What should I actually bet?</div>
+          <div class="calc-in3">
+            <input id="stP" class="bb-price-in" placeholder="win % e.g. 66.2" oninput="calcStake()">
+            <input id="stPrice" class="bb-price-in" placeholder="price e.g. -154" oninput="calcStake()">
+            <input id="stBR" class="bb-price-in" placeholder="bankroll e.g. 20" oninput="calcStake()">
+          </div>
+          <div id="stOut" class="calc-out"><span class="calc-mute">quarter-Kelly, $1 grid, $5 cap</span></div>
+        </div>
+        <div class="calc-card">
+          <div class="calc-h">Odds conversion</div>
+          <div class="calc-in2"><input id="cvIn" class="bb-price-in" placeholder="e.g. -154" oninput="calcConvert()"></div>
+          <div id="cvOut" class="calc-out"><span class="calc-mute">enter a price</span></div>
+        </div>
+      </div>
+    </details>
     <div id="bestBets"></div>
     <div class="picks-grid" id="picksGrid"></div>
 
@@ -2913,6 +2958,113 @@ function bookShopHtml(p){
         <b>${spreadPts}%</b> of return on the same bet.</div>` : ""}
     </div>
   </details>`;
+}
+
+// ── CALCULATORS (2026-08-18) ────────────────────────────────────────────────
+// Deliberately NOT a second EV engine. Every card already carries a CHECK YOUR
+// PRICE box; duplicating that math in a second place is exactly how two surfaces
+// drift apart and start disagreeing, which is most of what went wrong on 08-17.
+//
+// These fill the two gaps nothing else covers:
+//   DE-VIG   what the MARKET really thinks, once the book's margin is removed.
+//            This is the benchmark every edge claim is measured against and the
+//            board has never shown it.
+//   STAKE    a mirror of model/staking.py. On a $20 roll with a $1 minimum the
+//            correct stake is usually UNDER one unit, which is invisible until
+//            you compute it. Keep this in lockstep with staking.py; if the
+//            Python changes, change it here in the same commit.
+//
+// amDec / fmtAm are reused from the line-shopping block above rather than
+// redefined, so a fix to odds conversion lands everywhere at once.
+
+function calcConvert(){
+  const raw = (document.getElementById("cvIn").value||"").trim().replace(/[^0-9+\-.]/g,"");
+  const a = parseFloat(raw);
+  const out = document.getElementById("cvOut");
+  if(!raw || isNaN(a) || Math.abs(a) < 100){
+    out.innerHTML = raw ? "<span class='calc-bad'>not a valid American price</span>"
+                        : "<span class='calc-mute'>enter a price</span>";
+    return;
+  }
+  const d = amDec(a), ip = 100/d;
+  out.innerHTML = `<b>${ip.toFixed(1)}%</b> implied &nbsp;&middot;&nbsp; `
+                + `${d.toFixed(3)} decimal &nbsp;&middot;&nbsp; `
+                + `breaks even at <b>${ip.toFixed(1)}%</b>`;
+}
+
+function calcDevig(){
+  const g = id => { const v=(document.getElementById(id).value||"").trim().replace(/[^0-9+\-.]/g,"");
+                    const n=parseFloat(v); return (!v||isNaN(n)||Math.abs(n)<100) ? null : n; };
+  const a = g("dvA"), b = g("dvB");
+  const out = document.getElementById("dvOut");
+  if(a === null || b === null){
+    out.innerHTML = "<span class='calc-mute'>enter BOTH sides &mdash; vig can only be "
+                  + "removed from a two-way market</span>";
+    return;
+  }
+  const ia = 100/amDec(a), ib = 100/amDec(b);
+  const book = ia + ib;                     // >100 by the size of the margin
+  const fa = ia/book*100, fb = ib/book*100;
+  // Fair price for each side, back in American terms.
+  const toAm = pct => { const d = 100/pct; return d >= 2 ? (d-1)*100 : -100/(d-1); };
+  const vig = book - 100;
+  const col = vig > 6 ? "calc-bad" : vig > 4 ? "calc-warn" : "calc-good";
+  out.innerHTML =
+    `<div class="calc-row"><span>book margin</span>
+       <span class="${col}"><b>${vig.toFixed(1)}%</b></span></div>
+     <div class="calc-row"><span>side A fair</span>
+       <span><b>${fa.toFixed(1)}%</b> &nbsp;(${fmtAm(toAm(fa))})</span></div>
+     <div class="calc-row"><span>side B fair</span>
+       <span><b>${fb.toFixed(1)}%</b> &nbsp;(${fmtAm(toAm(fb))})</span></div>
+     <div class="calc-foot">You beat this market only when your honest probability
+       is above the fair number, not above the raw implied one. The gap between
+       them is the book's cut, and it is why a "60% pick at -150" is usually
+       nothing: -150 implies 60.0% raw but about ${fa.toFixed(1)}% fair here.</div>`;
+}
+
+function calcStake(){
+  const num = id => { const v=(document.getElementById(id).value||"").trim().replace(/[^0-9+\-.]/g,"");
+                      const n=parseFloat(v); return isNaN(n) ? null : n; };
+  const p  = num("stP"), pr = num("stPrice"), br = num("stBR");
+  const out = document.getElementById("stOut");
+  if(p === null || pr === null || br === null || Math.abs(pr) < 100 || br <= 0
+     || !(p > 0 && p < 100)){
+    out.innerHTML = "<span class='calc-mute'>enter win probability %, American price, "
+                  + "and bankroll</span>";
+    return;
+  }
+  const MIN = 1, STEP = 1, MAX = 5, KF = 0.25, MAXF = 0.08, TOL = 1.5;
+  const prob = p/100, d = amDec(pr), b = d - 1;
+  const ev = prob*b - (1-prob);
+  if(ev <= 0){
+    out.innerHTML = `<div class="calc-row"><span>EV</span>
+      <span class="calc-bad"><b>${(ev*100).toFixed(1)}%</b></span></div>
+      <div class="calc-foot">Negative. The price demands ${(100/d).toFixed(1)}% and you
+      have ${p}%. No stake.</div>`;
+    return;
+  }
+  const kFull = ev/b, target = Math.min(kFull*KF, MAXF), ideal = br*target;
+  let snapped = Math.min(Math.floor(ideal/STEP)*STEP, MAX);
+  let verdict, cls;
+  if(snapped >= MIN){
+    verdict = `Bet <b>$${snapped.toFixed(0)}</b>`; cls = "calc-good";
+  } else {
+    const over = MIN/ideal;
+    if(over <= TOL){ snapped = MIN; cls = "calc-warn";
+      verdict = `Bet the <b>$1</b> minimum &mdash; ${over.toFixed(1)}x the correct stake`; }
+    else { snapped = 0; cls = "calc-bad";
+      verdict = `<b>No bet.</b> Ideal is $${ideal.toFixed(2)}; $1 would be ${over.toFixed(1)}x that`; }
+  }
+  // The EV at which $1 becomes correctly sized on THIS bankroll and price.
+  const floorEv = (MIN/br)*b/KF;
+  out.innerHTML =
+    `<div class="calc-row"><span>EV per $1</span><span class="calc-good"><b>+${(ev*100).toFixed(1)}%</b></span></div>
+     <div class="calc-row"><span>full Kelly</span><span>${(kFull*100).toFixed(1)}%</span></div>
+     <div class="calc-row"><span>quarter Kelly</span><span>${(target*100).toFixed(2)}% = <b>$${ideal.toFixed(2)}</b></span></div>
+     <div class="calc-row"><span>verdict</span><span class="${cls}">${verdict}</span></div>
+     <div class="calc-foot">At $${br.toFixed(0)} with a $1 minimum, a bet is only
+       correctly sized once EV reaches <b>${(floorEv*100).toFixed(1)}%</b> at this price.
+       Below that the minimum forces an over-bet.</div>`;
 }
 
 // ── UNIVERSAL PRICE CHECK (2026-08-14) ──────────────────────────────────────

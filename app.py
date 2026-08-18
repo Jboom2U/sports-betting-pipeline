@@ -1902,6 +1902,9 @@ h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
     <a class="card" href="/admin/real-roi"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Real-price ROI</div>
       <div class="card-desc">ROI from stored prices, not a flat -110</div></a>
+    <a class="card" href="/admin/clv"><span class="badge badge-admin">Admin</span>
+      <div class="card-title">Closing line value</div>
+      <div class="card-desc">Beat the close? Settles far sooner than win rate</div></a>
     <a class="card" href="/admin/refresh-signals"><span class="badge badge-admin">Admin</span>
       <div class="card-title">Refresh signals</div>
       <div class="card-desc">Umpire, bullpen, pitcher/team stats (no quota)</div></a>
@@ -3037,6 +3040,153 @@ function recost(){{
 }}
 </script></body></html>"""
     return Response(html, mimetype="text/html")
+
+
+@app.route("/admin/clv")
+def clv_report():
+    """CLOSING LINE VALUE — the fastest-converging validation this system has.
+
+    WHY THIS MATTERS MORE THAN THE WIN RATE
+    Win/loss is a binomial outcome: separating a true 55% from break-even takes
+    roughly 1,400 graded picks. CLV is a CONTINUOUS measurement taken on every
+    single bet, so it stabilises in dozens rather than thousands. If the model
+    consistently beats the closing number, it is finding real mispricing even
+    while the results are still noise. If it consistently loses to the close, no
+    win streak is evidence of anything.
+
+    THE DATA WAS ALREADY HERE. `picks.odds` freezes at the first price seen (and
+    hard-freezes once tier_locked). `picks.closing_odds` refreshes on every
+    re-score, and because re-scoring stops at first pitch, the last value written
+    IS the close. Both columns have been populated since 2026-08-11 and nothing
+    has ever read them. calibrate.py still prints "NOT MEASURED: closing line
+    value. The picks table stores no odds" — a comment that stopped being true
+    a week ago.
+
+    CLV is measured in decimal-return terms:
+        clv = (your_decimal / closing_decimal) - 1
+    +2% means the price you took pays 2% more than the closing price on the same
+    bet. That is money regardless of whether this particular bet won.
+
+      ?days=30   window (default 30; the page also renders a 7-day block)
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/clv")
+    import html as _h, traceback
+    from collections import defaultdict
+    days = max(1, min(180, int(request.args.get("days", "30") or 30)))
+
+    def _dec(a):
+        try:
+            a = float(a)
+        except (TypeError, ValueError):
+            return None
+        if abs(a) < 100:
+            return None
+        return 1.0 + a/100.0 if a > 0 else 1.0 + 100.0/abs(a)
+
+    try:
+        from db.connection import db_conn
+        from datetime import date as _date, timedelta as _td
+        cutoff30 = (_date.today() - _td(days=days)).isoformat()
+        cutoff7  = (_date.today() - _td(days=7)).isoformat()
+
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT pick_date, pick_type, label, conf, odds, closing_odds,
+                       actual_result
+                FROM picks
+                WHERE pick_date >= %s
+                  AND odds IS NOT NULL AND closing_odds IS NOT NULL
+            """, (cutoff30,))
+            rows = cur.fetchall(); cur.close()
+
+        recs = []
+        for d, t, lab, c, o, co in ((r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows):
+            do, dc = _dec(o), _dec(co)
+            if do is None or dc is None:
+                continue
+            grp = t or "?"
+            if grp == "RL":
+                grp = "RL +1.5" if "+1.5" in (lab or "") else "RL -1.5"
+            recs.append({"date": str(d), "grp": grp,
+                         "clv": (do/dc - 1.0) * 100.0,
+                         "moved": abs(do - dc) > 1e-9})
+
+        def block(sub, title, note):
+            if not sub:
+                return (f"<h3>{_h.escape(title)}</h3>"
+                        f"<p class='note'>No priced picks in this window yet.</p>")
+            by = defaultdict(list)
+            for r in sub:
+                by[r["grp"]].append(r["clv"])
+            out = (f"<h3>{_h.escape(title)} "
+                   f"<span style='font-weight:400;color:#8b949e'>n={len(sub)}</span></h3>"
+                   f"<p class='note'>{note}</p><table>"
+                   "<tr><th>bet type</th><th>picks</th><th>beat close</th>"
+                   "<th>avg CLV</th><th>median CLV</th></tr>")
+            for g in sorted(by):
+                v = sorted(by[g])
+                n = len(v)
+                avg = sum(v)/n
+                med = v[n//2] if n % 2 else (v[n//2-1]+v[n//2])/2
+                beat = sum(1 for x in v if x > 0)
+                col = "#3fb950" if avg > 0 else "#f85149"
+                thin = " <span style='color:#d29922'>thin</span>" if n < 25 else ""
+                out += (f"<tr><td>{_h.escape(g)}</td><td>{n}{thin}</td>"
+                        f"<td>{beat}/{n} ({100.0*beat/n:.0f}%)</td>"
+                        f"<td style='color:{col}'><b>{avg:+.2f}%</b></td>"
+                        f"<td style='color:{col}'>{med:+.2f}%</td></tr>")
+            allv = [r["clv"] for r in sub]
+            a = sum(allv)/len(allv)
+            col = "#3fb950" if a > 0 else "#f85149"
+            beat = sum(1 for x in allv if x > 0)
+            out += (f"<tr style='border-top:2px solid #30363d'><td><b>all</b></td>"
+                    f"<td><b>{len(allv)}</b></td><td><b>{beat}/{len(allv)} "
+                    f"({100.0*beat/len(allv):.0f}%)</b></td>"
+                    f"<td style='color:{col}'><b>{a:+.2f}%</b></td><td>&mdash;</td></tr>")
+            return out + "</table>"
+
+        r7  = [r for r in recs if r["date"] >= cutoff7]
+        moved = sum(1 for r in recs if r["moved"])
+        note = ("A pick only carries information when the line MOVED between your "
+                "price and the close. Rows where both are identical average to "
+                "zero and dilute the signal without changing its sign.")
+
+        body = (block(r7,  "Rolling 7 days",  note)
+                + block(recs, f"Rolling {days} days", note))
+
+        html = f"""<!doctype html><html><head><meta charset=utf-8>
+<title>Closing line value</title><style>
+body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:900px;margin:0 auto}}
+h2{{color:#58a6ff}} h3{{color:#e6edf3;margin:26px 0 6px;font-size:15px}}
+table{{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:8px}}
+th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #21262d}}
+th{{color:#8b949e;font-weight:600;font-size:11px;text-transform:uppercase}}
+.note{{color:#8b949e;font-size:12.5px;line-height:1.65}}
+.hero{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:14px 0}}
+</style></head><body>
+<h2>Closing line value</h2>
+<div class="hero"><p class="note" style="margin:0">
+<b>Read this before the win rate.</b> Beating the close is the fastest evidence
+that the model finds real mispricing. Win/loss needs roughly 1,400 graded picks
+to separate a true 55% from break-even; CLV is measured on every bet and settles
+far sooner. Positive average CLV with a losing record is variance. Negative CLV
+with a winning record is luck that will not last.
+<br><br><b>{len(recs)}</b> priced picks in the last {days} days,
+<b>{moved}</b> of them on a line that actually moved.</p></div>
+{body}
+<p class="note" style="margin-top:18px">CLV = (your decimal price / closing
+decimal price) &minus; 1. Prices come from <code>picks.odds</code> (frozen at
+first sight, hard-frozen once the tier locks) and <code>picks.closing_odds</code>
+(refreshed until first pitch, so the last write is the close).</p>
+<p><a href="/admin/real-roi">Real-price ROI</a> &nbsp; <a href="/admin">&larr; Admin</a></p>
+</body></html>"""
+        return Response(html, mimetype="text/html")
+    except Exception:
+        return Response(f"<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        f"{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
 
 
 @app.route("/admin/real-roi")
