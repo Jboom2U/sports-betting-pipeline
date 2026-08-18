@@ -42,6 +42,12 @@ CREATE TABLE IF NOT EXISTS picks (
     reasoning       TEXT,
     market_signal   TEXT,                   -- CONFIRM | DIVERGE | NEUTRAL (Kalshi/Poly)
     tier_locked     BOOLEAN     NOT NULL DEFAULT FALSE,  -- freezes conf/tier once lineups confirm
+    -- Latched TRUE the first time a pick qualifies as a Best Bet at ANY
+    -- price during the day. Best Bets is path-dependent: lines move, so a
+    -- pick can qualify at 2pm and not at 6pm. Only two prices are stored
+    -- (open and close), so evaluating either one alone misses most of what
+    -- actually surfaced. Latching at save time records it as it happens.
+    was_best_bet BOOLEAN DEFAULT FALSE,
 
     -- PRICE (added 2026-08-11). Without this, EV/ROI/CLV cannot be measured or
     -- backfilled, which is why the 2026-08-11 review could only ever report win
@@ -219,6 +225,11 @@ def create_all():
             # tier), so intraday re-scores can't downgrade a LOCK before grading.
             cur.execute(
                 "ALTER TABLE picks ADD COLUMN IF NOT EXISTS tier_locked BOOLEAN NOT NULL DEFAULT FALSE")
+            # was_best_bet latches TRUE the first time a pick qualifies as a Best
+            # Bet at ANY price during the day. See model/best_bets.py for why a
+            # single stored price cannot answer that question.
+            cur.execute(
+                "ALTER TABLE picks ADD COLUMN IF NOT EXISTS was_best_bet BOOLEAN NOT NULL DEFAULT FALSE")
             # Price columns (2026-08-11). Without a stored price, EV, ROI and CLV
             # cannot be measured or backfilled — which is why the 2026-08-11
             # review could only ever report win RATE, never whether the model

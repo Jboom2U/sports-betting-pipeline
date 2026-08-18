@@ -101,9 +101,9 @@ def save_picks(picks: list, pick_date: str) -> int:
                     INSERT INTO picks
                         (pick_date, game_id, game, pick_type, label, team,
                          conf, tier, reasoning, market_signal, tier_locked,
-                         odds, odds_at, actual_result)
+                         was_best_bet, odds, odds_at, actual_result)
                     VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), 'PENDING')
+                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), 'PENDING')
                     ON CONFLICT (pick_date, game_id, pick_type) DO UPDATE SET
                         label         = EXCLUDED.label,
                         team          = EXCLUDED.team,
@@ -113,6 +113,10 @@ def save_picks(picks: list, pick_date: str) -> int:
                         conf          = CASE WHEN picks.tier_locked THEN picks.conf ELSE EXCLUDED.conf END,
                         tier          = CASE WHEN picks.tier_locked THEN picks.tier ELSE EXCLUDED.tier END,
                         tier_locked   = (picks.tier_locked OR EXCLUDED.tier_locked),
+                        -- LATCH, never clear. Best Bets is path-dependent: a pick
+                        -- can qualify at 2pm at -140 and stop by 6pm at -170. Once
+                        -- it surfaced, it surfaced.
+                        was_best_bet  = (picks.was_best_bet OR EXCLUDED.was_best_bet),
                         -- Keep the FIRST price captured (closest to when the pick
                         -- was published), but fill it in if we never got one.
                         -- Once tier_locked, the price is frozen alongside conf so
@@ -145,6 +149,7 @@ def save_picks(picks: list, pick_date: str) -> int:
                         p.get("reasoning", ""),
                         _market_signal(p),
                         _lineups_set,
+                        _is_best_bet_now(p),
                         _pick_price(p),
                     )
                 )
@@ -432,6 +437,25 @@ def get_accuracy_summary(days: int = 30) -> list:
 
 
 # ── Market Signal helpers ──────────────────────────────────────────────────
+
+def _is_best_bet_now(pick: dict) -> bool:
+    """Does this pick qualify as a Best Bet at the price it carries RIGHT NOW?
+
+    Called on every save. The column is OR-latched, so by end of day the flag
+    means "this surfaced as a Best Bet at some point", which is what was actually
+    on the board. Re-evaluating a single stored price afterwards cannot
+    reproduce that: only the opening and closing prices are kept, and a pick can
+    qualify at neither while qualifying for three hours in between.
+
+    Never raises. A failure here must not stop a pick being saved.
+    """
+    try:
+        from model.best_bets import evaluate
+        return bool(evaluate(pick).get("bet"))
+    except Exception as e:
+        log.debug(f"best-bet evaluation skipped for one pick: {e}")
+        return False
+
 
 def _market_signal(pick: dict) -> str:
     """Read the market signal the model ACTUALLY computed.
