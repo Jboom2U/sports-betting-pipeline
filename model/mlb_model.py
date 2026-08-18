@@ -1577,6 +1577,34 @@ class MLBModel:
         }
 
     # ── Game Status Helpers ───────────────────────────────────────────────────
+    def _game_has_started(self, game: dict) -> bool:
+        """Has first pitch passed? Distinct from _game_is_over, deliberately.
+
+        WHY BOTH EXIST (2026-08-17). The bettable grid was filtered with
+        _game_is_over, which asks whether a game has FINISHED. None of its three
+        tests fire for a game currently being played:
+          - `status` comes from the 6am schedule scrape and reads "Scheduled"
+            all day; nothing updates it intraday.
+          - start + 3h30 means an 8:40pm ET game is not "over" until 12:10am.
+          - the scores master holds YESTERDAY's results until tomorrow's 6am run.
+
+        So at 10:30pm ET the board still offered five games as bettable picks,
+        two of which had already ended. A game in the 6th inning cannot be bet,
+        so the grid needs "has it started", not "is it finished".
+
+        _game_is_over stays as-is for grading and summary paths, which legitimately
+        care about completion.
+        """
+        from datetime import timezone
+        gt = game.get("game_time_utc", "")
+        if not gt:
+            return False            # unknown start time -> do not hide it
+        try:
+            start = datetime.strptime(gt, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return False
+        return datetime.now(timezone.utc) >= start
+
     def _game_is_over(self, game: dict) -> bool:
         """
         Returns True if the game has likely ended based on:
@@ -1634,7 +1662,10 @@ class MLBModel:
             target_date = _today_et()
 
         all_today = [g for g in self.schedule if g.get("game_date") == target_date]
-        games     = [g for g in all_today if not self._game_is_over(g)]
+        # Bettable slate: drop anything already underway. See
+        # _game_has_started for why _game_is_over was the wrong test.
+        games     = [g for g in all_today
+                     if not self._game_is_over(g) and not self._game_has_started(g)]
 
         skipped = len(all_today) - len(games)
         if skipped:
@@ -1650,7 +1681,8 @@ class MLBModel:
                 target_date = future[0]
                 games = [g for g in self.schedule
                          if g.get("game_date") == target_date
-                         and not self._game_is_over(g)]
+                         and not self._game_is_over(g)
+                         and not self._game_has_started(g)]
                 log.info(f"All today's games done -- using next slate: {target_date}")
 
         log.info(f"Scoring {len(games)} upcoming games for {target_date}")
