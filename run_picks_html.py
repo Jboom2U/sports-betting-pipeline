@@ -1436,6 +1436,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .pick-bestbet{border-color:#e3b341;box-shadow:0 0 0 1px rgba(227,179,65,.35)}
 .bb-flag{position:absolute;top:-1px;left:-1px;background:#e3b341;color:#3d2c00;
   font-size:.6rem;font-weight:700;letter-spacing:.08em;padding:3px 9px;border-radius:12px 0 12px 0}
+.kelly-nostake{opacity:.75}
+.kelly-nostake .kelly-note{color:var(--sub)}
 .bb-note{font-size:.7rem;color:var(--sub);line-height:1.45;margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
 /* Universal price check — on EVERY card. Neutral grey until a price is typed,
    so it does not read as a recommendation the way the green Best Bets block
@@ -2340,13 +2342,27 @@ function switchSlate(slate){
   const el = document.getElementById("dateToggle");
   if(!el) return;
   const fmtDate = d => new Date(d + "T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
-  el.innerHTML = `
-    <button class="date-btn active" data-slate="today"    onclick="switchSlate('today')"   >${fmtDate(DATA_DATE)}</button>
-    <button class="date-btn"        data-slate="tomorrow" onclick="switchSlate('tomorrow')">${fmtDate(DATA_NEXT_DATE)} →</button>
-  `;
-  if(DATA_PICKS.length === 0 && DATA_PICKS_NEXT.length > 0){
-    switchSlate("tomorrow");
-    // Show a banner explaining why we auto-switched
+  // Guard against both buttons landing on the same day. That is always a data
+  // fault upstream (it was score_today pivoting past pivot=False), but a toggle
+  // offering the same date twice is a dead control, so refuse to draw it.
+  if(DATA_NEXT_DATE && DATA_NEXT_DATE !== DATA_DATE){
+    el.innerHTML = `
+      <button class="date-btn active" data-slate="today"    onclick="switchSlate('today')"   >${fmtDate(DATA_DATE)}</button>
+      <button class="date-btn"        data-slate="tomorrow" onclick="switchSlate('tomorrow')">${fmtDate(DATA_NEXT_DATE)} &rarr;</button>
+    `;
+  } else {
+    el.innerHTML = `<button class="date-btn active" data-slate="today">${fmtDate(DATA_DATE)}</button>`;
+  }
+  // NO AUTO-SWITCH (removed 2026-08-17, at Justin's call).
+  //
+  // This used to silently flip to tomorrow's slate the moment today's bettable
+  // count hit zero. Combined with score_today ignoring pivot=False, the result
+  // late on 08-17 was tomorrow's games rendered under today's heading with both
+  // date buttons reading "Tue, Aug 18".
+  //
+  // Today's grid now simply empties as games start, which is the honest state:
+  // there is nothing left to bet. Tomorrow is one deliberate click away.
+  if(DATA_PICKS.length === 0){
     const _todayBanner = document.getElementById("todayInProgressBanner");
     if(_todayBanner) _todayBanner.style.display = "block";
   }
@@ -3621,8 +3637,22 @@ function renderPicks(){
     }
 
     // Kelly Criterion sizing
-    const kellyHtml = (p.kelly_pct > 0)
+    // NO PRICE, NO STAKE (2026-08-17).
+    //
+    // kelly_pct is computed server-side as half-Kelly at a HARDCODED -110 using
+    // RAW confidence. Both inputs are fictional when there is no price: on the
+    // 08-18 slate, before any odds pull, a card read "LOCK 72.8% - Bet $4.30
+    // (21.5% Half-Kelly)" while its own HONEST READ line said calibrated 56.1%
+    // and no clean price. A stake is a claim about how much to risk; making one
+    // up from an assumed price is the flat -110 error wearing a dollar sign.
+    //
+    // Best Bets already sizes correctly (band rate against the REAL price), so
+    // the card just declines rather than duplicating that here.
+    const _hasPrice = p.pick_price != null && Math.abs(p.pick_price) >= 100;
+    const kellyHtml = (p.kelly_pct > 0 && _hasPrice)
       ? `<div class="kelly-row" data-kelly="${p.kelly_pct}">💰 Bet <strong class="kelly-amt">$${window._BR ? (window._BR*p.kelly_pct/100).toFixed(2) : (p.kelly_pct/100).toFixed(2)}</strong> <span class="kelly-note">${window._BR ? "on $"+window._BR.toLocaleString() : "per $1 bankroll"} (${p.kelly_pct}% Half-Kelly)</span></div>`
+      : (p.kelly_pct > 0)
+      ? `<div class="kelly-row kelly-nostake">&#8709; No stake &mdash; <span class="kelly-note">no price for this line yet, so there is nothing to size against</span></div>`
       : "";
 
     // Kalshi signal

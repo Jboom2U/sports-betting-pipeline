@@ -1653,7 +1653,22 @@ class MLBModel:
         """
         Score all games for target_date. Returns (scored_games, actual_date).
         Automatically excludes games that have started or finished.
-        Falls back to next available date if no upcoming games found.
+
+        pivot=True  -> if nothing is left on target_date, roll forward to the
+                       next slate that has games, and RETURN THAT DATE.
+        pivot=False -> never roll forward. Return an empty list for the date
+                       that was asked for.
+
+        HONOURING pivot (fixed 2026-08-17). The flag existed in this signature
+        and was never read, so the fallback below ran unconditionally. Late on
+        08-17, once every game had started, the caller asked for 08-17 with
+        pivot=False, got 08-18 back as `actual_date`, and the dashboard rendered
+        tomorrow's slate under today's heading. Both date-toggle buttons then
+        read "Tue, Aug 18", because DATA_DATE and DATA_NEXT_DATE had collapsed
+        onto the same day.
+
+        A parameter that is accepted and ignored is worse than no parameter:
+        every caller reads as though it is controlling behaviour it is not.
         """
         if not self._loaded:
             self.load()
@@ -1671,8 +1686,11 @@ class MLBModel:
         if skipped:
             log.info(f"Filtered out {skipped} completed/in-progress game(s)")
 
-        # If nothing upcoming today, use next available future slate
-        if not games:
+        # If nothing upcoming today, use next available future slate — but ONLY
+        # when the caller asked to pivot. The bettable grid passes pivot=False
+        # precisely so an exhausted slate stays empty instead of silently
+        # becoming tomorrow's.
+        if not games and pivot:
             future = sorted(set(
                 g["game_date"] for g in self.schedule
                 if g.get("game_date", "") > target_date
