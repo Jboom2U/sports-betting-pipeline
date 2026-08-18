@@ -2115,7 +2115,9 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
     <div class="section-title">🎯 Individual Picks</div>
     <div class="results-count" id="pickResults"></div>
     <div id="todayInProgressBanner" style="display:none;background:#1c2128;border:1px solid #30363d;border-left:3px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:12px;color:#8b949e;font-size:.85rem">
-      Today's games are in progress &mdash; showing <strong style="color:#f59e0b">tomorrow's picks</strong> below.
+      Every game today has started &mdash; nothing left to bet. Results are in
+      <strong style="color:#f59e0b">Daily Summary</strong>; use the date buttons
+      above for tomorrow's slate.
     </div>
     <div id="hcTrackRecord" style="margin:0 0 14px;display:none;gap:10px;flex-wrap:wrap"></div>
     <div id="bestBets"></div>
@@ -3881,7 +3883,30 @@ function renderSurfacedProps(){
   // price floor and the mirage guard. projection_only is now per-pick, so a
   // player Pinnacle lists gets through while the same prop type for an unlisted
   // player stays a projection.
-  const bettable = DATA_PROPS.filter(p => !p.projection_only && p.bettable);
+  // DROP PROPS WHOSE GAME HAS STARTED (2026-08-17). Top Props was still
+  // offering Total Bases lines for games that had already finished, because
+  // this filter only ever asked whether the prop had a real book line — never
+  // whether the game was still ahead. Same mistake as the pick grid: filtering
+  // on "is it a valid bet" without asking "is it still available".
+  //
+  // Uses the live score feed the ticker already maintains, so it self-corrects
+  // every couple of minutes without another data source.
+  const _liveByGame = {};
+  (_liveScores() || []).forEach(g => {
+    const key = ((g.away||"") + " @ " + (g.home||"")).trim();
+    _liveByGame[key] = g;
+  });
+  const _gameStillAhead = (p) => {
+    const g = _liveByGame[((p.away||"") + " @ " + (p.home||"")).trim()];
+    if(!g) return true;                       // unknown -> do not hide it
+    const st = (g.detailedState || g.status || "").toLowerCase();
+    if(!st) return true;
+    return !(st.includes("progress") || st.includes("final") ||
+             st.includes("game over") || st.includes("completed"));
+  };
+  const bettable = DATA_PROPS
+    .filter(p => !p.projection_only && p.bettable)
+    .filter(_gameStillAhead);
   // Rank by EV, not confidence. On a real two-way line, a high probability at a
   // heavily juiced price is worth less than a modest probability at a fair one —
   // the same confidence-is-not-value trap that made the old board misleading.
@@ -5836,7 +5861,20 @@ function renderDailySummary(){
   const wr     = total>0 ? Math.round(wins/total*100) : 0;
   const lockW  = completed.filter(c=>c.result==="win"&&c.pick.tier==="LOCK").length;
   const lockL  = completed.filter(c=>c.result==="loss"&&c.pick.tier==="LOCK").length;
-  const pending = (DATA_PICKS||[]).length - completed.length;
+  // IN-PROGRESS COUNT (fixed 2026-08-17). This read DATA_PICKS, the BETTABLE
+  // slate, and subtracted completed games from it. That only ever worked while
+  // the bettable slate still contained started games. Once score_today began
+  // dropping them, DATA_PICKS went to 0 while 17 picks had graded, and the card
+  // displayed "-17 Still in progress".
+  //
+  // The right source is DATA_TODAY_PICKS — the FULL day including started and
+  // finished games, which is exactly what this panel is summarising. Clamped at
+  // zero regardless: a count of remaining things can never be negative, and a
+  // negative here would mean the two datasets disagree, not that -17 games are
+  // playing.
+  const _todayAll = (DATA_TODAY_PICKS && DATA_TODAY_PICKS.length)
+    ? DATA_TODAY_PICKS : (DATA_PICKS || []);
+  const pending = Math.max(0, _todayAll.length - completed.length);
 
   // ── Header ────────────────────────────────────────────────────────────────
   let html = `
