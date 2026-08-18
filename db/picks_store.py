@@ -143,7 +143,7 @@ def save_picks(picks: list, pick_date: str) -> int:
                         round(float(p.get("conf", 0)), 4),
                         p.get("tier", ""),
                         p.get("reasoning", ""),
-                        _infer_market_signal(p.get("reasoning", "")),
+                        _market_signal(p),
                         _lineups_set,
                         _pick_price(p),
                     )
@@ -433,14 +433,41 @@ def get_accuracy_summary(days: int = 30) -> list:
 
 # ── Market Signal helpers ──────────────────────────────────────────────────
 
+def _market_signal(pick: dict) -> str:
+    """Read the market signal the model ACTUALLY computed.
+
+    WHAT THIS REPLACES (fixed 2026-08-18)
+    This used to be `_infer_market_signal(reasoning)`, which upper-cased the
+    pick's narrative and searched it for the literal strings "CONFIRM" and
+    "DIVERGE". model/mlb_picks.py has never written either word into a
+    narrative — grep returns zero matches — so the function could only ever
+    return "NEUTRAL". The Market Signal Breakdown showed CONFIRM 0, DIVERGE 0,
+    NEUTRAL 956 across the entire history, and read as "the markets never
+    disagreed with us" when it actually meant "this column was never populated".
+
+    The signal itself was never missing. `poly_market_signal` is computed in
+    mlb_model.score_game (via get_market_divergence on the Kalshi and Polymarket
+    probabilities) and published on the scored-game dict. It has been producing
+    real CONFIRM/DIVERGE values since the Polymarket slug fix on 2026-07-21.
+    save_picks simply never read it and parsed prose instead.
+
+    Same failure as pending = total - completed, and the -110 stake: a value
+    that is available gets INFERRED from something else instead of read.
+    """
+    g = (pick.get("game_data") or {})
+    for key in ("poly_market_signal", "market_signal"):
+        v = (g.get(key) or "").strip().upper()
+        if v in ("CONFIRM", "DIVERGE"):
+            return v
+        if v in ("NO_DATA", "NEUTRAL", ""):
+            continue
+    return "NEUTRAL"
+
+
 def _infer_market_signal(reasoning: str) -> str:
-    """
-    Infer market signal from pick reasoning text.
-    Returns 'CONFIRM', 'DIVERGE', or 'NEUTRAL'.
-    CONFIRM = Kalshi/Polymarket agreed with the model.
-    DIVERGE = markets disagreed with the model.
-    NEUTRAL = no market data or ambiguous signal.
-    """
+    """DEPRECATED. Kept only for backfill_market_signals() on historical rows
+    that no longer have their game_data. Always returns NEUTRAL in practice;
+    see _market_signal above for why."""
     if not reasoning:
         return "NEUTRAL"
     r = reasoning.upper()
