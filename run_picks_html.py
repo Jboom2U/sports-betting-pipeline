@@ -5861,20 +5861,39 @@ function renderDailySummary(){
   const wr     = total>0 ? Math.round(wins/total*100) : 0;
   const lockW  = completed.filter(c=>c.result==="win"&&c.pick.tier==="LOCK").length;
   const lockL  = completed.filter(c=>c.result==="loss"&&c.pick.tier==="LOCK").length;
-  // IN-PROGRESS COUNT (fixed 2026-08-17). This read DATA_PICKS, the BETTABLE
-  // slate, and subtracted completed games from it. That only ever worked while
-  // the bettable slate still contained started games. Once score_today began
-  // dropping them, DATA_PICKS went to 0 while 17 picks had graded, and the card
-  // displayed "-17 Still in progress".
+  // IN-PROGRESS COUNT — MEASURED, NOT INFERRED (rewritten 2026-08-17).
   //
-  // The right source is DATA_TODAY_PICKS — the FULL day including started and
-  // finished games, which is exactly what this panel is summarising. Clamped at
-  // zero regardless: a count of remaining things can never be negative, and a
-  // negative here would mean the two datasets disagree, not that -17 games are
-  // playing.
-  const _todayAll = (DATA_TODAY_PICKS && DATA_TODAY_PICKS.length)
-    ? DATA_TODAY_PICKS : (DATA_PICKS || []);
-  const pending = Math.max(0, _todayAll.length - completed.length);
+  // Two wrong answers before this one, both from the same bad assumption:
+  //   pending = DATA_PICKS.length - completed.length   ->  -17
+  //   pending = DATA_TODAY_PICKS.length - completed.length -> 7
+  // Subtraction assumes every pick is either finished or playing. It is not.
+  // A pick drops out of `completed` if findScore cannot match its game, or if
+  // pickResult cannot grade it (unparseable spread, missing total line). Those
+  // failures then masquerade as live games. "7 still in progress" meant seven
+  // picks failed to grade, at a moment when nothing was being played.
+  //
+  // So count what is actually being asked: GAMES the live feed reports as under
+  // way. If the feed says nothing is in progress, the answer is zero, whatever
+  // the pick arithmetic implies.
+  const _inProgressGames = new Set();
+  (_liveScores() || []).forEach(g => {
+    const st = (g.detailedState || g.status || "").toLowerCase();
+    if(st.includes("progress") || st.includes("warmup") || st.includes("delayed"))
+      _inProgressGames.add(((g.away||"") + " @ " + (g.home||"")).trim());
+  });
+  const pending = _inProgressGames.size;
+
+  // DELIBERATELY NOT SHOWN: the gap between _todayAll and completed.
+  //
+  // I briefly surfaced it as an "ungraded" card. It is noise on this panel.
+  // DATA_TODAY_PICKS is the full slate RE-SCORED at render time, so it is "what
+  // the model would pick now", not "what was on the board today". Rescoring
+  // through the day changes picks, so a gap here mostly reflects that drift
+  // rather than a grading failure, and the reader has no way to act on it.
+  //
+  // If picks genuinely fail to grade that IS worth tracking — but against the
+  // PUBLISHED picks in the DB, on an admin page, not on the results panel.
+  // See the note in CLAUDE.md about summary grading a re-derived pick set.
 
   // ── Header ────────────────────────────────────────────────────────────────
   let html = `
@@ -5900,6 +5919,7 @@ function renderDailySummary(){
       <div style="font-size:1.4rem;font-weight:700;color:#8b949e">${pending}</div>
       <div style="font-size:.7rem;color:#8b949e;margin-top:4px">Still in progress</div>
     </div>
+
   </div>`;
 
   // ── No picks yet ──────────────────────────────────────────────────────────
