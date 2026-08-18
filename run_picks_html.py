@@ -4392,11 +4392,97 @@ function renderYesterday(){
   const roiColor = (m.roi || 0) >= 0 ? "var(--green)" : "var(--red)";
   const roiSign  = (m.roi || 0) >= 0 ? "+" : "";
 
+
+// ── ONE SOURCE OF TRUTH FOR YESTERDAY (2026-08-18) ──────────────────────────
+// The yesterday panel was reading TWO different graders on the same screen:
+//   graded_picks  -> the DB (get_graded_detail), what was actually published
+//   metrics.*     -> the analysis JSON, written by run_analysis.py at 6am
+// On 08-17 the tier chips totalled 14-8 while the tab below them said 11-10.
+// Both were computed honestly; they simply grade different pick sets.
+//
+// load_yesterday_analysis already prefers the DB for graded_picks. So derive
+// EVERY aggregate on this panel from that same list, and fall back to the JSON
+// metrics only when the DB gave us nothing. Aggregates must never come from a
+// different source than the rows they claim to summarise.
+function _ydayAgg(d){
+  const gp = (d && d.graded_picks) || [];
+  if(!gp.length) return null;                 // no DB rows -> caller uses JSON
+  const norm = p => ({
+    tier: (p.tier || "").toUpperCase(),
+    type: (p.pick_type || p.type || "").toUpperCase(),
+    res:  (p.actual_result || p.result || "").toUpperCase()
+  });
+  const roll = key => {
+    const out = {};
+    gp.map(norm).forEach(r => {
+      const k = r[key]; if(!k) return;
+      const b = out[k] || (out[k] = {wins:0, losses:0, pushes:0, total:0});
+      if(r.res === "WIN")       { b.wins++;   b.total++; }
+      else if(r.res === "LOSS") { b.losses++; b.total++; }
+      else if(r.res === "PUSH") { b.pushes++; }
+    });
+    Object.values(out).forEach(b => {
+      b.win_rate = b.total ? b.wins / b.total : 0;
+    });
+    return out;
+  };
+  const all = gp.map(norm);
+  const w = all.filter(r => r.res === "WIN").length;
+  const l = all.filter(r => r.res === "LOSS").length;
+  return {
+    overall: {wins:w, losses:l, total:w+l, win_rate:(w+l) ? w/(w+l) : 0},
+    by_tier: roll("tier"),
+    by_type: roll("type")
+  };
+}
+
   // Tier breakdown chips — LOCK / STRONG / LEAN each get their own W-L card
-  const TIER_ORDER = ["LOCK","STRONG","LEAN"];
-  const TIER_ICON  = {LOCK:"🔒",STRONG:"⭐⭐",LEAN:"⭐"};
-  const TIER_COL   = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a"};
-  const byTier     = (d.metrics && d.metrics.by_tier) || {};
+
+// ── HOW THE SHORTLIST WOULD HAVE DONE (2026-08-18) ──────────────────────────
+// Model accuracy and "what you were told to bet" are different questions, and
+// blending them hides both: a 13-4 accuracy day next to a 1-0 recommended day
+// collapses into a number that means neither.
+//
+// get_graded_detail already carries conf, pick_type, label and odds, which is
+// everything bestBetEval needs, so this needs no new persistence.
+//
+// HONEST CAVEAT, stated on the panel: this applies TODAY's rule (current band
+// table, plateau and price-profile guards) to past picks. It is therefore a
+// backtest of the rule as it stands, not a log of what the board said at the
+// time. That is the more useful question — "would my current rule have made
+// money on these" — but it is not history, and the label says so.
+function _ydayBestBets(d){
+  const gp = (d && d.graded_picks) || [];
+  if(!gp.length) return null;
+  let w = 0, l = 0, n = 0;
+  gp.forEach(p => {
+    let c = parseFloat(p.conf);
+    if(!isFinite(c)) return;
+    if(c <= 1.5) c *= 100;                       // DB stores 0-1, board uses 0-100
+    const shim = {
+      type: (p.pick_type || p.type || "").toUpperCase(),
+      conf: c,
+      label: p.label || "",
+      pick_price: (p.odds != null ? parseFloat(p.odds) : null),
+      team: p.team || "", away: p.away_team || ""
+    };
+    if(!bestBetEval(shim, {})) return;
+    n++;
+    const r = (p.actual_result || p.result || "").toUpperCase();
+    if(r === "WIN") w++; else if(r === "LOSS") l++;
+  });
+  return n ? {picks:n, wins:w, losses:l} : {picks:0, wins:0, losses:0};
+}
+
+  // TOSSUP included at Justin's call (2026-08-18): it is shown on the board, so
+  // it belongs in the record. OVERALL is rendered last and must equal the sum of
+  // the four — if it ever does not, the panel is reading two datasets again and
+  // the discrepancy is visible instead of silent.
+  const TIER_ORDER = ["LOCK","STRONG","LEAN","TOSSUP"];
+  const TIER_ICON  = {LOCK:"🔒",STRONG:"⭐⭐",LEAN:"⭐",TOSSUP:"≈"};
+  const TIER_COL   = {LOCK:"#ffc107",STRONG:"#42a5f5",LEAN:"#66bb6a",TOSSUP:"#8b949e"};
+  const _agg       = _ydayAgg(d);
+  const byTier     = (_agg && _agg.by_tier) || (d.metrics && d.metrics.by_tier) || {};
 
   const tierChips = TIER_ORDER.map(t => {
     const b = byTier[t];
@@ -4412,7 +4498,25 @@ function renderYesterday(){
       <div class="yday-tier-record" style="color:${recColor}">${record}</div>
       ${pct ? `<div class="yday-tier-pct">${pct}</div>` : ""}
     </div>`;
-  }).join("");
+  }).join("") + (() => {
+    // OVERALL, rendered from the SAME byTier object the chips came from, so the
+    // arithmetic is self-checking on screen. If these ever stop summing, the
+    // panel is reading two datasets and you can see it immediately.
+    const tw = TIER_ORDER.reduce((a,t) => a + ((byTier[t]||{}).wins   || 0), 0);
+    const tl = TIER_ORDER.reduce((a,t) => a + ((byTier[t]||{}).losses || 0), 0);
+    if(!(tw + tl)) return "";
+    const col = tw > tl ? "var(--green)" : tl > tw ? "var(--red)" : "var(--sub)";
+    const bb  = _ydayBestBets(d);
+    const bbTxt = (bb && bb.picks)
+      ? `<div class="yday-tier-pct" title="Today's Best Bets rule applied to these picks. A backtest of the current rule, not a log of what the board said at the time.">&#9733; best bets ${bb.wins}-${bb.losses}</div>`
+      : (bb ? `<div class="yday-tier-pct">&#9733; none qualified</div>` : "");
+    return `<div class="yday-tier-chip" style="border-color:var(--border-strong,#484f58)">
+      <div class="yday-tier-name" style="color:#e6edf3">OVERALL</div>
+      <div class="yday-tier-record" style="color:${col}">${tw}-${tl}</div>
+      <div class="yday-tier-pct">${(100*tw/(tw+tl)).toFixed(0)}%</div>
+      ${bbTxt}
+    </div>`;
+  })();
 
   // Props summary from yesterday
   const py = (d.props_yesterday) || {};
@@ -4443,7 +4547,7 @@ function renderYesterday(){
   document.getElementById("yesterdayTab").style.display = "";
 
   // Full yesterday panel
-  const tierRows = Object.entries((d.metrics && d.metrics.by_tier) || {}).map(([t, b]) => {
+  const tierRows = Object.entries((_agg && _agg.by_tier) || (d.metrics && d.metrics.by_tier) || {}).map(([t, b]) => {
     if(!b.total) return "";
     const twr = b.win_rate ? (b.win_rate*100).toFixed(1)+"%" : "—";
     return `<tr>
@@ -4453,7 +4557,7 @@ function renderYesterday(){
     </tr>`;
   }).join("");
 
-  const typeRows = Object.entries((d.metrics && d.metrics.by_type) || {}).map(([t, b]) => {
+  const typeRows = Object.entries((_agg && _agg.by_type) || (d.metrics && d.metrics.by_type) || {}).map(([t, b]) => {
     if(!b.total) return "";
     const twr = b.win_rate ? (b.win_rate*100).toFixed(1)+"%" : "—";
     return `<tr>
