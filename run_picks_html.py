@@ -6252,6 +6252,49 @@ def main(date=None, no_open=False):
             pass
     today_picks_all = generate_picks(_today_scored) if _today_scored else picks
 
+    # ── GRADE WHAT WAS PUBLISHED, NOT WHAT WE WOULD PICK NOW ─────────────────
+    # (2026-08-18, after Daily Summary said 13-6 and the Yesterday tab said 11-10
+    # for the same date.)
+    #
+    # _today_scored above re-scores EVERY game on the schedule, finished ones
+    # included, at page-render time. generate_picks then produces a pick set
+    # from that. At 11pm the model re-picks a game that ended at 10pm using
+    # confirmed lineups and closing lines the 6am model never had, and the Daily
+    # Summary grades THAT. It is not lookahead at results, but it is a
+    # better-informed model than the one that actually published, so the record
+    # comes out flattered. 13-6 vs the real 11-10.
+    #
+    # The `picks` table holds what was really published: rescoring stops at first
+    # pitch, so each row settles on the last pre-game pick — the one that was
+    # actually available to bet. Restrict to those. Picks the re-score no longer
+    # produces are logged rather than silently dropped.
+    try:
+        from db.picks_store import get_picks as _get_published
+        _published = _get_published(actual_date) or []
+    except Exception as _pe:
+        log.warning(f"Published-pick lookup failed, summary falls back to "
+                    f"re-scored set (record may be optimistic): {_pe}")
+        _published = []
+
+    if _published:
+        _pub_label = {(r.get("game", ""), r.get("pick_type", "")): (r.get("label", "") or "")
+                      for r in _published}
+        _kept, _matched = [], set()
+        for _p in today_picks_all:
+            _k = (_p.get("game", ""), _p.get("type", ""))
+            if _k in _pub_label:
+                _q = dict(_p)
+                # The DB label is authoritative: it is the side that was live
+                # pre-game. A re-score may have changed its mind since.
+                _q["label"] = _pub_label[_k] or _q.get("label", "")
+                _kept.append(_q)
+                _matched.add(_k)
+        _missing = [k for k in _pub_label if k not in _matched]
+        log.info(f"Daily Summary pick set: {len(_kept)} published pick(s) kept, "
+                 f"{len(today_picks_all) - len(_kept)} re-score artefact(s) dropped"
+                 + (f", {len(_missing)} published pick(s) not regenerated" if _missing else ""))
+        today_picks_all = _kept
+
     parlays_2        = build_parlays(picks, legs=2, max_parlays=5)
     parlays_3        = build_parlays(picks, legs=3, max_parlays=5)
     thematic_parlays = build_thematic_parlays(picks)
