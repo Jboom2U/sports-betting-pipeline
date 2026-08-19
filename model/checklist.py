@@ -359,6 +359,22 @@ def p_immutable_record():
     return OPEN, "nothing freezes a published pick"
 
 
+def p_props_pull_async():
+    txt = _read("app.py")
+    if "_props_pull_state" in txt and "threading.Thread(target=_pull_worker" in txt:
+        return DONE, "props pull runs off the request thread and reports credits spent"
+    return OPEN, ("props pull runs inline; one HTTP call per event outruns the gunicorn "
+                  "worker timeout, killing it mid-loop after spending credits")
+
+
+def p_parlay_log():
+    txt = _read("run_picks_html.py")
+    if re.search(r"parlay[^\n]{0,40}(stake|logBet|logParlay)", txt, re.I):
+        return DONE, "the parlay drawer can record a stake"
+    return OPEN, ("the parlay drawer has no stake field and no logging path; only "
+                  "single picks can be recorded")
+
+
 # -------------------------------------------------------------------- items
 # group order is the order they render. Keep the highest leverage groups first.
 
@@ -552,6 +568,22 @@ ITEMS = [
          why="Four self inflicted bugs on 08-11 were caught only because they happened to be "
              "re-read. Advisory only, never blocking.",
          where="scripts/predeploy_check.py, gemini_client.py", probe=None),
+    dict(id="parlay-log", group="surface", effort="M",
+         title="Let the parlay builder record a stake",
+         why="Single picks can be logged, parlays cannot. Justin builds them and has nowhere "
+             "to put the amount. Preferred shape is one bets row PER LEG with a shared parlay "
+             "group id, so each leg keeps its real game_id and CLV and grading still work, and "
+             "the parlay result is derived from whether every leg won. That answers which leg "
+             "keeps killing them, which is the only question worth asking about parlays.",
+         where="run_picks_html.py, db/schema.py, app.py", probe=p_parlay_log),
+    dict(id="props-pull-async", group="reliability", effort="S",
+         title="Run the props pull off the request thread",
+         why="One HTTP call per event at timeout=30. Twelve games outran the gunicorn worker "
+             "timeout, the worker was killed mid-loop, the browser got a blank 500, and the "
+             "except block that reports spent credits never ran. Credits were spent with no "
+             "record of it.",
+         where="app.py /admin/props-pull", probe=p_props_pull_async),
+
     dict(id="bet-log-deploy", group="reliability", effort="S",
          title="Deploy the bet log",
          why="Built and verified, not yet shipped. Until it is, there is no record of what was "

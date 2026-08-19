@@ -2838,6 +2838,13 @@ If matched is high but bettable is 0, the guards rejected them and the
                         mimetype="text/html"), 500
 
 
+# Result of the last props pull. The pull runs in a background thread because
+# doing it inline killed the request (see the route docstring), and a killed
+# worker cannot report what it spent.
+_props_pull_state = {"running": False, "started": None, "msg": "",
+                     "spent": 0, "done_at": None}
+
+
 @app.route("/admin/props-pull", methods=["GET", "POST"])
 def props_pull():
     """ON-DEMAND batter prop lines from The Odds API. SPENDS QUOTA.
@@ -2881,9 +2888,77 @@ def props_pull():
                 msg = _dupe_note or "<div class='warn'>Nothing to pull.</div>"
                 markets = []
             cost = estimate_cost(len(ev_ids), len(markets))
+
+            # RUN IT OFF THE REQUEST (fixed 2026-08-19).
+            #
+            # fetch_event_props is ONE HTTP call PER EVENT at timeout=30. Twelve
+            # games is twelve sequential calls, which outruns the gunicorn worker
+            # timeout. The worker was KILLED mid-loop, so the browser got a blank
+            # 500 and the except block below never ran. Credits were spent for
+            # every event that had completed and nothing recorded it.
+            #
+            # Same pattern already used by force-lineups and force-pipeline: kick
+            # a thread, return immediately, report progress on the page.
+            if _props_pull_state["running"]:
+                return Response(
+                    "<pre style='background:#0d1117;color:#d29922;padding:20px'>"
+                    "A props pull is already running. Reload /admin/props-pull "
+                    "in a moment for the result. Nothing new was started and no "
+                    "extra credits were spent.</pre>", mimetype="text/html")
+
+            _ev_ids, _markets, _cost = list(ev_ids), list(markets), cost
+            _props_pull_state.update({"running": bool(_markets), "started": datetime.now(ET).strftime("%I:%M %p").lstrip("0"),
+                                      "msg": "", "spent": 0, "done_at": None})
+
+            def _pull_worker():
+                spent = 0
+                try:
+                    total, remaining = {}, "?"
+                    for eid in _ev_ids:
+                        got, remaining = fetch_event_props(eid, _markets)
+                        spent += len(_markets)
+                        _props_pull_state["spent"] = spent
+                        for k, v in got.items():
+                            total.setdefault(k, {}).update(v)
+                    counts = merge_into_prop_lines(total, event_ids=_ev_ids)
+                    try:
+                        from db.csv_sync import upload_all, storage_available
+                        if storage_available():
+                            upload_all()
+                            log.info("[props-pull] prop lines pushed to R2")
+                    except Exception as _se:
+                        log.warning(f"[props-pull] R2 upload failed: {_se}")
+                    got_n = sum(len(v) for v in total.values())
+                    with _cache_lock:
+                        _cache["generated_at"] = 0
+                    _regenerate_in_background()
+                    _props_pull_state["msg"] = (
+                        f"<div class='ok'>Pulled <b>{got_n}</b> prop line(s) across "
+                        f"{len(_ev_ids)} game(s) &times; {len(_markets)} market(s). "
+                        f"Spent <b>{spent}</b> credit(s). "
+                        f"<b>{_h.escape(str(remaining))}</b> remaining.<br>"
+                        f"File now holds: {_h.escape(str(counts))}. Board is rescoring.</div>")
+                except Exception:
+                    # Report the spend even on failure. That number is the whole
+                    # reason this needs to survive a crash.
+                    _props_pull_state["msg"] = (
+                        f"<div class='warn'><b>Pull failed after <b>{spent}</b> credit(s).</b>"
+                        f"<pre>{_h.escape(traceback.format_exc())}</pre></div>")
+                finally:
+                    _props_pull_state["running"] = False
+                    _props_pull_state["done_at"] = datetime.now(ET).strftime("%I:%M %p").lstrip("0")
+
+            if _markets:
+                threading.Thread(target=_pull_worker, daemon=True).start()
+                msg = _dupe_note + (
+                    f"<div class='ok'>Started: {len(_ev_ids)} game(s) &times; "
+                    f"{len(_markets)} market(s), about <b>{_cost}</b> credit(s). "
+                    f"This runs in the background so the request cannot time out. "
+                    f"<b>Reload this page</b> in 20-40 seconds for the result.</div>")
+
             try:
                 total, remaining = {}, "?"
-                for eid in (ev_ids if markets else []):
+                for eid in []:
                     got, remaining = fetch_event_props(eid, markets)
                     for k, v in got.items():
                         total.setdefault(k, {}).update(v)
@@ -2913,6 +2988,18 @@ def props_pull():
                 msg = (f"<div class='warn'><b>Pull failed.</b> Credits may still have "
                        f"been spent for any event that completed.<pre>"
                        f"{_h.escape(traceback.format_exc())}</pre></div>")
+
+    # Show the background pull's outcome. Without this a completed pull leaves no
+    # trace on the page and the only record of what was spent is a log line.
+    if _props_pull_state["running"]:
+        msg = (msg or "") + (
+            f"<div class='warn'>Pull running since "
+            f"{_props_pull_state['started']}, <b>{_props_pull_state['spent']}</b> "
+            f"credit(s) committed so far. Reload for the result.</div>")
+    elif _props_pull_state["msg"]:
+        msg = (msg or "") + (f"<div style='opacity:.85;font-size:.9em'>Last pull "
+                             f"finished {_props_pull_state['done_at']}:</div>"
+                             + _props_pull_state["msg"])
 
     if not get_api_key():
         return Response("<pre style='background:#0d1117;color:#f85149;padding:20px'>"
