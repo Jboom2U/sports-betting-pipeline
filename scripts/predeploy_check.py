@@ -51,6 +51,19 @@ with a.app.test_client() as c:
         print('  testing ' + r, file=sys.stderr, flush=True)
         out.append(r + ':' + str(c.get(r).status_code))
     print(','.join(out))
+# FLUSH BEFORE os._exit (fixed 2026-08-19).
+#
+# os._exit terminates immediately and does NOT flush Python's buffers. app.py
+# starts background scheduler threads so a clean sys.exit hangs, which is why
+# _exit is used at all. But when stdout is a PIPE (subprocess.run captures it)
+# Python block-buffers, so this results line sat in the buffer and was DISCARDED.
+# The parent then saw empty stdout and reported [SIM ERROR] on a run where all
+# four routes returned 200.
+#
+# A check that fails when nothing is wrong is worse than no check: it trains you
+# to deploy through a red result.
+sys.stdout.flush()
+sys.stderr.flush()
 os._exit(0)
 """
 
@@ -188,7 +201,14 @@ if not route_line:
         warnings.append("[WARN]  Route simulation skipped — local dep missing (" + missing + "). Run on Railway env to verify.")
         print("  SKIP route simulation (local dep missing — not a code error)")
     else:
-        errors.append("[SIM ERROR]  Route simulation failed:\n" + stderr[-600:])
+        # Show what actually broke. stderr[-600:] was almost always the tail of
+        # the app's own logging, which buried the traceback that matters.
+        _noise = ("[WARNING]", "[INFO]", "[DEBUG]", "DATABASE_URL not set")
+        _lines = [l for l in stderr.splitlines()
+                  if l.strip() and not any(n in l for n in _noise)]
+        _detail = "\n".join(_lines[-25:]) or stderr[-600:] or "(no stderr)"
+        errors.append("[SIM ERROR]  Route simulation failed:\n"
+                      "  stdout was: " + repr(stdout[:200]) + "\n" + _detail)
 else:
     for pair in route_line.split(","):
         route, code = pair.rsplit(":", 1)
