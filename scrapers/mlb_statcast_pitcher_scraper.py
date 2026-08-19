@@ -235,8 +235,22 @@ def load_pitcher_statcast(min_pa: int = 10) -> dict:
                     pa = 0
                 if pa < min_pa:
                     continue
+                # KEY BY BOTH ID AND NAME (fixed 2026-08-19).
+                #
+                # This dict was keyed on player_name alone. In the master CSV that
+                # column holds player IDs, not names, so every lookup in
+                # mlb_model.exp_runs (which searches by lowercase pitcher name)
+                # missed. 741 pitchers loaded and none were reachable, so
+                # stuff_mult stayed 1.0 and the xwOBA (25%) and whiff (10%)
+                # weights contributed nothing to any pick.
+                #
+                # Storing the same record under both keys makes the lookup work
+                # whatever that column happens to contain, and an ID match cannot
+                # suffer the name matching problems that have cost this project
+                # Kalshi, platoon and pitcher matching bugs already.
                 name = row.get("player_name", "").strip().lower()
-                if not name:
+                pid  = str(row.get("player_id", "") or "").strip()
+                if not name and not pid:
                     continue
                 rec = dict(row)
                 for field in NUMERIC:
@@ -245,7 +259,10 @@ def load_pitcher_statcast(min_pa: int = 10) -> dict:
                         rec[field] = float(v) if v not in ("", None) else None
                     except (ValueError, TypeError):
                         rec[field] = None
-                data[name] = rec
+                if name:
+                    data[name] = rec
+                if pid:
+                    data[pid] = rec
     except Exception as e:
         log.warning(f"load_pitcher_statcast failed: {e}")
 

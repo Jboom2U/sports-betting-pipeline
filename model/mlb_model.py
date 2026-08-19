@@ -1086,7 +1086,17 @@ class MLBModel:
         LEAGUE_WHIFF   = 25.0    # MLB average whiff%, 2023-2025
         WHIFF_WEIGHT   = 0.10    # secondary signal weight
 
-        sc = self.pitcher_statcast.get((pitcher_name or "").lower(), {})
+        # Look up by MLBAM id first, name second. The dict now carries both keys.
+        _pid = str(opp_pitcher.get("player_id") or "").strip()
+        sc, _sc_via = {}, "none"
+        if _pid:
+            sc = self.pitcher_statcast.get(_pid, {})
+            if sc:
+                _sc_via = "id"
+        if not sc and pitcher_name:
+            sc = self.pitcher_statcast.get(pitcher_name.lower(), {})
+            if sc:
+                _sc_via = "name"
         xwoba = sc.get("xwoba")
         whiff = sc.get("whiff_percent")
 
@@ -1145,6 +1155,20 @@ class MLBModel:
             prec_m  = _L.get("precip_adj", 1.0)
             supp_e  = _L.get("supp_era", suppression)
 
+            # Say WHY this row is zero when it is zero. A blank bar that means
+            # "no data for this pitcher" and one that means "this pitcher is
+            # exactly league average" are different problems, and the card could
+            # not tell them apart.
+            _via = locals().get("_sc_via", "none")
+            if _via == "none":
+                _sc_detail = "no Statcast record matched this pitcher"
+            elif xwoba is None and whiff is None:
+                _sc_detail = f"matched by {_via}, but xwOBA and whiff are both empty"
+            else:
+                _sc_detail = (f"xwOBA {xwoba if xwoba is not None else 'n/a'}, "
+                              f"whiff {whiff if whiff is not None else 'n/a'} "
+                              f"(matched by {_via})")
+
             base_league = LEAGUE["rpg"]
             v_off    = SEASON_WEIGHT * offense["rpg"] + RECENT_WEIGHT * LEAGUE["rpg"]
             v_form   = SEASON_WEIGHT * offense["rpg"] + RECENT_WEIGHT * form["rpg"]
@@ -1163,7 +1187,7 @@ class MLBModel:
                 ("Confirmed lineup",  v_lineup, "lineup OPS vs team average"),
                 ("Opposing starter",  v_sp,     f"{pitcher_name or 'TBD'} {era_sp:.2f} ERA"),
                 ("Opposing bullpen",  v_bp,     "bullpen ERA, fatigue adjusted"),
-                ("Pitcher Statcast",  v_stuff,  "xwOBA and whiff rate"),
+                ("Pitcher Statcast",  v_stuff,  _sc_detail),
                 ("Park",              v_park,   f"factor {park_run_factor:.0f}"),
                 ("Home field",        v_home,   "home team boost" if is_home else ""),
                 ("Weather",           v_wx,     "wind, temperature, precipitation"),
@@ -1192,6 +1216,10 @@ class MLBModel:
 
         away_sp = self.get_pitcher(away_sp_name, is_home=False)
         home_sp = self.get_pitcher(home_sp_name, is_home=True)
+        # Carry the MLBAM id so the Statcast lookup can match on it rather than on
+        # a name string. The schedule has held these since 2026-07-27.
+        away_sp["player_id"] = str(game.get("away_probable_pitcher_id", "") or "").strip()
+        home_sp["player_id"] = str(game.get("home_probable_pitcher_id", "") or "").strip()
 
         park          = self.get_park(venue)
         park_runs     = sf(park.get("park_factor_runs"), 100)
