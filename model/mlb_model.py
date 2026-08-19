@@ -1121,7 +1121,20 @@ class MLBModel:
         expected = base_rpg * suppression * park_adj * loc_boost
 
         # ── Weather adjustments ───────────────────────────────────────────────
-        if weather and not weather.get("roof"):
+        # ROOF IS A STRING FROM THE CSV (fixed 2026-08-19).
+        #
+        # This read `if weather and not weather.get("roof")`. read_csv returns
+        # strings, so roof is 'False' or 'True', and BOTH are truthy. The test was
+        # therefore False for every game and the entire weather block never ran,
+        # for domes and open air parks alike. Wind, temperature and precipitation
+        # have been scraped every morning and discarded since this was written.
+        #
+        # Same failure as the -109 run line and the 75/68/60/48 tier thresholds:
+        # a value that looks correct and is wrong, producing a plausible number
+        # rather than an error. Found only because the factor waterfall put a
+        # zero on the card where a number should have been.
+        _roof = str((weather or {}).get("roof", "")).strip().lower() in ("true", "1", "yes", "y")
+        if weather and not _roof:
             wc      = sf(weather.get("wind_component"), 0)
             temp    = sf(weather.get("temp_f"), 70)
             precip  = sf(weather.get("precip_prob"), 0)
@@ -1159,6 +1172,25 @@ class MLBModel:
             # "no data for this pitcher" and one that means "this pitcher is
             # exactly league average" are different problems, and the card could
             # not tell them apart.
+            # A zero that means "no data" and a zero that means "this signal had
+            # no effect here" are different problems. The card could not tell them
+            # apart, which is how the weather bug above stayed invisible.
+            _wx_roof = str((weather or {}).get("roof", "")).strip().lower() in ("true","1","yes","y")
+            if not weather:
+                _wx_detail = "no weather data for this game"
+            elif _wx_roof:
+                _wx_detail = "dome, weather not applied"
+            else:
+                _t = sf((weather or {}).get("temp_f"), 70)
+                _w = sf((weather or {}).get("wind_component"), 0)
+                _p = sf((weather or {}).get("precip_prob"), 0)
+                _wx_detail = (f"{_t:.0f}F, wind component {_w:+.1f}, precip {_p*100:.0f}%"
+                              if (wind_m * cold_m * prec_m) != 1.0
+                              else f"{_t:.0f}F, wind component {_w:+.1f}, no net effect")
+
+            _lu_detail = ("lineup OPS vs team average" if ops_m != 1.0
+                          else "lineups not confirmed yet")
+
             _via = locals().get("_sc_via", "none")
             if _via == "none":
                 _sc_detail = "no Statcast record matched this pitcher"
@@ -1184,13 +1216,13 @@ class MLBModel:
             for label, val, detail in (
                 ("Team offense",      v_off,    f"season {offense['rpg']:.2f} RPG"),
                 ("Recent form",       v_form,   f"last 10 at {form['rpg']:.2f} RPG"),
-                ("Confirmed lineup",  v_lineup, "lineup OPS vs team average"),
+                ("Confirmed lineup",  v_lineup, _lu_detail),
                 ("Opposing starter",  v_sp,     f"{pitcher_name or 'TBD'} {era_sp:.2f} ERA"),
                 ("Opposing bullpen",  v_bp,     "bullpen ERA, fatigue adjusted"),
                 ("Pitcher Statcast",  v_stuff,  _sc_detail),
                 ("Park",              v_park,   f"factor {park_run_factor:.0f}"),
                 ("Home field",        v_home,   "home team boost" if is_home else ""),
-                ("Weather",           v_wx,     "wind, temperature, precipitation"),
+                ("Weather",           v_wx,     _wx_detail),
             ):
                 record.append({"label": label, "delta": round(val - prev, 3),
                                "value": round(val, 2), "detail": detail})
