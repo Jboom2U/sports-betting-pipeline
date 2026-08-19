@@ -167,8 +167,24 @@ def main(date=None):
     # ── Step 4c: Today's probable pitcher recent starts ────────────────────────
     try:
         from scrapers.mlb_pitcher_scraper import fetch_all_recent_starts
-        from normalize.mlb_pitcher_normalize import normalize_recent_starts
+        from normalize.mlb_pitcher_normalize import (normalize_recent_starts,
+                                                     normalize_platoon_splits)
         import csv as _csv
+
+        # Refresh the platoon master here (added 2026-08-19). This module was
+        # imported for normalize_recent_starts alone, so normalize_platoon_splits
+        # ran ONLY on a manual /admin/refresh-signals and the master went stale
+        # between them. The resulting empty lookups were chased three times as a
+        # name matching bug.
+        #
+        # This changes NO pick today: get_platoon() still never reaches exp_runs
+        # or ml_conf. It only guarantees the data is current for whenever that
+        # wiring lands. Non fatal by design, like every other signal refresh here.
+        try:
+            _pl_rows = normalize_platoon_splits()
+            log.info(f"Platoon splits normalized: {_pl_rows} rows")
+        except Exception as _e:
+            log.warning(f"Platoon splits normalize failed (non fatal): {_e}")
 
         # Get today's probable pitchers from schedule master
         sched_path = os.path.join(os.path.dirname(__file__), "data", "clean", "mlb_schedule_master.csv")

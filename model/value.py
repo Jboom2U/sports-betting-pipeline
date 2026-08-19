@@ -31,18 +31,60 @@ def implied_prob(american: float) -> float | None:
     return None if d is None else 1.0 / d
 
 
-def devig_two_way(price_pick: float, price_other: float) -> float | None:
+def _power_k(p1: float, p2: float) -> float:
+    """Exponent k where p1**k + p2**k == 1. Bisection; both inputs are in (0,1)
+    so x**k falls as k rises, the sum is monotonic, and this always converges."""
+    lo, hi = 0.5, 4.0
+    for _ in range(60):
+        k = (lo + hi) / 2.0
+        if (p1 ** k + p2 ** k) > 1.0:
+            lo = k
+        else:
+            hi = k
+    return (lo + hi) / 2.0
+
+
+def devig_two_way(price_pick: float, price_other: float,
+                  method: str = "power") -> float | None:
     """
-    No-vig probability for the PICKED side, given both sides' American prices.
-    Falls back to the raw implied prob if the other side's price is missing.
+    No-vig probability for the PICKED side, from both sides' American prices.
+
+    POWER METHOD, not proportional (changed 2026-08-19).
+
+    Proportional devig (ip / (ip + io)) assumes vig is spread evenly across both
+    sides. It is not. Longshots are overbet, books load more juice on the dog, and
+    removing it proportionally strips too much from the favourite.
+
+    The DIRECTION of that error is the point. It understates the favourite's true
+    probability, which inflates the model's apparent edge over the market on
+    favourites. This model's ML picks skew to -130/-160 favourites that returned
+    -13.5% at real prices on /admin/real-roi, so the old method was flattering
+    exactly the picks that lose money.
+
+    Size: about 0.4 points at -150, about 1.2 points at -240, growing as the
+    market gets more lopsided. Modest, and in the safe direction. It makes
+    marginal chalk look worse, never better.
     """
     ip = implied_prob(price_pick)
+    io = implied_prob(price_other)
     if ip is None:
         return None
-    io = implied_prob(price_other)
     if io is None or (ip + io) <= 0:
-        return ip
-    return ip / (ip + io)
+        # Was: return ip. That handed back the RAW vig inclusive probability in a
+        # field labelled no-vig, putting two different quantities in one variable.
+        # That exact pattern produced the -109 run line and the column shift, so
+        # refuse instead. A missing value is safe, a wrong value is not.
+        return None
+    if method == "proportional":
+        return ip / (ip + io)
+    try:
+        k = _power_k(ip, io)
+        v = ip ** k
+        if not (0.0 < v < 1.0):
+            raise ValueError("power devig out of range")
+        return v
+    except Exception:
+        return ip / (ip + io)
 
 
 def ev_per_unit(model_p: float, american: float) -> float | None:
