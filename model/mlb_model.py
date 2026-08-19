@@ -1221,7 +1221,7 @@ class MLBModel:
                 ("Opposing bullpen",  v_bp,     "bullpen ERA, fatigue adjusted"),
                 ("Pitcher Statcast",  v_stuff,  _sc_detail),
                 ("Park",              v_park,   f"factor {park_run_factor:.0f}"),
-                ("Home field",        v_home,   "home team boost" if is_home else ""),
+                ("Home field",        v_home,   "home team boost" if is_home else "away team, no boost applied"),
                 ("Weather",           v_wx,     _wx_detail),
             ):
                 record.append({"label": label, "delta": round(val - prev, 3),

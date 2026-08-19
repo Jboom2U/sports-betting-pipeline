@@ -59,17 +59,31 @@ ARSENAL_URL = (
     "?type=pitcher&pitchType=&year={year}&team=&min=10&csv=true"
 )
 
-# Fields to keep from expected_statistics endpoint
-FIELDS_KEEP = [
-    "player_id", "last_name", "first_name", "year",
-    "pa", "bip",
-    "ba", "xba",
-    "slg", "xslg",
-    "woba", "xwoba",
-    "exit_velocity_avg", "launch_angle_avg",
-    "barrel_batted_rate", "hard_hit_percent",
-    "k_percent", "bb_percent",
-]
+# Fields from the expected_statistics endpoint.
+#
+# VERIFIED AGAINST THE LIVE FEED 2026-08-19. The previous list asked for column
+# names that do not exist there, so DictReader returned "" for every one and the
+# master was written with six permanently empty columns. The model reads xwoba,
+# so its Statcast weight (25%) contributed nothing to any pick, ever.
+#
+# The real header is:
+#   "last_name, first_name","player_id","year","pa","bip","ba","est_ba",
+#   "est_ba_minus_ba_diff","slg","est_slg","est_slg_minus_slg_diff","woba",
+#   "est_woba","est_woba_minus_woba_diff","era","xera","era_minus_xera_diff"
+#
+# Two things follow. The expected metrics are est_*, not x*. And barrel rate,
+# exit velocity, launch angle, K% and BB% are NOT on this leaderboard at all;
+# they were never going to arrive no matter how the name was spelled.
+FIELDS_KEEP = ["player_id", "year", "pa", "bip", "ba", "slg", "woba", "era"]
+
+# Savant column -> the name this repo stores. Keeping our own names means the
+# model does not have to change if Savant renames a field again.
+FIELD_RENAME = {
+    "est_ba":   "xba",
+    "est_slg":  "xslg",
+    "est_woba": "xwoba",
+    "xera":     "xera",
+}
 
 
 # ── Savant fetch helpers ──────────────────────────────────────────────────────
@@ -109,11 +123,34 @@ def _fetch_csv(url: str, label: str) -> list:
 
 
 def _build_name(row: dict) -> str:
-    first = row.get("first_name", "").strip()
-    last  = row.get("last_name", "").strip()
+    """Pitcher name as "First Last".
+
+    Savant ships the name as a SINGLE column literally titled
+    "last_name, first_name", holding "Gausman, Kevin". _fetch_csv lowercases
+    headers and turns spaces into underscores, so it arrives as
+    `last_name,_first_name`.
+
+    This used to look for separate `first_name` and `last_name` keys, found
+    neither, and fell back to `player_id`. Every row in the master therefore had
+    a numeric string in its player_name column, and every name lookup in
+    mlb_model missed. 741 pitchers loaded and none were reachable.
+    """
+    combined = (row.get("last_name,_first_name")
+                or row.get("last_name, first_name")
+                or "").strip().strip('"')
+    if "," in combined:
+        last, _, first = combined.partition(",")
+        first, last = first.strip(), last.strip()
+        if first and last:
+            return f"{first} {last}"
+        return last or first
+    if combined:
+        return combined
+    first = (row.get("first_name") or "").strip()
+    last  = (row.get("last_name") or "").strip()
     if first and last:
         return f"{first} {last}"
-    return last or row.get("player_id", "")
+    return last or first or ""
 
 
 def _fetch_expected_stats(year: int) -> dict:
@@ -127,6 +164,8 @@ def _fetch_expected_stats(year: int) -> dict:
         rec = {"year": str(year), "player_name": _build_name(row)}
         for field in FIELDS_KEEP:
             rec[field] = row.get(field, "")
+        for src, dest in FIELD_RENAME.items():
+            rec[dest] = row.get(src, "")
         result[pid] = rec
     return result
 
@@ -145,18 +184,29 @@ def _fetch_arsenal_whiff(year: int) -> dict:
         if not pid:
             continue
         try:
-            # pitch_percent is the usage share (0-100) for this pitch type
-            pct   = float(row.get("pitch_percent", 0) or 0)
+            # VERIFIED 2026-08-19: the usage column is `pitch_usage`, not
+            # `pitch_percent`. Reading the wrong name made pct 0.0 on every row,
+            # so total_pct stayed 0, the `if total <= 0: continue` below dropped
+            # every pitcher, and this function returned an EMPTY dict. That is
+            # why whiff_percent was blank for all 787 rows in the master.
+            #
+            # There is no velocity column on this leaderboard either, so
+            # avg_velocity was never going to populate. It is dropped rather than
+            # left as a permanently empty column pretending to be data.
+            pct   = float(row.get("pitch_usage", 0) or 0)
             whiff = float(row.get("whiff_percent", 0) or 0)
-            velo  = float(row.get("velocity", 0) or 0)
+            hardh = float(row.get("hard_hit_percent", 0) or 0)
+            kpct  = float(row.get("k_percent", 0) or 0)
         except (ValueError, TypeError):
             continue
         if pid not in buckets:
-            buckets[pid] = {"total_pct": 0.0, "whiff_sum": 0.0, "velo_sum": 0.0}
+            buckets[pid] = {"total_pct": 0.0, "whiff_sum": 0.0,
+                            "hardh_sum": 0.0, "k_sum": 0.0}
         b = buckets[pid]
-        b["total_pct"] += pct
-        b["whiff_sum"] += whiff * pct
-        b["velo_sum"]  += velo  * pct
+        b["total_pct"]  += pct
+        b["whiff_sum"]  += whiff * pct
+        b["hardh_sum"]  += hardh * pct
+        b["k_sum"]      += kpct  * pct
 
     result = {}
     for pid, b in buckets.items():
@@ -164,8 +214,9 @@ def _fetch_arsenal_whiff(year: int) -> dict:
         if total <= 0:
             continue
         result[pid] = {
-            "whiff_percent": round(b["whiff_sum"] / total, 2),
-            "avg_velocity":  round(b["velo_sum"]  / total, 2),
+            "whiff_percent":    round(b["whiff_sum"] / total, 2),
+            "hard_hit_percent": round(b["hardh_sum"] / total, 2),
+            "k_percent":        round(b["k_sum"]     / total, 2),
         }
     return result
 
@@ -189,8 +240,9 @@ def run(year: int = None) -> str:
     # Merge arsenal whiff/velo into expected stats
     for pid, rec in expected.items():
         ars = arsenal.get(pid, {})
-        rec["whiff_percent"] = str(ars.get("whiff_percent", ""))
-        rec["avg_velocity"]  = str(ars.get("avg_velocity", ""))
+        rec["whiff_percent"]    = str(ars.get("whiff_percent", ""))
+        rec["hard_hit_percent"] = str(ars.get("hard_hit_percent", ""))
+        rec["k_percent"]        = str(ars.get("k_percent", ""))
 
     rows = list(expected.values())
 
@@ -221,7 +273,7 @@ def load_pitcher_statcast(min_pa: int = 10) -> dict:
         "exit_velocity_avg", "launch_angle_avg",
         "barrel_batted_rate", "hard_hit_percent",
         "k_percent", "bb_percent",
-        "whiff_percent", "avg_velocity",
+        "whiff_percent", "hard_hit_percent",
         "pa", "bip",
     }
 

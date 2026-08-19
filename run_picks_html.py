@@ -2627,11 +2627,16 @@ function buildWaterfall(p){
             '<div style="font-size:.8rem;color:#8b949e;text-transform:uppercase;' +
             'letter-spacing:.06em;margin-bottom:.35rem">' + team + ' projected runs</div>';
     rows.forEach(function(f){
+      // delta == null is the BASELINE row: the number everything starts from.
+      // It was styled in the same grey used for "this signal did nothing", which
+      // read as a third dead row rather than as the starting point.
       if (f.delta == null) {
-        html += '<div style="display:flex;align-items:center;gap:8px;padding:2px 0;font-size:.83rem">' +
-                '<div style="flex:0 0 118px;color:#8b949e">' + f.label + '</div>' +
-                '<div style="flex:0 0 52px;text-align:right;color:#8b949e">' +
-                f.value.toFixed(2) + '</div><div style="flex:1"></div></div>';
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0 5px;' +
+                'font-size:.83rem;border-bottom:1px dashed #30363d;margin-bottom:3px">' +
+                '<div style="flex:0 0 118px;color:#c9d1d9">' + f.label + '</div>' +
+                '<div style="flex:0 0 52px;text-align:right;color:#c9d1d9;font-weight:600">' +
+                f.value.toFixed(2) + '</div>' +
+                '<div style="flex:1;font-size:.72rem;color:#6e7681">starting point</div></div>';
         return;
       }
       const pct  = Math.min(100, Math.abs(f.delta) / max * 100);
@@ -2647,6 +2652,14 @@ function buildWaterfall(p){
               '<div style="flex:1;height:7px;background:#21262d;border-radius:3px;overflow:hidden">' +
                 '<div style="height:100%;width:' + pct + '%;background:' + col + '"></div></div>' +
               '</div>';
+      // A zero is the most important row on here and it was the least explained.
+      // "No data for this pitcher" and "this pitcher is exactly league average"
+      // looked identical, which is how the weather bug survived: every game read
+      // 0.00 and nothing on the card said the block had never run.
+      if (dead && f.detail) {
+        html += '<div style="font-size:.72rem;color:#6e7681;margin:-1px 0 3px 126px;' +
+                'line-height:1.4">' + f.detail + '</div>';
+      }
     });
     html += '<div style="display:flex;gap:8px;padding:.35rem 0 0;margin-top:.3rem;' +
             'border-top:1px solid #30363d;font-size:.86rem;font-weight:700">' +
