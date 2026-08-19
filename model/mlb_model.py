@@ -1012,7 +1012,8 @@ class MLBModel:
                  park_run_factor: float, is_home: bool,
                  weather: dict = None,
                  game_id: str = None,
-                 opp_team: str = None) -> float:
+                 opp_team: str = None,
+                 record: list = None) -> float:
         """
         Expected runs scored by `team` facing `opp_pitcher` at this park.
 
@@ -1074,6 +1075,7 @@ class MLBModel:
         # made every pick an OVER and bled value). In reality even the worst
         # pitching yields ~1.30x league runs and the best ~0.68x.
         suppression = max(0.68, min(1.30, suppression))
+        supp_era = suppression      # kept for the factor breakdown, before Statcast
 
         # ── Pitcher Statcast stuff adjustment ─────────────────────────────────
         # xwOBA against is the most reliable contact-quality metric.
@@ -1124,6 +1126,55 @@ class MLBModel:
 
             expected *= wind_adj * cold_adj * precip_adj
 
+        # ── Factor breakdown (added 2026-08-18) ───────────────────────────────
+        # WHY: every adjustment above was invisible. A signal that contributes
+        # nothing looked exactly like one doing the work, which is how platoon
+        # splits sat dead for weeks while being "in the model".
+        #
+        # exp_runs is a MULTIPLICATIVE chain, so a step's contribution is the
+        # change in projected runs it causes: value_after - value_before. The
+        # deltas are order dependent, which is inherent to decomposing a product,
+        # but they sum EXACTLY to the final number, which is the property a
+        # waterfall needs. Baseline is league average runs per team per game.
+        if record is not None:
+            _L = locals()
+            _clamp = lambda v: max(0.68, min(1.30, v))
+            ops_m   = _L.get("ops_adj", 1.0)
+            wind_m  = _L.get("wind_adj", 1.0)
+            cold_m  = _L.get("cold_adj", 1.0)
+            prec_m  = _L.get("precip_adj", 1.0)
+            supp_e  = _L.get("supp_era", suppression)
+
+            base_league = LEAGUE["rpg"]
+            v_off    = SEASON_WEIGHT * offense["rpg"] + RECENT_WEIGHT * LEAGUE["rpg"]
+            v_form   = SEASON_WEIGHT * offense["rpg"] + RECENT_WEIGHT * form["rpg"]
+            v_lineup = v_form * ops_m
+            v_sp     = v_lineup * _clamp(era_sp / LEAGUE["era"])
+            v_bp     = v_lineup * supp_e
+            v_stuff  = v_lineup * suppression
+            v_park   = v_stuff * park_adj
+            v_home   = v_park * loc_boost
+            v_wx     = v_home * wind_m * cold_m * prec_m
+
+            prev = base_league
+            for label, val, detail in (
+                ("Team offense",      v_off,    f"season {offense['rpg']:.2f} RPG"),
+                ("Recent form",       v_form,   f"last 10 at {form['rpg']:.2f} RPG"),
+                ("Confirmed lineup",  v_lineup, "lineup OPS vs team average"),
+                ("Opposing starter",  v_sp,     f"{pitcher_name or 'TBD'} {era_sp:.2f} ERA"),
+                ("Opposing bullpen",  v_bp,     "bullpen ERA, fatigue adjusted"),
+                ("Pitcher Statcast",  v_stuff,  "xwOBA and whiff rate"),
+                ("Park",              v_park,   f"factor {park_run_factor:.0f}"),
+                ("Home field",        v_home,   "home team boost" if is_home else ""),
+                ("Weather",           v_wx,     "wind, temperature, precipitation"),
+            ):
+                record.append({"label": label, "delta": round(val - prev, 3),
+                               "value": round(val, 2), "detail": detail})
+                prev = val
+            record.insert(0, {"label": "League baseline", "delta": None,
+                              "value": round(base_league, 2),
+                              "detail": "average runs per team per game"})
+
         return max(0.5, round(expected, 3))
 
     # ── Score a Single Game ───────────────────────────────────────────────────
@@ -1170,10 +1221,16 @@ class MLBModel:
         game_id_str = str(game.get("game_id", ""))
 
         # Expected runs (now includes bullpen blend + lineup OPS + weather)
+        # Factor breakdowns for the card waterfall. Collected during scoring so
+        # the numbers shown are the ones actually used, not a re-derivation that
+        # can drift away from the model.
+        away_factors, home_factors = [], []
         exp_away = self.exp_runs(away, home_sp, park_runs, is_home=False,
-                                 weather=weather, game_id=game_id_str, opp_team=home)
+                                 weather=weather, game_id=game_id_str, opp_team=home,
+                                 record=away_factors)
         exp_home = self.exp_runs(home, away_sp, park_runs, is_home=True,
-                                 weather=weather, game_id=game_id_str, opp_team=away)
+                                 weather=weather, game_id=game_id_str, opp_team=away,
+                                 record=home_factors)
         exp_total = round(exp_away + exp_home, 2)
 
         # Umpire adjustment — apply blended run tendency vs. league average
@@ -1461,6 +1518,8 @@ class MLBModel:
             # Projections
             "exp_away":       exp_away,
             "exp_home":       exp_home,
+            "away_factors":   away_factors,
+            "home_factors":   home_factors,
             "exp_total":      exp_total,
 
             # Pitcher recent form

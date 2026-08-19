@@ -316,6 +316,13 @@ def prep_picks(picks, kalshi_data: dict = None):
             "exp_total":      p["exp_total"],
             "away":           gd.get("away_team", ""),
             "home":           gd.get("home_team", ""),
+            # Factor breakdown for the card waterfall (2026-08-18). Collected
+            # inside exp_runs during scoring, so these are the numbers the model
+            # actually used rather than a re-derivation that can drift.
+            "exp_away":       gd.get("exp_away"),
+            "exp_home":       gd.get("exp_home"),
+            "factors_away":   gd.get("away_factors") or [],
+            "factors_home":   gd.get("home_factors") or [],
             # Warning flags
             "tbd_sp":         tbd_sp,
             "thin_edge":      thin_edge,
@@ -2591,7 +2598,110 @@ function valueHtml(p){
 // to: market breakeven vs price, model-vs-market gap credibility, calibration
 // band, chalk warning, and a bottom-line verdict. Pure function of the pick's
 // own numbers — no API, instant.
+// ── FACTOR WATERFALL (2026-08-18) ────────────────────────────────────────────
+// Every adjustment the model makes was invisible: you saw 58% and a sentence.
+// A signal contributing nothing looked identical to one doing the work, which is
+// how platoon splits sat dead for weeks while being "in the model".
+//
+// exp_runs is a multiplicative chain, so each row is the change in PROJECTED
+// RUNS that step caused. The deltas sum exactly to the model's own number, and
+// a bar of zero width is a signal that did nothing for this game.
+function buildWaterfall(p){
+  const sides = [];
+  if (p.factors_away && p.factors_away.length) sides.push([p.away, p.factors_away, p.exp_away]);
+  if (p.factors_home && p.factors_home.length) sides.push([p.home, p.factors_home, p.exp_home]);
+  if (!sides.length) {
+    return '<div style="color:#8b949e;font-size:.85rem;padding:.5rem 0">' +
+           'No breakdown stored for this game. It fills in on the next scoring run.</div>';
+  }
+  // One scale across both teams so the bars are comparable side to side.
+  let max = 0;
+  sides.forEach(function(s){ s[1].forEach(function(f){
+    if (f.delta != null) max = Math.max(max, Math.abs(f.delta)); }); });
+  max = max || 1;
+
+  let html = '';
+  sides.forEach(function(side){
+    const team = side[0], rows = side[1], total = side[2];
+    html += '<div style="margin-bottom:.9rem">' +
+            '<div style="font-size:.8rem;color:#8b949e;text-transform:uppercase;' +
+            'letter-spacing:.06em;margin-bottom:.35rem">' + team + ' projected runs</div>';
+    rows.forEach(function(f){
+      if (f.delta == null) {
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:2px 0;font-size:.83rem">' +
+                '<div style="flex:0 0 118px;color:#8b949e">' + f.label + '</div>' +
+                '<div style="flex:0 0 52px;text-align:right;color:#8b949e">' +
+                f.value.toFixed(2) + '</div><div style="flex:1"></div></div>';
+        return;
+      }
+      const pct  = Math.min(100, Math.abs(f.delta) / max * 100);
+      const pos  = f.delta > 0;
+      const dead = Math.abs(f.delta) < 0.005;
+      const col  = dead ? '#484f58' : (pos ? '#4ec9a5' : '#e0764a');
+      html += '<div title="' + (f.detail || '') + '" ' +
+              'style="display:flex;align-items:center;gap:8px;padding:2px 0;font-size:.83rem">' +
+              '<div style="flex:0 0 118px;color:' + (dead ? '#6e7681' : '#c9d1d9') + '">' +
+                f.label + '</div>' +
+              '<div style="flex:0 0 52px;text-align:right;font-variant-numeric:tabular-nums;color:' +
+                col + '">' + (dead ? '0.00' : (pos ? '+' : '') + f.delta.toFixed(2)) + '</div>' +
+              '<div style="flex:1;height:7px;background:#21262d;border-radius:3px;overflow:hidden">' +
+                '<div style="height:100%;width:' + pct + '%;background:' + col + '"></div></div>' +
+              '</div>';
+    });
+    html += '<div style="display:flex;gap:8px;padding:.35rem 0 0;margin-top:.3rem;' +
+            'border-top:1px solid #30363d;font-size:.86rem;font-weight:700">' +
+            '<div style="flex:0 0 118px">Projected</div>' +
+            '<div style="flex:0 0 52px;text-align:right">' +
+              (total == null ? '—' : Number(total).toFixed(2)) + '</div>' +
+            '<div style="flex:1"></div></div></div>';
+  });
+  html += '<div style="font-size:.76rem;color:#6e7681;line-height:1.5;margin-top:.2rem">' +
+          'Each row is the change in projected runs that input caused, starting from the ' +
+          'league average of 4.50 per team. A grey zero means that signal did nothing for ' +
+          'this game. Deltas sum to the projection above.</div>';
+  return html;
+}
+
+// The analysis text below reads ONLY price and confidence (conf, market_prob,
+// pick_price, type, value_*). Nothing about the game reaches it, so two picks in
+// the same confidence band at a similar price produce the same words, and most
+// cards sit in the 52-62% band at -110 to -160. Justin flagged it 2026-08-18:
+// "the analysis seems to be the same on every card." It was not broken, it was
+// blind.
+//
+// This wrapper leads with what actually separates THIS pick from the others: the
+// two largest factor contributions for the side being backed, straight from the
+// same breakdown the waterfall draws. Named, sized and sourced from the model's
+// own numbers rather than restated confidence.
+function topDrivers(p){
+  const backHome = p.team && p.home && p.team === p.home;
+  const mine  = backHome ? p.factors_home : p.factors_away;
+  const theirs= backHome ? p.factors_away : p.factors_home;
+  const pool  = [];
+  (mine   || []).forEach(f => { if (f.delta != null) pool.push({f: f, own: true }); });
+  (theirs || []).forEach(f => { if (f.delta != null) pool.push({f: f, own: false}); });
+  if (pool.length < 2) return "";
+  pool.sort((a,b) => Math.abs(b.f.delta) - Math.abs(a.f.delta));
+  const top = pool.slice(0, 2).filter(x => Math.abs(x.f.delta) >= 0.05);
+  if (!top.length) return "";
+  const parts = top.map(function(x){
+    const runs = Math.abs(x.f.delta).toFixed(2);
+    const dir  = x.f.delta > 0 ? "adds" : "takes off";
+    const who  = x.own ? "" : " on the other side";
+    return "<b>" + x.f.label + "</b>" + who + " " + dir + " " + runs + " runs" +
+           (x.f.detail ? " (" + x.f.detail + ")" : "");
+  });
+  return '<div class="analysis-body" style="border-left:2px solid #4ec9a5;padding-left:.6rem;' +
+         'margin-bottom:.5rem">What is driving this one: ' + parts.join(", and ") +
+         '. See <b>Why this number</b> for the full breakdown.</div>';
+}
+
 function buildAnalysis(p){
+  const _drivers = topDrivers(p);
+  return _drivers + buildAnalysisCore(p);
+}
+
+function buildAnalysisCore(p){
   const fmtP = x => (x==null ? "—" : Math.round(x*100)+"%");
   const price = p.pick_price;
   const priceStr = (price==null) ? "" : (price>0?"+":"")+Math.round(price);
@@ -4023,6 +4133,12 @@ function renderPicks(){
           <div class="pick-card-props-panel">
             ${buildAnalysis(p)}
           </div>
+          <div class="pick-card-props-toggle analysis-toggle" onclick="toggleCardProps(event, this)">
+            <span class="toggle-arrow">▶</span> 📊 Why this number
+          </div>
+          <div class="pick-card-props-panel">
+            ${buildWaterfall(p)}
+          </div>
           <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
             <span class="toggle-arrow">▶</span> View Player Props for this game
           </div>
@@ -4094,6 +4210,12 @@ function renderPicks(){
         </div>
         <div class="pick-card-props-panel">
           ${buildAnalysis(p)}
+        </div>
+        <div class="pick-card-props-toggle analysis-toggle" onclick="toggleCardProps(event, this)">
+          <span class="toggle-arrow">▶</span> 📊 Why this number
+        </div>
+        <div class="pick-card-props-panel">
+          ${buildWaterfall(p)}
         </div>
         <div class="pick-card-props-toggle" onclick="toggleCardProps(event, this)">
           <span class="toggle-arrow">▶</span> View Player Props for this game

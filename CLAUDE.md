@@ -1,5 +1,42 @@
 # Statalizers — Project Context for Claude
 
+## 2026-08-18 (LATEST): FACTOR WATERFALL ON EVERY CARD
+
+**`exp_runs` now records its own decomposition.** New `record=` parameter; the
+list is collected during scoring and exported as `away_factors` / `home_factors`
+on the scored game, so the card shows the numbers the model ACTUALLY used rather
+than a re-derivation that can drift.
+
+`exp_runs` is a MULTIPLICATIVE chain, so each row is the change in projected runs
+that step caused (value_after minus value_before). Deltas are order dependent,
+which is inherent to decomposing a product, but they sum EXACTLY to the model's
+own projection. That equality is asserted in testing and is the property that
+makes it a waterfall rather than a decoration.
+
+Rows: League baseline (4.50) -> Team offense -> Recent form -> Confirmed lineup
+-> Opposing starter -> Opposing bullpen -> Pitcher Statcast -> Park -> Home field
+-> Weather. **A grey zero bar means that signal did nothing for this game**, which
+is the entire point: platoon splits sat dead for weeks while being "in the model"
+and nothing on the board would have shown it.
+
+Surfaced as a third collapsible, "Why this number", NOT a card flip. The cards
+already carry two `<details>` dropdowns and a click-to-flip container fights them,
+since a click inside a dropdown would flip the card.
+
+**The Analysis dropdown was blind, and that is why it repeated.** Justin: "the
+analysis seems to be the same on every card." `buildAnalysis` read exactly seven
+fields, all of them price and confidence (`conf`, `market_prob`, `pick_price`,
+`type`, `value_*`). Nothing about the game reached it. Since most cards sit in the
+52-62% band at -110 to -160, the same branch fired repeatedly, correctly: from its
+inputs those picks WERE identical.
+
+Fixed by wrapping it. The original is now `buildAnalysisCore`; `buildAnalysis`
+prepends `topDrivers(p)`, which names the two largest factor contributions for the
+side being backed, pulled from the same breakdown the waterfall draws. Verified
+that two picks with identical conf and identical price produce different text.
+
+---
+
 ## 2026-08-18 (LATER): SNAPSHOTS NOW RECORD WHO WROTE THEM
 
 Justin: "I often really never know when lines have been pulled and which ones."
