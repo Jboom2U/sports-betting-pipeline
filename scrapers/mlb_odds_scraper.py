@@ -434,7 +434,11 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
                         continue
                     if pr is not None and abs(pr) < 100:
                         pr = None
-                    slot = totals_by_line.setdefault(pt, {"over": [], "under": []})
+                    slot = totals_by_line.setdefault(pt, {"over": [], "under": [], "books": set()})
+                    # Every book that POSTED this line, not just the ones whose
+                    # price counts toward the consensus. See the main-total fix
+                    # below for why the distinction matters.
+                    slot["books"].add(bk)
                     if o["name"] == "Over":
                         b["tot"], b["ov"] = pt, pr
                         if pr is not None and bk in CONSENSUS_BOOKS:
@@ -450,15 +454,41 @@ def parse_game(game: dict, snapshot_time: str) -> dict:
     cons_ml_away  = _avg_american(ml_away_prices)
     cons_ml_home  = _avg_american(ml_home_prices)
 
-    # MAIN TOTAL = the line the most books posted, priced only from those books.
-    # Ties prefer the lower line, which is the conventional main number.
+    # MAIN TOTAL = the line the most books POSTED. Priced from the consensus
+    # books at that line.
+    #
+    # FIXED 2026-08-19. This previously ranked lines by
+    #     len(slot["over"]) + len(slot["under"])
+    # and those lists are only appended to when `bk in CONSENSUS_BOOKS` (5 books).
+    # But b["tot"] is written for all 10 in SHOP_BOOKS. So a line posted only by
+    # Hard Rock, Bally, BetParx, Fliff or Bovada counted ZERO, and whenever no
+    # consensus book contributed a counted price, every line tied at zero and the
+    # `-kv[0]` tie-break silently selected the LOWEST line on the board.
+    #
+    # Live effect: cards showed OVER 6.5 and OVER 7.5 on games the model
+    # projected at 9.5 and 12.7, producing "edges" of 3.0 and 5.2 runs and an
+    # impossible "total moved DOWN 4.0 pts". Every one of those totals was an
+    # alternate line from an uncounted book, and the shop panel correctly
+    # reported that all 10 books were on a different number.
+    #
+    # SELECTION and PRICING are now separate concerns:
+    #   line  -> how many books posted it (all of SHOP_BOOKS)
+    #   price -> the consensus books at that line, falling back to every book
+    #            there rather than emitting a line with no price attached.
     if totals_by_line:
         _main_total = max(
             totals_by_line.items(),
-            key=lambda kv: (len(kv[1]["over"]) + len(kv[1]["under"]), -kv[0]))
+            key=lambda kv: (len(kv[1].get("books", ())), -kv[0]))
         cons_total       = _main_total[0]
-        cons_over_price  = _avg_american(_main_total[1]["over"])
-        cons_under_price = _avg_american(_main_total[1]["under"])
+        _slot            = _main_total[1]
+        cons_over_price  = _avg_american(_slot["over"])
+        cons_under_price = _avg_american(_slot["under"])
+        # A line every book posts but no CONSENSUS book prices is real; keep the
+        # line and leave the price None rather than inventing one. value.py
+        # already refuses to compute EV without a price, which is the safe path.
+        if cons_over_price is None and cons_under_price is None:
+            log.info(f"{away} @ {home}: main total {cons_total} posted by "
+                     f"{len(_slot.get('books', ()))} books, no consensus-book price")
     else:
         cons_total = cons_over_price = cons_under_price = None
 
