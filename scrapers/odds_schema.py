@@ -72,6 +72,12 @@ SNAPSHOT_FIELDNAMES = [
     # columns, so adding a book never changes the schema. Pinnacle leaves this
     # empty; only the Odds API pull populates it.
     "books_json",
+    # Which scraper wrote this row (added 2026-08-18). Both scrapers always KNEW
+    # their own source and returned it in their result dict, but it was never
+    # written down, so "which lines were pulled today, and when" could not be
+    # answered from the stored data at all. APPENDED, never inserted, so the
+    # additive path below migrates every existing row instead of dropping it.
+    "source",
 ]
 
 MOVEMENT_FIELDNAMES = [
@@ -93,6 +99,13 @@ def write_snapshot_rows(master_path: str, rows: list, source: str = "odds") -> N
     """
     if not rows:
         return
+
+    # Stamp provenance in the one place every writer already passes through,
+    # rather than in each scraper. Two callers exist today and both already pass
+    # `source`, so a third one cannot ship having forgotten it.
+    for _r in rows:
+        if not _r.get("source"):
+            _r["source"] = source
 
     existing_hdr, existing_rows = None, []
     if os.path.exists(master_path):

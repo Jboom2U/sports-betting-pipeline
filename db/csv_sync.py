@@ -39,7 +39,15 @@ PICKS_DIR = BASE_DIR / "picks"
 # clean/ masters are the critical ones — they're what the model reads.
 # We sync both to be safe.
 SYNC_PATTERNS = [
-    (CLEAN_DIR, "clean/", ["*.csv"]),          # all clean master CSVs
+    (CLEAN_DIR, "clean/", ["*.csv",             # all clean master CSVs
+                            # The Odds API's own quota counters, persisted on
+                            # every paid pull (2026-08-18). Railway's FS is
+                            # ephemeral, so without syncing this the monthly
+                            # usage against the 500 cap resets to "unknown" on
+                            # every restart and the only record left is a log
+                            # line. Named explicitly rather than *.json so this
+                            # does not quietly start syncing other files.
+                            "mlb_oddsapi_quota.json"]),
     (RAW_DIR,   "raw/",   ["mlb_weather_*.csv",
                             "mlb_line_movement_*.csv",
                             "mlb_odds_master.csv",

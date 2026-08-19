@@ -1,5 +1,81 @@
 # Statalizers — Project Context for Claude
 
+## 2026-08-18 (LATER): SNAPSHOTS NOW RECORD WHO WROTE THEM
+
+Justin: "I often really never know when lines have been pulled and which ones."
+
+**He was not missing a display, he was missing a COLUMN.** `SNAPSHOT_FIELDNAMES`
+had 30 columns and none of them was `source`. Both scrapers always knew their own
+source and returned it in their result dict (`{"source": "pinnacle"}`), but it was
+never written to a row, so which feed produced a given price was unanswerable from
+stored data.
+
+- `source` is APPENDED to `SNAPSHOT_FIELDNAMES`, never inserted, so
+  `write_snapshot_rows` treats it as additive and MIGRATES every existing row
+  rather than dropping them. Verified end to end with an old header file.
+- **It is stamped in `write_snapshot_rows`, not in the scrapers.** Both callers
+  already pass `source`, so doing it centrally means a third feed cannot ship
+  having forgotten it.
+
+**`pull_log.py` derives the day's pulls from the snapshots that actually landed,
+never from a run log.** A log records that a pull was ATTEMPTED. This reports what
+was WRITTEN, so a pull that fired and produced nothing shows as zero games instead
+of a green tick. That distinction is why Polymarket looked healthy for weeks while
+matching zero games.
+
+Two things to know when reading it:
+
+1. **`snapshot_time` is UTC.** Both scrapers write
+   `datetime.now(timezone.utc)`, so a 6am ET pull is stored as 10:00. Everything
+   converts to ET before display. Same rule as the Railway logs.
+2. **Source is inferred for pre 08-18 rows and LABELLED as inferred.** The
+   inference runs per SNAPSHOT, not per row. Doing it per row split one Pinnacle
+   pull into a phantom second "1 game Odds API" pull because a single row happened
+   to carry a total. One pull stamps one timestamp, so the timestamp is the pull.
+
+**Odds API quota is now persisted from the API's own `x-requests-used` and
+`x-requests-remaining` headers.** They were being read, logged to a line nobody
+goes looking for, and discarded. The counters are authoritative; counting pulls
+locally drifts the moment a request fails after being counted or a per event props
+pull costs more than one credit. Stored at `data/clean/mlb_oddsapi_quota.json` and
+named explicitly in `SYNC_PATTERNS`, because CLEAN_DIR previously synced `*.csv`
+only and Railway's filesystem is ephemeral.
+
+Surfaces: full panel with quota at the top of `/admin`, and a compact "Lines
+pulled" entry in the dashboard schedule bar fed by `/schedule-status`, which the
+page already polls every 60 seconds. The bar previously showed only what was
+coming NEXT and nothing about what had already landed.
+
+---
+
+## 2026-08-18: LONG TERM INTENT, THIS MAY BECOME A PAID SERVICE
+
+Justin's stated goal: once the model is effective he wants to sell access. Not
+being built now, but it changes what is cheap to decide today versus expensive to
+retrofit. Tracked as its own group on the /admin checklist.
+
+**Read the data licences before building more on top of them.** This is the one
+that can invalidate work already done. Free and personal use tiers commonly forbid
+commercial redistribution of odds. That applies to the Odds API and to anything
+scraped from a book, and it bears directly on the Selenium scraper plan discussed
+the same day: scraping for personal use and reselling the output are materially
+different questions.
+
+**A published record has to be immutable.** Picks are re-scored all day, so what
+someone saw at noon is not necessarily what gets graded. `tier_locked` and
+`was_best_bet` latch, which is the right instinct, but nothing writes a
+timestamped pre game snapshot that is never edited. A track record that can move
+after the fact is not one worth selling.
+
+**Model version stamping stops being optional.** A record spanning several
+undeclared model versions is fine as a note to self and is a claim once money is
+involved.
+
+**Access is currently one shared site password.** Per user accounts touch the
+schema, every auth check and the session model.
+
+---
+
 ## 2026-08-18: THE CHECKLIST IS ON /admin, AND IT VERIFIES ITSELF
 
 `/admin` was rebuilt. Read this before adding a route or a checklist item.

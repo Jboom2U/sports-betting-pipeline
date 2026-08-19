@@ -2293,11 +2293,33 @@ def schedule_status():
         _bv = _cache.get("generated_at") if isinstance(_cache, dict) else None
     except Exception:
         pass
+    # What has ALREADY happened, not just what is next (added 2026-08-18). The
+    # bar told you when the next pull would be and never what had landed, so
+    # "which lines am I looking at right now" was unanswerable from the board.
+    # Derived from the snapshots actually written, so an attempted pull that
+    # produced nothing cannot show up here as a success.
+    _pulls, _last, _quota_left = [], None, None
+    try:
+        import pull_log as _pl
+        _d = _pl.summary()
+        _pulls = [{"time": x["time_et"], "source": x["source"], "games": x["games"],
+                   "inferred": x["inferred"]} for x in _d["pulls"]]
+        if _d["last"]:
+            _last = {"time": _d["last"]["time_et"], "source": _d["last"]["source"],
+                     "games": _d["last"]["games"]}
+        if _d["quota"]["known"]:
+            _quota_left = _d["quota"]["remaining"]
+    except Exception:
+        log.debug("pull log unavailable for /schedule-status", exc_info=True)
+
     return jsonify({
         "next_pipeline":   _fmt(_schedule_state.get("next_pipeline_et")),
         "next_refresh":    _fmt(_schedule_state.get("next_refresh_et")),
         "first_pitch":     _fmt(_schedule_state.get("first_pitch_et")),
         "board_version":   _bv,
+        "pulls_today":     _pulls,
+        "last_pull":       _last,
+        "oddsapi_left":    _quota_left,
     })
 
 

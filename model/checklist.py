@@ -324,6 +324,34 @@ def p_kalshi_date_filter():
     return OPEN, "extract_game_probabilities does not filter by date, so a future game can collide with today"
 
 
+def p_pull_source():
+    from_schema = "source" in _read("scrapers/odds_schema.py").split("MOVEMENT_FIELDNAMES")[0]
+    if not from_schema:
+        return OPEN, "SNAPSHOT_FIELDNAMES has no source column, so no snapshot records which scraper wrote it"
+    stamped = "_r[\"source\"] = source" in _read("scrapers/odds_schema.py")
+    if not stamped:
+        return PARTIAL, "source column exists but write_snapshot_rows does not stamp it"
+    return DONE, "source is in the schema and stamped centrally in write_snapshot_rows"
+
+
+def p_multiuser():
+    sch = _read("db/schema.py")
+    if re.search(r"CREATE TABLE IF NOT EXISTS (users|accounts|subscribers)", sch, re.I):
+        return DONE, "a user table exists"
+    return OPEN, ("access is one shared site password in site_config. A paid service needs "
+                  "per user accounts, which changes the schema and every auth check")
+
+
+def p_immutable_record():
+    st = _read("db/picks_store.py")
+    frozen = "tier_locked" in st and "was_best_bet" in st
+    if frozen:
+        return PARTIAL, ("tier and Best Bets status latch, but picks are still re-scored intraday "
+                         "and conf can move before lineups confirm. Nothing publishes an immutable "
+                         "pre game record")
+    return OPEN, "nothing freezes a published pick"
+
+
 # -------------------------------------------------------------------- items
 # group order is the order they render. Keep the highest leverage groups first.
 
@@ -335,6 +363,8 @@ GROUPS = [
     ("data",        "Data sources",        "Things not collected yet"),
     ("reliability", "Reliability",         "Failures that would be silent"),
     ("keeping",     "Housekeeping",        "Small, and one security item"),
+    ("commercial",  "If this becomes a paid service",
+     "Cheap to decide now, expensive to retrofit later"),
 ]
 
 ITEMS = [
@@ -536,6 +566,37 @@ ITEMS = [
          why="Markets span multiple dates and are not filtered, so a future game can collide with "
              "today's. The ticker carries the date.",
          where="scrapers/mlb_kalshi_scraper.py", probe=p_kalshi_date_filter),
+    dict(id="pull-visibility", group="surface", effort="S",
+         title="Show which odds pulls have landed today",
+         why="The schedule bar showed only what was coming next, so there was no way to tell "
+             "from the board whether its prices were from 6am or twenty minutes ago.",
+         where="pull_log.py, admin_hub.py, run_picks_html.py", probe=p_pull_source),
+
+    dict(id="licensing", group="commercial", effort="M",
+         title="Check what the data licences allow before charging for this",
+         why="This is the one that can invalidate work already done. Free and personal use tiers "
+             "commonly forbid commercial redistribution of odds, and that applies to the Odds API "
+             "and to anything scraped from a book. Worth reading the terms BEFORE building the "
+             "scraper layer on top of them, not after.",
+         where="external, terms review", probe=None),
+    dict(id="immutable-record", group="commercial", effort="L",
+         title="Publish an immutable pre game record",
+         why="A paid service is bought on a verifiable track record. Picks are currently re-scored "
+             "all day, so what a subscriber saw at noon is not necessarily what gets graded. Needs "
+             "a published snapshot that is written once, timestamped, and never edited.",
+         where="db/picks_store.py, run_pipeline.py", probe=p_immutable_record),
+    dict(id="multiuser", group="commercial", effort="L",
+         title="Per user accounts",
+         why="Access is one shared site password today. Subscriptions need real accounts, which "
+             "touches the schema, every auth check and the whole session model.",
+         where="db/schema.py, app.py", probe=p_multiuser),
+    dict(id="record-segmentation", group="commercial", effort="M",
+         title="Model version stamping is mandatory, not optional, once money is involved",
+         why="Already on the list under Pricing and math. Flagged again here because a published "
+             "record that silently spans several model versions is not a track record, and that "
+             "becomes a claim you are selling rather than a note to self.",
+         where="db/schema.py", probe=p_model_version),
+
     dict(id="market-signal-backfill", group="keeping", effort="S",
          title="Decide whether to backfill market_signal on historical picks",
          why="956 historical picks are stuck on NEUTRAL because the old inference read prose. "

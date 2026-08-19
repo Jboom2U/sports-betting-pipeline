@@ -39,6 +39,11 @@ try:
 except Exception:                                   # page must render regardless
     CS = None
 
+try:
+    import pull_log as PL
+except Exception:
+    PL = None
+
 
 # --------------------------------------------------------------------- routes
 # (href, title, description, badge, cost)
@@ -174,6 +179,60 @@ def _item(it) -> str:
         f'</div>')
 
 
+def _pulls_block() -> str:
+    """Today's odds pulls, read out of the snapshots that were actually written.
+
+    Deliberately NOT built from a run log. A log records that a pull was
+    attempted; this reports what landed, so a pull that fired and wrote nothing
+    shows as zero games rather than a green tick. That difference is the whole
+    reason the Polymarket scraper looked healthy for weeks while matching nothing.
+    """
+    if PL is None:
+        return '<p class="empty">Pull log unavailable.</p>'
+    try:
+        data = PL.summary()
+    except Exception as exc:
+        return f'<p class="empty">Could not read the odds master: {_e(exc)}</p>'
+
+    q = data["quota"]
+    if q["known"]:
+        colour = "#3fb950" if q["remaining"] > 150 else ("#d29922" if q["remaining"] > 75 else "#f85149")
+        qhtml = (f'<div class="quota"><div style="font-size:12.5px">Odds API quota'
+                 f'<span style="color:#6e7681"> &middot; resets on the 1st</span></div>'
+                 f'<div class="qtrack"><i style="width:{q["pct"]}%;background:{colour}"></i></div>'
+                 f'<div style="font-size:12.5px;color:{colour};font-weight:600">'
+                 f'{q["remaining"]} left of {q["cap"]}</div>'
+                 f'<div style="font-size:11px;color:#6e7681">read from the API on {_e(q["checked_et"])}</div>'
+                 f'</div>')
+    else:
+        qhtml = ('<div class="quota"><div style="font-size:12.5px;color:#8b949e">'
+                 'Odds API quota unknown. It is recorded from the API\'s own headers on the '
+                 'next paid pull, so this fills in the first time you use one.</div></div>')
+
+    if not data["pulls"]:
+        return (qhtml + '<p class="empty">No odds pulls have landed today yet. '
+                'If that is a surprise, check /status for the pipeline state.</p>')
+
+    rows = []
+    for p in data["pulls"]:
+        src = p["source"]
+        cls = ("pinnacle" if src.lower().startswith("pinn")
+               else "oddsapi" if "odds" in src.lower() else "unknown")
+        chips = "".join(
+            f'<span class="chip {"on" if p[k] else "off"}">{lbl} {p[k]}</span>'
+            for k, lbl in (("ml", "ML"), ("rl", "RL"), ("total", "total"), ("books", "books")))
+        inf = ('<span class="inf" title="Written before the source column existed on '
+               '2026-08-18, so this was worked out from the columns present.">inferred</span>'
+               if p["inferred"] else "")
+        gap = (f'<div class="pgap">{_e("; ".join(p["gaps"]))}</div>' if p["gaps"] else "")
+        rows.append(
+            f'<div class="pull"><div class="ptime">{_e(p["time_et"])}</div>'
+            f'<span class="psrc {cls}">{_e(src)}</span>'
+            f'<div class="pbody"><div class="pmain">{_e(p["games_label"])}{chips}{inf}</div>'
+            f'{gap}</div></div>')
+    return qhtml + "".join(rows)
+
+
 def _notes_block(notes) -> str:
     if not notes:
         return ('<p class="empty">Nothing added yet. Anything you type above survives the '
@@ -266,6 +325,27 @@ details[open]>summary .chev{transform:rotate(90deg)}
 .where{font-size:11px;color:#565f6a;margin-top:.3rem;font-family:ui-monospace,monospace}
 .empty{color:#6e7681;font-size:12.5px;padding:.6rem .25rem}
 
+.pulls{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:.35rem 1rem .85rem}
+.pull{display:flex;align-items:flex-start;gap:.85rem;padding:.6rem .1rem;border-top:1px solid #21262d}
+.pull:first-child{border-top:none}
+.ptime{flex:0 0 74px;font-size:12.5px;color:#e6edf3;font-variant-numeric:tabular-nums;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding-top:.1rem}
+.psrc{flex:0 0 auto;font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:5px;letter-spacing:.03em}
+.psrc.pinnacle{background:#132d1c;color:#3fb950}
+.psrc.oddsapi{background:#3a2a10;color:#d29922}
+.psrc.unknown{background:#21262d;color:#8b949e}
+.pbody{min-width:0;flex:1}
+.pmain{font-size:13px;color:#e6edf3}
+.chip{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:4px;margin-left:.35rem;
+  background:#21262d;color:#8b949e;font-family:ui-monospace,monospace}
+.chip.on{background:#132d1c;color:#3fb950}
+.chip.off{background:#2a1a17;color:#f0883e}
+.pgap{font-size:11.5px;color:#8b949e;margin-top:.25rem;line-height:1.5}
+.inf{font-size:10px;color:#d29922;background:#332816;padding:1px 6px;border-radius:4px;margin-left:.4rem}
+.quota{display:flex;align-items:center;gap:.85rem;padding:.6rem .1rem .7rem;
+  border-bottom:1px solid #21262d;margin-bottom:.15rem;flex-wrap:wrap}
+.qtrack{flex:1;min-width:140px;height:6px;background:#21262d;border-radius:4px;overflow:hidden}
+.qtrack i{display:block;height:100%}
 form.add{display:flex;gap:.5rem;margin:.75rem 0 0;flex-wrap:wrap}
 form.add input[type=text]{flex:1;min-width:220px;padding:.55rem .8rem;border-radius:7px;
   border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:13.5px;font-family:inherit}
@@ -371,6 +451,9 @@ def render(flash: str = "", flash_bad: bool = False) -> str:
     <div class="meta">{s['probed']} of {s['total']} items are checked against the code on every
       page load.<br>The remaining {s['manual']} are judgement calls and say so.</div>
   </div>
+
+  <h2 class="sec">Today's data pulls<span class="hint">Read from the snapshots that actually landed, not from a run log</span></h2>
+  <div class="pulls">{_pulls_block()}</div>
 
   <input id="filter" type="text" placeholder="Filter everything on this page: try devig, platoon, quota, statcast">
 

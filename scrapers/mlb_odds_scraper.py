@@ -234,6 +234,19 @@ def fetch_odds(api_key: str) -> list:
     except (ValueError, TypeError):
         _LAST_REMAINING = None
 
+    # Persist the API's OWN counters (added 2026-08-18). These were read, logged
+    # to a line nobody goes looking for, and then thrown away, so the only way to
+    # know the month's usage was to scroll Railway logs. They are authoritative:
+    # counting pulls locally is an estimate that drifts the moment a request
+    # fails after being counted, or a per event props pull costs more than one
+    # credit. Best effort, and never allowed to break a paid pull that already
+    # succeeded.
+    try:
+        import pull_log
+        pull_log.record_quota(used, remaining)
+    except Exception:
+        pass
+
     try:
         rem_int = int(remaining)
         if rem_int <= 0:

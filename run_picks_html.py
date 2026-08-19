@@ -2035,6 +2035,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <span>⏰ <b style="color:#e6edf3">Next pipeline:</b> <span id="sched-pipeline">loading...</span></span>
   <span>🔄 <b style="color:#e6edf3">Lineup refresh:</b> <span id="sched-refresh">loading...</span></span>
   <span>⚾ <b style="color:#e6edf3">First pitch:</b> <span id="sched-pitch">loading...</span></span>
+  <span title="Odds pulls that have landed today. Hover for the full list."><b style="color:#e6edf3">Lines pulled:</b> <span id="sched-pulls">loading...</span></span>
   <span style="margin-left:auto;display:flex;align-items:center;gap:10px">
     <button id="forceLineupsBtn" onclick="forceLineupsRefresh()" style="background:rgba(79,195,247,.15);border:1px solid rgba(79,195,247,.4);color:#4fc3f7;border-radius:12px;padding:3px 12px;font-size:.78rem;font-weight:700;cursor:pointer;font-family:inherit">📋 Refresh Lineups</button>
     <span id="forceLineupsStatus" style="font-size:.76rem"></span>
@@ -2051,6 +2052,27 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
       document.getElementById('sched-refresh').textContent  = r ? (r.time + ' (' + r.label + ')') : 'after 6am pipeline';
       window._schedRefreshTime = r ? r.time : 'lineup refresh';
       document.getElementById('sched-pitch').textContent    = fp ? fp.time : '—';
+
+      // WHAT HAS ALREADY LANDED (2026-08-18). The bar only ever showed what was
+      // coming next, so there was no way to tell from the board whether the
+      // prices on it were from 6am or twenty minutes ago.
+      var pl = document.getElementById('sched-pulls');
+      if (pl) {
+        var list = d.pulls_today || [];
+        if (!list.length) {
+          pl.textContent = 'none yet today';
+          pl.style.color = '#f0883e';
+        } else {
+          var last = d.last_pull;
+          pl.textContent = last.source + ' ' + last.time + ' · ' + list.length +
+                           (list.length === 1 ? ' pull today' : ' pulls today');
+          pl.style.color = '#8b949e';
+          pl.parentElement.title = list.map(function(x) {
+            return x.time + '  ' + x.source + '  ' + x.games + ' games';
+          }).join('\n') + (d.oddsapi_left != null
+            ? '\n\nOdds API: ' + d.oddsapi_left + ' credits left this month' : '');
+        }
+      }
 
       // ── STALE BOARD DETECTION (2026-08-11) ────────────────────────────────
       // Best Bets, the honest read and every EV number are computed when the
