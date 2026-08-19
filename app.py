@@ -1632,8 +1632,26 @@ def force_lineups():
     threading.Thread(target=_worker, daemon=True).start()
 
     # Human-readable note for the toast.
+    # Say WHICH set these numbers describe (2026-08-19). `confirmed` counts every
+    # game the scraper returned, including ones already underway. The board only
+    # renders pre-game cards, so a truthful "14 confirmed" sat above 8 visible
+    # badges and read like the refresh had not worked. Both numbers were right
+    # and they were counting different populations, with nothing saying so.
+    _on_board = None
+    try:
+        from model.mlb_model import _today_et as _te
+        _sched = _cache.get("scored") or []
+        _on_board = sum(1 for g in _sched if isinstance(g, dict) and g.get("lineup_confirmed"))
+    except Exception:
+        _on_board = None
+
     bits = []
-    if confirmed:        bits.append(f"{confirmed} lineup(s) confirmed")
+    if confirmed:
+        if _on_board is not None and _on_board != confirmed:
+            bits.append(f"{confirmed} lineup(s) confirmed slate-wide "
+                        f"({_on_board} on the board, the rest have started)")
+        else:
+            bits.append(f"{confirmed} lineup(s) confirmed")
     if starters_updated: bits.append(f"{starters_updated} starter(s) updated")
     if k_lines:          bits.append(f"{k_lines} K line(s)")
     if bits:
