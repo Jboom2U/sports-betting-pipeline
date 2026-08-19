@@ -54,6 +54,44 @@ and serves a dashboard at statalizers.com. Built and maintained by Justin Skelly
 7. **Additive changes only. Never delete existing data.** Scrapers write to
    `data/raw/` → normalize → `data/clean/` masters. All times are ET.
 
+## Session log — DO THIS AT THE END OF EVERY SESSION
+
+Justin works across several tools because Claude usage runs out mid-week. The
+only thing that makes that survivable is a written handover, because chat history
+does not persist and re-deriving state is the largest token cost in this project.
+
+**Append an entry to the Work Log at the top of `C:\Users\Jskel\Vault\PROJECT_STATE.md`
+before you finish.** Newest first, using the format already in that file:
+
+```
+### YYYY-MM-DD · Gemini (Kilo / VS Code)
+Changed:    <files>
+Did:        <what and why>
+Verified:   <what you actually RAN and the result>
+Uncertain:  <anything believed but not checked. "none" only if true>
+Deployed:   <yes / no / partial>
+Next:       <the single most useful next thing>
+```
+
+`Uncertain` is required. Every expensive bug in this repo came from one agent
+stating a conclusion that the next one trusted without rechecking. If a grep was
+truncated or a file was only partly read, that is a partial result, not a
+finding, and it belongs in that field.
+
+Do NOT summarise the whole session. Six lines. The point is that the next agent
+reads it in seconds.
+
+## Where the current state actually lives
+
+Do not reconstruct it by reading code. Two places answer it cheaply:
+
+1. **statalizers.com/admin** — the checklist. ~44 items, 26 of them probed
+   against the real source and data on every page load. It cannot go stale
+   because nothing is hand-ticked.
+2. **PROJECT_STATE.md** in the Vault — active sprint, locked files, work log.
+
+Read those two before planning anything.
+
 ## Workflow
 Edit files → `py_compile` / `predeploy_check.py` to verify → tell Justin the exact
 PowerShell commands (`git add … / git commit / git push / railway up`) to run. He
