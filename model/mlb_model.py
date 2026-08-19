@@ -414,7 +414,16 @@ class MLBModel:
             for k, row in list(latest_snap.items()):
                 if not _has_books(row) and k in latest_books:
                     merged = dict(row)
-                    merged["books_json"] = latest_books[k].get("books_json")
+                    src = latest_books[k]
+                    merged["books_json"] = src.get("books_json")
+                    # CARRY THE AGE TOO (2026-08-19). The per-book prices come
+                    # from the last PAID pull while total_line comes from the
+                    # newest Pinnacle snapshot, so the two disagree whenever the
+                    # line has moved since. The card then read "NO BOOK ON 6.5",
+                    # which looks like a bug and is actually stale data being
+                    # compared against fresh data with nothing saying so.
+                    merged["books_at"]        = src.get("snapshot_time", "")
+                    merged["books_total_line"] = src.get("total_line", "")
                     latest_snap[k] = merged
 
             self.odds = latest_snap
@@ -1646,6 +1655,8 @@ class MLBModel:
             # than downstream so a malformed cell degrades to {} once, in one
             # place, instead of throwing inside a template.
             "books":            _parse_books(odds_snap.get("books_json")),
+            "books_at":         odds_snap.get("books_at", ""),
+            "books_total_line": odds_snap.get("books_total_line", ""),
             "ml_signal":      movement.get("ml_signal", "NO_DATA"),
             "total_signal":   movement.get("total_signal", "NO_DATA"),
             "rl_home_m15_price": sf(odds_snap.get("rl_home_m15_price")),

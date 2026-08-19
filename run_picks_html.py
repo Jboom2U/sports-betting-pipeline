@@ -321,6 +321,8 @@ def prep_picks(picks, kalshi_data: dict = None):
             # actually used rather than a re-derivation that can drift.
             "exp_away":       gd.get("exp_away"),
             "exp_home":       gd.get("exp_home"),
+            "books_at":       gd.get("books_at", ""),
+            "books_total_line": gd.get("books_total_line", ""),
             "factors_away":   gd.get("away_factors") or [],
             "factors_home":   gd.get("home_factors") or [],
             # Warning flags
@@ -2606,6 +2608,22 @@ function valueHtml(p){
 // exp_runs is a multiplicative chain, so each row is the change in PROJECTED
 // RUNS that step caused. The deltas sum exactly to the model's own number, and
 // a bar of zero width is a signal that did nothing for this game.
+// Per-book prices are carried forward from the last PAID Odds API pull, while
+// total_line comes from the newest Pinnacle snapshot. When the line has moved
+// since, they disagree, and the card used to present that as if no book would
+// take the bet. It is stale data, not a missing market. Say when it is from.
+function booksAge(p){
+  const t = p && p.books_at;
+  if (!t) return "";
+  const d = new Date(t.endsWith("Z") ? t : t + "Z");
+  if (isNaN(d)) return "";
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  const when = d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+  if (mins > 240) return ` \u00b7 prices from ${when}, over ${Math.floor(mins/60)}h old`;
+  if (mins > 45)  return ` \u00b7 prices from ${when}, ${mins}m old`;
+  return ` \u00b7 prices from ${when}`;
+}
+
 function buildWaterfall(p){
   const sides = [];
   if (p.factors_away && p.factors_away.length) sides.push([p.away, p.factors_away, p.exp_away]);
@@ -3070,7 +3088,7 @@ function bookShopHtml(p){
     return `<details class="shop">
       <summary class="shop-sum">
         <span class="shop-lead">NO BOOK ON ${pickLine}</span>
-        <span class="shop-mine">${offLine.length} book(s) quoting a different total</span>
+        <span class="shop-mine">${offLine.length} book(s) on a different total${booksAge(p)}</span>
       </summary>
       <div class="shop-body">${alt}
         <div class="shop-foot">A different total is a different bet, not a
