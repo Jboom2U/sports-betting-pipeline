@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS picks (
     -- backfilled, which is why the 2026-08-11 review could only ever report win
     -- RATE. odds = American price on the side actually picked, captured at save
     -- time. closing_odds = the last pre-first-pitch price, for CLV.
+    -- Which model produced this pick (added 2026-08-19). Makes a model
+    -- change a WHERE clause rather than a boundary that invalidates the
+    -- record before it. See the 2026-07-21 data boundary note.
+    model_version   TEXT,
     odds            REAL,
     odds_at         TIMESTAMPTZ,
     closing_odds    REAL,
@@ -302,6 +306,10 @@ def create_all():
             # add it so a fresh create_all() DB matches production.
             cur.execute(
                 "ALTER TABLE picks ADD COLUMN IF NOT EXISTS market_signal TEXT")
+            # model_version: additive, nullable. Existing rows stay NULL, which
+            # correctly reads as "produced before versions were stamped".
+            cur.execute(
+                "ALTER TABLE picks ADD COLUMN IF NOT EXISTS model_version TEXT")
             # tier_locked freezes conf/tier once a game's lineups confirm (bet-time
             # tier), so intraday re-scores can't downgrade a LOCK before grading.
             cur.execute(

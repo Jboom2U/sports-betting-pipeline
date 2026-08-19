@@ -139,6 +139,40 @@ if os.getenv("CAL_A_RL") and os.getenv("CAL_B_RL"):
     # Only if you have explicitly decided to, after a refit shows it improves.
     CAL_COEFFS["RL"] = _cal_pair("RL", 1.369136, -0.293049)
 
+# ── MODEL VERSION (added 2026-08-19) ─────────────────────────────────────────
+# Stamped on every pick so a record can be segmented by which model produced it.
+#
+# WHY THIS EXISTS: the 2026-07-21 data boundary cost 1,459 graded picks, because
+# once the model changed there was no way to tell which picks came from which
+# version. Pooling them "produces a conclusion that is wrong about both". With
+# this column that boundary becomes a WHERE clause instead of a lost dataset.
+#
+# TWO PARTS, deliberately:
+#   MODEL_VERSION   bumped BY HAND when scoring logic changes. Human meaning.
+#   config hash     derived from the tunable weights, so a change made on
+#                   /admin/model-config cannot silently drift without the stamp
+#                   moving. A hand-maintained version alone would go stale the
+#                   first time someone forgot, which is exactly how this file
+#                   described tier thresholds of 75/68/60/48 for weeks.
+MODEL_VERSION = "2026.08.19"
+
+
+def model_version() -> str:
+    """e.g. '2026.08.19+a3f19c'. Falls back to the bare version if config is
+    unavailable, because a pick that saves without a stamp is better than a pick
+    that does not save."""
+    try:
+        import hashlib, json
+        from db.model_config import load_config
+        cfg = load_config() or {}
+        h = hashlib.sha1(
+            json.dumps(cfg, sort_keys=True, default=str).encode()
+        ).hexdigest()[:6]
+        return f"{MODEL_VERSION}+{h}"
+    except Exception:
+        return MODEL_VERSION
+
+
 EV_GATE_ENABLED       = os.getenv("EV_GATE", "0").strip().lower() in ("1", "true", "yes", "on")
 EV_GATE_TYPES         = {"ML", "TOTAL"}
 EV_GATE_MIN_EV        = float(os.getenv("EV_GATE_MIN_EV", "0.0"))

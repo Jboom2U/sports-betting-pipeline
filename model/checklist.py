@@ -205,10 +205,17 @@ def p_devig_method():
 
 
 def p_devig_fallback():
+    """Look for a BARE `return ip`, not any line containing it.
+
+    The first version matched `return ip / (ip + io)` too, so it reported the
+    item as open after it had been fixed. A probe that cannot tell those apart is
+    worse than no probe, because it trains you to ignore the page.
+    """
     txt = _read("model/value.py")
-    if "return ip" in txt and "io is None" in txt:
+    bare = re.search(r"^\s*return ip\s*$", txt, re.M)
+    if bare and "io is None" in txt:
         return OPEN, "devig_two_way returns the vig inclusive probability in the no-vig field when the other side is missing"
-    return DONE, "no silent vig inclusive fallback in devig_two_way"
+    return DONE, "returns None when the other side has no price, no vig inclusive fallback"
 
 
 def p_model_version():

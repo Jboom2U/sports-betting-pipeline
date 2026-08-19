@@ -66,6 +66,20 @@ def _pick_price(p: dict):
         return None
 
 
+def _model_version() -> str:
+    """Which model produced this pick.
+
+    Imported lazily and wrapped, because a pick that saves without a stamp is
+    strictly better than a pick that fails to save. NULL reads correctly as
+    "generated before versions were stamped".
+    """
+    try:
+        from model.mlb_picks import model_version
+        return model_version()
+    except Exception:
+        return None
+
+
 def save_picks(picks: list, pick_date: str) -> int:
     """
     Upsert all picks for a given date into the picks table.
@@ -101,15 +115,20 @@ def save_picks(picks: list, pick_date: str) -> int:
                     INSERT INTO picks
                         (pick_date, game_id, game, pick_type, label, team,
                          conf, tier, reasoning, market_signal, tier_locked,
-                         was_best_bet, odds, odds_at, actual_result)
+                         was_best_bet, odds, odds_at, model_version, actual_result)
                     VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), 'PENDING')
+                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, 'PENDING')
                     ON CONFLICT (pick_date, game_id, pick_type) DO UPDATE SET
                         label         = EXCLUDED.label,
                         team          = EXCLUDED.team,
                         game          = EXCLUDED.game,
                         reasoning     = EXCLUDED.reasoning,
                         market_signal = COALESCE(picks.market_signal, EXCLUDED.market_signal),
+                        -- Restamp on re-score. The board rescores all day, so the
+                        -- row reflects whichever model last produced it. Taking
+                        -- the OLD value here would mislabel a pick as coming from
+                        -- a version that did not generate what is stored.
+                        model_version = EXCLUDED.model_version,
                         conf          = CASE WHEN picks.tier_locked THEN picks.conf ELSE EXCLUDED.conf END,
                         tier          = CASE WHEN picks.tier_locked THEN picks.tier ELSE EXCLUDED.tier END,
                         tier_locked   = (picks.tier_locked OR EXCLUDED.tier_locked),
@@ -151,6 +170,7 @@ def save_picks(picks: list, pick_date: str) -> int:
                         _lineups_set,
                         _is_best_bet_now(p),
                         _pick_price(p),
+                        _model_version(),
                     )
                 )
                 inserted += cur.rowcount
