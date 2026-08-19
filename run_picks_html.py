@@ -1476,6 +1476,25 @@ details[open] .calc-caret{transform:rotate(90deg)}
 .calc-row>span:first-child{color:var(--sub);font-size:.72rem}
 .calc-foot{margin-top:7px;padding-top:6px;border-top:1px solid var(--border);font-size:.68rem;color:var(--sub);line-height:1.5}
 .calc-good{color:#3fb950}.calc-warn{color:#d29922}.calc-bad{color:#f85149}.calc-mute{color:var(--sub)}
+.betlog{margin:8px 0 2px;background:rgba(63,185,80,.07);border-left:3px solid #238636;border-radius:0}
+.betlog.betlog-done{background:rgba(63,185,80,.14)}
+.betlog-sum{list-style:none;cursor:pointer;padding:7px 11px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.betlog-sum::-webkit-details-marker{display:none}
+.betlog-sum:hover{background:rgba(63,185,80,.05)}
+.betlog-caret{font-size:.7rem;color:#3fb950;transition:transform .12s}
+details[open] .betlog-caret{transform:rotate(90deg)}
+.betlog-lead{font-size:.66rem;font-weight:700;letter-spacing:.06em;color:#3fb950}
+.betlog-hint{font-size:.68rem;color:var(--sub)}
+.betlog-body{padding:2px 11px 10px}
+.betlog-row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.betlog-sel{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;
+  padding:4px 7px;font-size:.78rem;font-family:inherit}
+.betlog-btn{background:#238636;border:0;color:#fff;border-radius:6px;padding:5px 14px;
+  font-size:.78rem;font-weight:700;cursor:pointer;font-family:inherit}
+.betlog-btn:hover{background:#2ea043}
+.betlog-out{margin-top:7px;font-size:.68rem;color:var(--sub);line-height:1.5}
+.betlog-ok{color:#3fb950;font-weight:600}.betlog-bad{color:#f85149}
+.betlog-link{color:#58a6ff;text-decoration:none}
 .pc-rule{margin:8px 0 2px;padding:8px 11px;background:rgba(139,148,158,.08);
   border-left:3px solid #30363d;border-radius:0;line-height:1.5}
 .pc-lead{display:inline;font-size:.68rem;font-weight:700;letter-spacing:.06em;color:#8b949e}
@@ -3067,6 +3086,88 @@ function calcStake(){
        Below that the minimum forces an over-bet.</div>`;
 }
 
+// ── LOG A BET YOU ACTUALLY PLACED (2026-08-18) ──────────────────────────────
+// Everything else on this board answers "was the model right". This answers
+// "did I make money", which is a different question and has been unanswerable.
+//
+// The price you type is YOUR price at YOUR book, not the board's. Those differ
+// constantly: the card quotes Pinnacle, you bet Hard Rock or DraftKings, and
+// the line moves in between. Recording the board's number instead would make
+// the ledger a second copy of the model's record rather than yours.
+//
+// Defaults to the BEST book price found for this exact bet, since that is the
+// number you most likely shopped to. Always editable.
+function betDefaults(p){
+  const key = bookKeyFor(p);
+  let best = null, bestBook = "";
+  if(key && p.books){
+    for(const b in p.books){
+      const v = p.books[b][key];
+      if(v == null || Math.abs(v) < 100) continue;
+      if(best === null || amDec(v) > amDec(best)){ best = v; bestBook = b; }
+    }
+  }
+  if(best === null && p.pick_price != null && Math.abs(p.pick_price) >= 100){
+    best = Math.round(p.pick_price); bestBook = "";
+  }
+  return {price: best, book: bestBook};
+}
+
+function betLogHtml(p, id){
+  const d = betDefaults(p);
+  const books = ["hardrockbet","draftkings","fanduel","betmgm","betrivers",
+                 "espnbet","ballybet","betparx","fliff","bovada"];
+  const opts = books.map(b =>
+    `<option value="${b}"${b === d.book ? " selected" : ""}>${BOOK_LABELS[b]||b}</option>`).join("");
+  return `<details class="betlog" id="${id}_wrap">
+    <summary class="betlog-sum"><span class="betlog-caret">&#9656;</span>
+      <span class="betlog-lead">&#43; LOG A BET</span>
+      <span class="betlog-hint">record what you actually placed</span></summary>
+    <div class="betlog-body">
+      <div class="betlog-row">
+        <input id="${id}_px" class="bb-price-in" placeholder="your price"
+               value="${d.price != null ? fmtAm(d.price) : ""}">
+        <input id="${id}_st" class="bb-price-in" placeholder="stake $" value="1">
+        <select id="${id}_bk" class="betlog-sel">${opts}</select>
+        <button class="betlog-btn" onclick="logBet('${id}', ${p._idx})">Log</button>
+      </div>
+      <div class="betlog-out" id="${id}_out">Your price at your book, not the board's.</div>
+    </div>
+  </details>`;
+}
+
+function logBet(id, idx){
+  const p = (typeof pickData !== "undefined" && pickData[idx]) ? pickData[idx] : null;
+  const out = document.getElementById(id + "_out");
+  if(!p){ out.textContent = "could not resolve this pick"; return; }
+  const px = parseInt((document.getElementById(id+"_px").value||"").replace(/[^0-9+\-]/g,""), 10);
+  const st = parseFloat((document.getElementById(id+"_st").value||"").replace(/[^0-9.]/g,""));
+  if(isNaN(px) || Math.abs(px) < 100){ out.innerHTML = "<span class='betlog-bad'>enter a real American price</span>"; return; }
+  if(isNaN(st) || st <= 0){ out.innerHTML = "<span class='betlog-bad'>enter a stake above zero</span>"; return; }
+  const body = {
+    bet_date: (typeof DATA_DATE !== "undefined" ? DATA_DATE : ""),
+    game_id: p.game_id || "", game: p.game || "",
+    pick_type: p.type || "", label: p.label || "", team: p.team || "",
+    price: px, stake: st,
+    book: document.getElementById(id+"_bk").value
+  };
+  out.textContent = "saving…";
+  fetch("/api/bet", {method:"POST", headers:{"Content-Type":"application/json"},
+                     body: JSON.stringify(body)})
+    .then(r => r.json())
+    .then(j => {
+      if(j && j.ok){
+        out.innerHTML = `<span class='betlog-ok'>&#10004; logged &mdash; `
+                      + `${fmtAm(px)} for $${st.toFixed(2)}</span> `
+                      + `<a href="/admin/bets" class="betlog-link">ledger</a>`;
+        document.getElementById(id+"_wrap").classList.add("betlog-done");
+      } else {
+        out.innerHTML = `<span class='betlog-bad'>${(j && j.error) || "save failed"}</span>`;
+      }
+    })
+    .catch(e => { out.innerHTML = `<span class='betlog-bad'>${e}</span>`; });
+}
+
 // ── UNIVERSAL PRICE CHECK (2026-08-14) ──────────────────────────────────────
 // Every card gets this, not just Best Bets.
 //
@@ -3923,6 +4024,7 @@ function renderPicks(){
       ? (leanGridEl || grid) : grid;
     pickData.push(p);
     const _legIdx = pickData.length - 1;
+    p._idx = _legIdx;                 // so the bet-log control can resolve it back
     _tg.innerHTML += `
       <div class="pick-card tier-${p.tier}${_isBB?' pick-bestbet':''}${_isFinal(_findScore(p))?' pick-done':''}${_isHighConf(p)?' pick-highconf':''}" data-type="${p.type}" data-tier="${p.tier}" data-highconf="${_isHighConf(p)?'1':'0'}">
         ${_isBB ? '<div class="bb-flag">&#9733; BEST BET</div>' : ''}
@@ -3953,6 +4055,7 @@ function renderPicks(){
         ${valueHtml(p)}${honestReadHtml(p)}
         ${bookShopHtml(p)}
         ${priceCheckHtml(p)}
+        ${betLogHtml(p, 'bl' + Math.abs(hashStr((p.label||'') + (p.game||'') + (p.type||''))))}
         <div class="pick-reasoning">${p.reasoning}</div>
         ${p.narrative ? `<div class="pick-narrative">${p.narrative}</div>` : ""}
         ${(()=>{

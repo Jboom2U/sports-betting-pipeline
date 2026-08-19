@@ -877,3 +877,129 @@ def backfill_scored_games_sharp_signals(clean_dir: str, days: int = 14) -> int:
         except Exception as e:
             log.warning(f"backfill_scored_games_sharp_signals failed: {e}")
     return updated
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BETS ACTUALLY PLACED
+#
+# Separate from picks on purpose. `picks` records what the model published;
+# these record what money went on, at the price and book you really used. The
+# board quotes Pinnacle, bets get placed at Hard Rock or DraftKings, and the
+# line moves in between — so the two are never quite the same, and only this one
+# can answer "did I make money" or "did I beat the close".
+# ─────────────────────────────────────────────────────────────────────────────
+def save_bet(bet: dict) -> int | None:
+    """Record one placed bet. Returns its id, or None if it could not be saved.
+
+    Deliberately permissive about which pick it refers to: you may bet something
+    the board never flagged, and that is worth recording, not rejecting.
+    """
+    required = ("bet_date", "game_id", "pick_type", "label", "price", "stake")
+    missing = [k for k in required if not str(bet.get(k, "")).strip()]
+    if missing:
+        log.warning(f"save_bet: missing {missing}")
+        return None
+    try:
+        price = float(bet["price"])
+        stake = float(bet["stake"])
+    except (TypeError, ValueError):
+        log.warning("save_bet: price/stake not numeric")
+        return None
+    if abs(price) < 100:
+        log.warning(f"save_bet: {price} is not a valid American price")
+        return None
+    if stake <= 0:
+        log.warning("save_bet: stake must be positive")
+        return None
+
+    with db_conn() as conn:
+        if conn is None:
+            return None
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO bets (bet_date, game_id, game, pick_type, label,
+                                  team, price, stake, book, note)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id
+                """,
+                (bet["bet_date"], str(bet["game_id"]), bet.get("game", ""),
+                 bet["pick_type"], bet["label"], bet.get("team", ""),
+                 price, stake, bet.get("book", ""), bet.get("note", "")),
+            )
+            new_id = cur.fetchone()[0]
+            log.info(f"Bet logged: {bet['label']} {price:+.0f} ${stake:.2f} "
+                     f"@ {bet.get('book','?')}")
+            return new_id
+        except Exception as e:
+            log.warning(f"save_bet failed: {e}")
+            return None
+
+
+def grade_bets(bet_date: str) -> int:
+    """Copy results and closing prices from `picks` onto `bets` for one date.
+
+    ONE GRADER, NOT TWO. Results come from picks.actual_result rather than being
+    recomputed here — re-deriving them is exactly how the Daily Summary and the
+    Yesterday tab ended up disagreeing about the same day.
+    """
+    with db_conn() as conn:
+        if conn is None:
+            return 0
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE bets b
+                   SET result       = p.actual_result,
+                       closing_odds = p.closing_odds,
+                       graded_at    = NOW()
+                  FROM picks p
+                 WHERE p.pick_date = b.bet_date
+                   AND p.game_id   = b.game_id
+                   AND p.pick_type = b.pick_type
+                   AND b.bet_date  = %s
+                   AND p.actual_result IN ('WIN','LOSS','PUSH')
+                   AND (b.result IS NULL OR b.result = 'PENDING')
+                """,
+                (bet_date,),
+            )
+            n = cur.rowcount or 0
+            if n:
+                log.info(f"Graded {n} placed bet(s) for {bet_date}")
+            return n
+        except Exception as e:
+            log.warning(f"grade_bets failed: {e}")
+            return 0
+
+
+def get_bets(since: str = None, limit: int = 500) -> list:
+    """Placed bets, newest first, with profit and CLV computed per row."""
+    rows = []
+    with db_conn() as conn:
+        if conn is None:
+            return []
+        try:
+            cur = conn.cursor()
+            if since:
+                cur.execute(
+                    "SELECT bet_date, game, pick_type, label, price, stake, book, "
+                    "result, closing_odds, placed_at FROM bets "
+                    "WHERE bet_date >= %s ORDER BY placed_at DESC LIMIT %s",
+                    (since, limit))
+            else:
+                cur.execute(
+                    "SELECT bet_date, game, pick_type, label, price, stake, book, "
+                    "result, closing_odds, placed_at FROM bets "
+                    "ORDER BY placed_at DESC LIMIT %s", (limit,))
+            cols = [d[0] for d in cur.description]
+            for r in cur.fetchall():
+                d = dict(zip(cols, r))
+                for k in ("price", "stake", "closing_odds"):
+                    if d.get(k) is not None:
+                        d[k] = float(d[k])
+                rows.append(d)
+        except Exception as e:
+            log.warning(f"get_bets failed: {e}")
+    return rows

@@ -1,5 +1,62 @@
 # Statalizers — Project Context for Claude
 
+## 2026-08-18: THE CHECKLIST IS ON /admin, AND IT VERIFIES ITSELF
+
+`/admin` was rebuilt. Read this before adding a route or a checklist item.
+
+**The open work list now lives at the top of /admin** and its status comes from
+reading the repo on every page load, not from a tick box. `model/checklist.py`
+holds ~39 items; 24 carry a PROBE that greps the actual source or counts rows in
+the actual CSV. The remaining 15 are judgement calls and render as NO CHECK.
+
+**A stored status can never green a probed item.** `db/checklist_state` exists
+only for the un-probeable ones and renders as "asserted" with a date. The
+asymmetry is the point. A hand set flag is how this file described tier
+thresholds of 75/68/60/48 for weeks while the code used 68/62/52/48, and that
+phantom was chased more than once.
+
+**Justin can add items from the page.** They go to `db/checklist_notes` and
+survive the session, which chat does not (Cowork keeps ~50 sessions, older ones
+age out unrecoverably). A new item shows as "waiting on a review". If the DB is
+down the POST reports `added=0` and says the item was NOT saved, rather than
+silently dropping it.
+
+**Two things the probes caught immediately, both of which this file had wrong:**
+
+1. **Platoon splits: `normalize_platoon_splits()` DOES exist** in
+   `normalize/mlb_pitcher_normalize.py:65`. But `run_pipeline.py:170` imports only
+   `normalize_recent_starts` from that module, so **the platoon master is never
+   refreshed by the 6am run**. It fills only on a manual `/admin/refresh-signals`.
+   The local copy is header only, 0 data rows. This was chased three times as a
+   name matching bug. It is a pipeline wiring gap. Fix that before touching
+   `get_platoon()`, because wiring the model to a file nothing refreshes fixes
+   nothing.
+2. **The first version of the injuries probe graded itself done.** It counted the
+   word "injuries" across `model/*.py` and matched 8 occurrences inside
+   `checklist.py` itself. `_py_files()` now excludes this module. **A checklist
+   that can see itself will always report itself complete.**
+
+**Adding a route to /admin:** append a tuple to `ROUTES` in `admin_hub.py`. Do
+not write card markup by hand. The old page was ~130 lines of inline HTML in
+app.py and five cards had been appended using `<b>` and `<span>` instead of
+`<div class="card-title">` and `<div class="card-desc">`. Both are inline
+elements, so they rendered with no line break: "Prop match diagnosticWhy a real
+prop line is not reaching the board." Every card now goes through one `_card()`
+function, so that class of mistake is structurally impossible.
+
+**Quota spending routes are now their own section** with the cost on the card.
+Previously `/admin/props-pull` (spends quota) sat under Diagnostics and
+`/admin/force-oddsapi` (3 credits) sat under Actions, both looking identical to
+the free ones, on a 500 request monthly cap.
+
+**Adding a checklist item:** append to `ITEMS` in `model/checklist.py` and write
+a probe if one is at all possible. A probe must never raise; `run_probe()`
+catches everything and degrades to `unknown`, because a checklist that takes the
+admin page down is worse than no checklist. Evidence strings should be facts
+("7 scrapers call requests.get with no timeout"), not summaries ("not done").
+
+---
+
 ## 2026-08-17: LINE SHOPPING PER BOOK, INCLUDING HARD ROCK
 
 **The Odds API is now queried by BOOKMAKER NAME, not by region.** From the docs:

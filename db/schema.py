@@ -158,6 +158,42 @@ CREATE TABLE IF NOT EXISTS site_config (
 );
 """
 
+_BETS = """
+-- BETS YOU ACTUALLY PLACED (added 2026-08-18).
+--
+-- Distinct from `picks`, and the distinction is the whole point. `picks` is what
+-- the model published. This is what money was really put on: YOUR price at YOUR
+-- book at the moment YOU placed it. Those differ constantly — the board quotes
+-- Pinnacle, bets get placed at Hard Rock or DraftKings, and the line moves in
+-- between.
+--
+-- Without this table the only answerable question is "was the model right".
+-- With it you can also ask "did I make money" and, more usefully, "did I beat
+-- the closing number", which converges far faster than win rate.
+--
+-- Grading is not duplicated here. result is filled by joining back to picks on
+-- (bet_date, game_id, pick_type), so there is exactly one grader.
+CREATE TABLE IF NOT EXISTS bets (
+    id           SERIAL PRIMARY KEY,
+    bet_date     DATE NOT NULL,
+    game_id      TEXT NOT NULL,
+    game         TEXT,
+    pick_type    TEXT NOT NULL,
+    label        TEXT NOT NULL,
+    team         TEXT,
+    price        NUMERIC NOT NULL,      -- American odds YOU got
+    stake        NUMERIC NOT NULL,      -- dollars risked
+    book         TEXT,                  -- where it was placed
+    placed_at    TIMESTAMPTZ DEFAULT NOW(),
+    note         TEXT,
+    -- filled at grade time from picks / scored_games
+    result       TEXT DEFAULT 'PENDING',
+    closing_odds NUMERIC,
+    graded_at    TIMESTAMPTZ
+);
+"""
+
+
 _PLAYER_GAME_LOGS = """
 CREATE TABLE IF NOT EXISTS player_game_logs (
     id              SERIAL PRIMARY KEY,
@@ -178,6 +214,48 @@ CREATE TABLE IF NOT EXISTS player_game_logs (
     sb              INTEGER     DEFAULT 0,
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE (game_date, player_name, team)
+);
+"""
+
+_CHECKLIST_STATE = """
+-- STATUS OVERRIDES FOR CHECKLIST ITEMS THAT CANNOT BE PROBED (added 2026-08-18).
+--
+-- model/checklist.py verifies most items by reading the repo, and for those the
+-- evidence always wins: nothing in this table can mark a probed item done. That
+-- is deliberate. A hand set flag is exactly how CLAUDE.md ended up describing
+-- tier thresholds of 75/68/60/48 for weeks while the code used 68/62/52/48.
+--
+-- This table exists only for the judgement calls, where no probe is possible
+-- (rotate an external key, rebuild a projection, decide a tradeoff). Those
+-- render on the page as ASSERTED with the date and the note, never as measured,
+-- so it is always obvious which half of the list is which.
+CREATE TABLE IF NOT EXISTS checklist_state (
+    item_id     TEXT PRIMARY KEY,
+    status      TEXT NOT NULL,
+    note        TEXT,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
+_CHECKLIST_NOTES = """
+-- ITEMS JUSTIN ADDS FROM THE ADMIN PAGE (added 2026-08-18).
+--
+-- The problem this solves, in his words: "Things that I thought we already have
+-- apparently have just been sitting there and I was never prompted to add
+-- those." Ideas raised in a chat session die with that session, since Cowork
+-- keeps only the last ~50 and older ones age out unrecoverably.
+--
+-- Anything typed here survives the session, the deploy and the context window.
+-- status: 'new' until reviewed, then 'accepted' (promoted into model/checklist.py
+-- ITEMS), 'declined' (with a reason in response), or 'done'.
+CREATE TABLE IF NOT EXISTS checklist_notes (
+    id           SERIAL PRIMARY KEY,
+    title        TEXT NOT NULL,
+    detail       TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status       TEXT NOT NULL DEFAULT 'new',
+    response     TEXT,
+    responded_at TIMESTAMPTZ
 );
 """
 
@@ -210,6 +288,9 @@ def create_all():
             cur.execute(_MODEL_CONFIG)
             cur.execute(_SITE_CONFIG)
             cur.execute(_PLAYER_GAME_LOGS)
+            cur.execute(_BETS)
+            cur.execute(_CHECKLIST_STATE)
+            cur.execute(_CHECKLIST_NOTES)
             for idx in _INDEXES:
                 cur.execute(idx)
             # Migration: pick_side = the DIRECTION bet (OVER/UNDER). Existing rows

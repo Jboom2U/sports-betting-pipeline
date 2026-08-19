@@ -1787,139 +1787,61 @@ def admin_logout():
 
 @app.route("/admin")
 def admin_hub():
+    """The admin page. Markup lives in admin_hub.py; see that module for why.
+
+    Imported INSIDE the view rather than at module scope so a problem in the
+    checklist probes can never stop the app from booting. The whole point of
+    this page is to be reachable when something else is broken.
+    """
     if _ADMIN_PASS and not session.get("admin_auth"):
         return redirect("/admin/login?next=/admin")
-    return Response("""<!DOCTYPE html>
-<html><head><title>Statalizers Admin</title>
-<style>
-body{background:#0d1117;color:#e6edf3;font-family:-apple-system,sans-serif;margin:0}
-nav{background:#161b22;border-bottom:1px solid #30363d;padding:.75rem 1.5rem;
-  display:flex;align-items:center;gap:1.5rem}
-.logo{font-size:15px;font-weight:600}
-nav a{color:#8b949e;font-size:13px;text-decoration:none}
-nav a:hover{color:#e6edf3}
-.container{max-width:800px;margin:2rem auto;padding:0 1.5rem}
-h1{font-size:20px;font-weight:600;margin-bottom:.25rem}
-.sub{color:#8b949e;font-size:13px;margin-bottom:2rem}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
-@media(max-width:540px){.grid{grid-template-columns:1fr}}
-.card{background:#161b22;border:1px solid #30363d;border-radius:10px;
-  padding:1.25rem 1.5rem;text-decoration:none;color:inherit;display:block;
-  transition:border-color .15s}
-.card:hover{border-color:#58a6ff}
-.card-title{font-size:15px;font-weight:600;margin-bottom:.3rem}
-.card-desc{font-size:13px;color:#8b949e}
-.badge{display:inline-block;font-size:11px;padding:2px 7px;border-radius:20px;
-  margin-bottom:.5rem;font-weight:600}
-.badge-public{background:#1f3d2e;color:#3fb950}
-.badge-admin{background:#2d2016;color:#d29922}
-.logout{margin-top:2rem;font-size:13px;color:#8b949e}
-.logout a{color:#8b949e}
-</style></head>
-<body>
-<nav><span class="logo">⚾ Statalizers</span>
-  <a href="/">Dashboard</a>
-  <a href="/admin">Admin</a>
-</nav>
-<div class="container">
-  <h1>Admin hub</h1>
-  <p class="sub">All internal routes for Statalizers.com</p>
-  <h2 style="font-size:14px;color:#8b949e;margin:1.5rem 0 .75rem;text-transform:uppercase;letter-spacing:.05em">Daily views</h2>
-  <div class="grid">
-    <a class="card" href="/"><span class="badge badge-public">Public</span>
-      <div class="card-title">Main dashboard</div>
-      <div class="card-desc">Today's picks, Best Bets, Daily Summary</div></a>
-    <a class="card" href="/ask"><span class="badge badge-public">Public</span>
-      <div class="card-title">🧠 Statalizer Bot</div>
-      <div class="card-desc">Ask about any game, matchup, or prop</div></a>
-    <a class="card" href="/performance-html"><span class="badge badge-public">Public</span>
-      <div class="card-title">Performance tracker</div>
-      <div class="card-desc">W/L/ROI by tier &amp; type, sharp action, 7-90d toggles</div></a>
-  </div>
+    flash, bad = "", False
+    if request.args.get("added") == "1":
+        flash = "Added. It will be reviewed and either promoted onto the checklist or answered."
+    elif request.args.get("added") == "0":
+        flash, bad = ("Could not save that. The database is unreachable, so it was NOT "
+                      "recorded. Try again once /status shows the DB healthy."), True
+    try:
+        import admin_hub as _hub
+        return Response(_hub.render(flash=flash, flash_bad=bad), mimetype="text/html")
+    except Exception as exc:
+        log.exception("admin hub render failed")
+        return Response(
+            "<body style='background:#0d1117;color:#e6edf3;font-family:sans-serif;padding:2rem'>"
+            "<h2>Admin hub failed to render</h2>"
+            f"<pre style='color:#f85149'>{type(exc).__name__}: {exc}</pre>"
+            "<p>Direct links still work: <a style='color:#58a6ff' href='/status'>/status</a> &middot; "
+            "<a style='color:#58a6ff' href='/admin/real-roi'>/admin/real-roi</a> &middot; "
+            "<a style='color:#58a6ff' href='/admin/analysis'>/admin/analysis</a></p></body>",
+            mimetype="text/html", status=500)
 
-  <h2 style="font-size:14px;color:#8b949e;margin:1.75rem 0 .75rem;text-transform:uppercase;letter-spacing:.05em">Analysis &amp; performance</h2>
-  <div class="grid">
-    <a class="card" href="/admin/analysis"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">📋 Nightly analysis report</div>
-      <div class="card-desc">Day review + trends. Date picker for ANY past day, download, email</div></a>
-    <a class="card" href="/admin/calibration"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Calibration</div>
-      <div class="card-desc">Predicted vs actual by confidence band, tier, type</div></a>
-    <a class="card" href="/admin/signal-audit"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Signal audit</div>
-      <div class="card-desc">Which model inputs actually vary across the slate</div></a>
-    <a class="card" href="/admin/loss-analysis"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">🔍 Loss analysis</div>
-      <div class="card-desc">Reverse-engineers losses: leak by type, tier, band, sharp</div></a>
-    <a class="card" href="/analytics"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Analytics dashboard</div>
-      <div class="card-desc">Natural-language DB queries over pick history</div></a>
-    <a class="card" href="/admin/model-config"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Model control panel</div>
-      <div class="card-desc">Tune signal weights, preview impact, save config</div></a>
-  </div>
 
-  <h2 style="font-size:14px;color:#8b949e;margin:1.75rem 0 .75rem;text-transform:uppercase;letter-spacing:.05em">Diagnostics</h2>
-  <div class="grid">
-    <a class="card" href="/admin/pinnacle-odds-test"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Pinnacle odds diagnostic</div>
-      <div class="card-desc">Dry-run ML/RL/total parse, no writes, no quota</div></a>
-    <a class="card" href="/admin/prop-match-diag"><span class="badge badge-admin">Admin</span>
-      <b>Prop match diagnostic</b><span>Why a real prop line is not reaching the board. Read-only.</span></a>
-    <a class="card" href="/admin/props-pull"><span class="badge badge-admin">Admin</span>
-      <b>Pull batter props</b><span>Odds API, on demand. SPENDS QUOTA. Shows cost before you commit.</span></a>
-    <a class="card" href="/admin/strategy-backtest"><span class="badge badge-admin">Admin</span>
-      <b>Strategy backtest</b><span>Threshold rules replayed on graded history, walk-forward validated.</span></a>
-    <a class="card" href="/admin/calibration-fit"><span class="badge badge-admin">Admin</span>
-      <b>Calibration fit</b><span>Per-type Platt coefficients from live graded picks. Read-only.</span></a>
-    <a class="card" href="/admin/pinnacle-props-scan"><span class="badge badge-admin">Admin</span>
-      <b>Pinnacle props scan</b><span>Which prop markets really exist, with real lines. Read-only.</span></a>
-    <a class="card" href="/admin/pinnacle-k-test"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Pinnacle K-line test</div>
-      <div class="card-desc">Live strikeout lines + prices parse check</div></a>
-    <a class="card" href="/admin/props-diag"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Props diagnostic</div>
-      <div class="card-desc">Props scored today vs saved/graded per date (0-0 debug)</div></a>
-    <a class="card" href="/status"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Pipeline status</div>
-      <div class="card-desc">Last run, DB, R2 health</div></a>
-    <a class="card" href="/schedule-status"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Schedule status</div>
-      <div class="card-desc">Next pipeline, refresh, first pitch (JSON)</div></a>
-  </div>
+@app.route("/admin/checklist/add", methods=["POST"])
+def admin_checklist_add():
+    """Record something Justin wants tracked.
 
-  <h2 style="font-size:14px;color:#8b949e;margin:1.75rem 0 .75rem;text-transform:uppercase;letter-spacing:.05em">Actions (run on click)</h2>
-  <div class="grid">
-    <a class="card" href="/force-pipeline"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Force pipeline</div>
-      <div class="card-desc">Trigger the full 6am pipeline now</div></a>
-    <a class="card" href="/force-odds"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Force odds snapshot (Pinnacle, free)</div>
-      <div class="card-desc">Pinnacle ML/RL only — no per-book prices, no quota</div></a>
-    <a class="card" href="/admin/force-oddsapi"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Pull Odds API (3 credits)</div>
-      <div class="card-desc">Per-book prices incl. Hard Rock + the game total</div></a>
-    <a class="card" href="/admin/real-roi"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Real-price ROI</div>
-      <div class="card-desc">ROI from stored prices, not a flat -110</div></a>
-    <a class="card" href="/admin/clv"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Closing line value</div>
-      <div class="card-desc">Beat the close? Settles far sooner than win rate</div></a>
-    <a class="card" href="/admin/refresh-signals"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Refresh signals</div>
-      <div class="card-desc">Umpire, bullpen, pitcher/team stats (no quota)</div></a>
-    <a class="card" href="/admin/grade-backfill"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Grade backfill</div>
-      <div class="card-desc">Import + grade past picks from R2 analysis JSONs</div></a>
-    <a class="card" href="/unstick"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Unstick pipeline</div>
-      <div class="card-desc">Clear stuck pipeline state</div></a>
-    <a class="card" href="/admin/change-site-password"><span class="badge badge-admin">Admin</span>
-      <div class="card-title">Change site password</div>
-      <div class="card-desc">Update the public site login</div></a>
-  </div>
-  <p class="logout"><a href="/admin/logout">Sign out</a></p>
-</div></body></html>""", mimetype="text/html")
+    Deliberately reports failure rather than swallowing it. An item silently
+    dropped because the DB was down is the exact failure this whole page exists
+    to prevent.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin")
+    title = (request.form.get("title") or "").strip()
+    if not title:
+        return redirect("/admin")
+    try:
+        from db import checklist_store as _cs
+        ok = _cs.add_note(title, request.form.get("detail", ""))
+    except Exception:
+        log.exception("checklist add failed")
+        ok = False
+    try:
+        from model import checklist as _cl
+        _cl._CACHE["rows"] = None          # so the page reflects it immediately
+    except Exception:
+        pass
+    return redirect("/admin?added=" + ("1" if ok else "0"))
+
 
 @app.route("/admin/change-site-password", methods=["GET", "POST"])
 def admin_change_site_password():
@@ -3040,6 +2962,152 @@ function recost(){{
 }}
 </script></body></html>"""
     return Response(html, mimetype="text/html")
+
+
+def _today_et_str() -> str:
+    """Today in ET. Railway runs UTC, so a bare date() rolls over at 8pm ET."""
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _Z
+    return _dt.now(_Z("America/New_York")).strftime("%Y-%m-%d")
+
+
+@app.route("/api/bet", methods=["POST"])
+def api_log_bet():
+    """Record a bet you actually placed. Called by the Log-bet control on a card."""
+    try:
+        from db.picks_store import save_bet
+        d = request.get_json(silent=True) or request.form
+        new_id = save_bet({
+            "bet_date":  d.get("bet_date") or _today_et_str(),
+            "game_id":   d.get("game_id", ""),
+            "game":      d.get("game", ""),
+            "pick_type": d.get("pick_type", ""),
+            "label":     d.get("label", ""),
+            "team":      d.get("team", ""),
+            "price":     d.get("price"),
+            "stake":     d.get("stake"),
+            "book":      d.get("book", ""),
+            "note":      d.get("note", ""),
+        })
+        if new_id is None:
+            return {"ok": False, "error": "rejected — check price and stake"}, 400
+        return {"ok": True, "id": new_id}
+    except Exception as e:
+        log.warning(f"/api/bet failed: {e}")
+        return {"ok": False, "error": str(e)}, 500
+
+
+@app.route("/admin/bets")
+def bets_ledger():
+    """YOUR ledger: what you actually staked, what it returned, and your CLV.
+
+    This is the only page that answers "did I make money". Everything else on
+    the site answers "was the model right", which is a different question and
+    has been the only one measurable until now.
+
+    CLV here is YOUR price against the close, not the model's. If it is
+    consistently positive you are picking off value before the market moves; if
+    negative you are arriving late, and a winning week will not save that.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/bets")
+    import html as _h, traceback
+    from datetime import date as _date, timedelta as _td
+    days = max(1, min(365, int(request.args.get("days", "30") or 30)))
+    since = (_date.today() - _td(days=days)).isoformat()
+
+    def _dec(a):
+        try:
+            a = float(a)
+        except (TypeError, ValueError):
+            return None
+        return None if abs(a) < 100 else (1.0 + a/100.0 if a > 0 else 1.0 + 100.0/abs(a))
+
+    try:
+        from db.picks_store import get_bets, grade_bets
+        # Pull results forward before rendering, so the ledger is never stale.
+        for d_off in range(0, min(days, 10) + 1):
+            grade_bets((_date.today() - _td(days=d_off)).isoformat())
+        rows = get_bets(since=since)
+
+        staked = returned = 0.0
+        clvs, w, l, pu, pending = [], 0, 0, 0, 0
+        for r in rows:
+            st = r.get("stake") or 0.0
+            staked += st
+            res = (r.get("result") or "PENDING").upper()
+            d = _dec(r.get("price"))
+            if res == "WIN" and d:
+                returned += st * d; w += 1
+            elif res == "LOSS":
+                l += 1
+            elif res == "PUSH":
+                returned += st; pu += 1
+            else:
+                pending += 1
+                staked -= st            # don't count unsettled money as risked
+            dc = _dec(r.get("closing_odds"))
+            if d and dc:
+                clvs.append((d/dc - 1.0) * 100.0)
+
+        profit = returned - staked
+        roi    = (profit / staked * 100.0) if staked else 0.0
+        avgclv = (sum(clvs)/len(clvs)) if clvs else None
+        beat   = sum(1 for x in clvs if x > 0)
+
+        pcol = "#3fb950" if profit >= 0 else "#f85149"
+        ccol = "#3fb950" if (avgclv or 0) >= 0 else "#f85149"
+
+        trs = ""
+        for r in rows:
+            res = (r.get("result") or "PENDING").upper()
+            d, dc = _dec(r.get("price")), _dec(r.get("closing_odds"))
+            st = r.get("stake") or 0.0
+            pl = (st*(d-1) if res == "WIN" and d else -st if res == "LOSS" else 0.0)
+            clv = ((d/dc - 1.0)*100.0) if (d and dc) else None
+            rc = {"WIN": "#3fb950", "LOSS": "#f85149", "PUSH": "#8b949e"}.get(res, "#d29922")
+            trs += (f"<tr><td>{_h.escape(str(r.get('bet_date','')))}</td>"
+                    f"<td>{_h.escape(r.get('label',''))}</td>"
+                    f"<td>{_h.escape(r.get('book','') or '—')}</td>"
+                    f"<td>{float(r.get('price',0)):+.0f}</td>"
+                    f"<td>${st:.2f}</td>"
+                    f"<td style='color:{rc}'>{res}</td>"
+                    f"<td style='color:{'#3fb950' if pl>0 else '#f85149' if pl<0 else '#8b949e'}'>"
+                    f"{'+' if pl>=0 else '−'}${abs(pl):.2f}</td>"
+                    f"<td>{f'{clv:+.2f}%' if clv is not None else '—'}</td></tr>")
+
+        html = f"""<!doctype html><html><head><meta charset=utf-8><title>My bets</title><style>
+body{{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:1000px;margin:0 auto}}
+h2{{color:#58a6ff}} table{{border-collapse:collapse;width:100%;font-size:13px;margin-top:12px}}
+th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #21262d}}
+th{{color:#8b949e;font-weight:600;font-size:11px;text-transform:uppercase}}
+.note{{color:#8b949e;font-size:12.5px;line-height:1.65}}
+.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:14px 0}}
+.c{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}}
+.big{{font-size:1.6rem;font-weight:700}} .lbl{{font-size:.7rem;color:#8b949e;margin-top:4px}}
+</style></head><body>
+<h2>My bets &mdash; last {days} days</h2>
+<div class="cards">
+  <div class="c"><div class="big" style="color:{pcol}">{'+' if profit>=0 else '−'}${abs(profit):.2f}</div><div class="lbl">profit</div></div>
+  <div class="c"><div class="big" style="color:{pcol}">{roi:+.1f}%</div><div class="lbl">ROI on ${staked:.2f} risked</div></div>
+  <div class="c"><div class="big">{w}-{l}{f'-{pu}' if pu else ''}</div><div class="lbl">record{f' · {pending} pending' if pending else ''}</div></div>
+  <div class="c"><div class="big" style="color:{ccol}">{f'{avgclv:+.2f}%' if avgclv is not None else '—'}</div>
+    <div class="lbl">avg CLV{f' · beat close {beat}/{len(clvs)}' if clvs else ''}</div></div>
+</div>
+<p class="note"><b>CLV is the number to watch.</b> It compares the price YOU got
+to the closing price on the same bet. Positive means you were early to value;
+negative means you arrived after the market moved, and no winning streak fixes
+that. It settles far sooner than win rate, which needs roughly 1,400 bets to
+prove a 55% edge.</p>
+<table><tr><th>date</th><th>bet</th><th>book</th><th>price</th><th>stake</th>
+<th>result</th><th>P/L</th><th>CLV</th></tr>{trs or '<tr><td colspan=8 class="note">No bets logged yet. Use the Log bet control on any pick card.</td></tr>'}</table>
+<p><a href="/admin/clv">Model CLV</a> &nbsp; <a href="/admin/real-roi">Real-price ROI</a> &nbsp; <a href="/admin">&larr; Admin</a></p>
+</body></html>"""
+        return Response(html, mimetype="text/html")
+    except Exception:
+        return Response(f"<pre style='background:#0d1117;color:#f85149;padding:20px'>"
+                        f"{_h.escape(traceback.format_exc())}</pre>",
+                        mimetype="text/html"), 500
 
 
 @app.route("/admin/clv")
