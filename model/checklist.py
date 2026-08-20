@@ -390,6 +390,20 @@ def p_shadow_model():
                   "primitive it needs and is already in place")
 
 
+def p_parlay_calibration():
+    """The parlay panel is the last place on the board using RAW confidence."""
+    txt = _read("run_picks_html.py")
+    m = re.search(r"(thematic|combined confidence|buildParlay|parlayCard)[\s\S]{0,2500}", txt, re.I)
+    if not m:
+        return UNKNOWN, "could not locate the parlay builder in run_picks_html.py"
+    blk = m.group(0)
+    if re.search(r"calibrat|CAL_COEFFS|calProb", blk, re.I):
+        return DONE, "parlay maths reads a calibrated probability"
+    return OPEN, ("parlay combined confidence multiplies RAW conf; the pick cards for the same "
+                  "legs apply calibration and can read NO EDGE on picks the parlay panel counts "
+                  "as a +26% edge")
+
+
 # -------------------------------------------------------------------- items
 # group order is the order they render. Keep the highest leverage groups first.
 
@@ -583,6 +597,32 @@ ITEMS = [
          why="Four self inflicted bugs on 08-11 were caught only because they happened to be "
              "re-read. Advisory only, never blocking.",
          where="scripts/predeploy_check.py, gemini_client.py", probe=None),
+    dict(id="parlay-logic", group="surface", effort="M",
+         title="Fix or remove the suggested parlays",
+         why="THE BOARD CONTRADICTS ITSELF. The parlay panel multiplies RAW stated confidence "
+             "(81.1% x 78.5% = 63.7%, shown as '+26.4% edge vs break-even'), while the pick card "
+             "for the same leg applies calibration and reads 'HONEST READ - NO EDGE, EV -0.8%'. "
+             "Calibrated, that parlay is roughly +1.4 points over break-even, not +26. It is the "
+             "only surface left using uncalibrated confidence.\n\n"
+             "NO THESIS. 'Thematic parlays, grouped by shared thesis' but the thesis is 'these "
+             "two numbers are the largest'. Astros ML appears in 4 of 5 cards, Guardians in 3. "
+             "It is combinatorics over the top four picks, which the parlay builder already lets "
+             "Justin do by hand.\n\n"
+             "AND THE MATH ARGUES AGAINST THE FEATURE. If two legs are genuinely +EV singles, "
+             "parlaying them is STRICTLY WORSE than betting them separately, because the hold "
+             "compounds. A parlay is only justified when legs are correlated and the book has "
+             "mispriced the correlation, or as a deliberate variance trade. Nothing on the panel "
+             "says either.\n\n"
+             "THREE OPTIONS, Justin to choose:\n"
+             "  1. Remove it. Cheapest, and loses nothing he cannot do himself.\n"
+             "  2. Rebuild honestly: calibrated probabilities, EV computed against the real "
+             "combined price, and a line stating the singles are better EV unless he wants "
+             "variance.\n"
+             "  3. Make the thesis real: group legs that share a CAUSAL driver (overs in the same "
+             "wind conditions, dogs against spent bullpens), which is the only case where a "
+             "parlay has a defensible reason to exist.",
+         where="run_picks_html.py, model/mlb_picks.py build_thematic_parlays",
+         probe=p_parlay_calibration),
     dict(id="shadow-model", group="surface", effort="L",
          title="Shadow model with a live side by side view",
          why="Every real bug this week was caught by EYE, not by a metric: blank weather across "
