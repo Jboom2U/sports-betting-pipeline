@@ -2845,6 +2845,83 @@ _props_pull_state = {"running": False, "started": None, "msg": "",
                      "spent": 0, "done_at": None}
 
 
+@app.route("/admin/export/picks.csv")
+def export_picks_csv():
+    """Every graded pick as CSV, for outside analysis.
+
+    Built 2026-08-20 so a reviewer can run their own tests instead of reading a
+    summary. Read only, no quota, no writes. Columns are the REAL schema, which
+    matters: an audit received the same day was written against `picks_archive`
+    with `market_type`, `book_price` and `calibrated_prob`, none of which exist
+    here, so none of its SQL could run.
+
+    NOTE ON CALIBRATION: there is deliberately no calibrated probability column.
+    Platt is applied at display time in model/mlb_picks.py and never stored, so
+    exporting one would be inventing a number. `conf` is the raw model output.
+    The coefficients are in CAL_COEFFS if a reviewer wants to reproduce it.
+
+    Optional: ?since=YYYY-MM-DD (default 2026-07-21, the data boundary).
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/export/picks.csv")
+    import csv as _csv, io as _io
+    since = (request.args.get("since") or "2026-07-21").strip()
+
+    COLS = ["pick_date", "game_id", "game", "pick_type", "label", "team",
+            "conf", "tier", "market_signal", "tier_locked", "was_best_bet",
+            "model_version", "odds", "odds_at", "closing_odds", "closing_odds_at",
+            "actual_result", "away_final", "home_final", "graded_at"]
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(COLS)
+    n = 0
+    try:
+        from db.connection import db_conn as _dbc
+        with _dbc() as conn:
+            if conn is None:
+                return Response("database unavailable", mimetype="text/plain", status=503)
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT " + ", ".join(COLS) + " FROM picks "
+                "WHERE pick_date >= %s AND actual_result IS NOT NULL "
+                "  AND actual_result <> 'PENDING' "
+                "ORDER BY pick_date, game_id, pick_type", (since,))
+            for row in cur.fetchall():
+                w.writerow(["" if v is None else v for v in row])
+                n += 1
+    except Exception as exc:
+        log.exception("picks export failed")
+        return Response(f"export failed: {type(exc).__name__}: {exc}",
+                        mimetype="text/plain", status=500)
+
+    log.info(f"[export] {n} graded picks since {since}")
+    return Response(buf.getvalue(), mimetype="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="statalizers_picks_{since}.csv"'})
+
+
+@app.route("/admin/export/scores.csv")
+def export_scores_csv():
+    """Final scores for EVERY game, not just the ones with a pick.
+
+    This is the control group. A +1.5 underdog covers at a high rate as a
+    property of the bet, so the model's cover rate only means something next to
+    the cover rate of every +1.5 in the league. Without this file that comparison
+    cannot be made and the run line record cannot be interpreted.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/export/scores.csv")
+    import os as _os
+    path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                         "data", "clean", "mlb_scores_master.csv")
+    if not _os.path.exists(path):
+        return Response("mlb_scores_master.csv not found on this container",
+                        mimetype="text/plain", status=404)
+    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+        body = fh.read()
+    return Response(body, mimetype="text/csv", headers={
+        "Content-Disposition": 'attachment; filename="mlb_scores_master.csv"'})
+
+
 @app.route("/admin/props-pull", methods=["GET", "POST"])
 def props_pull():
     """ON-DEMAND batter prop lines from The Odds API. SPENDS QUOTA.
