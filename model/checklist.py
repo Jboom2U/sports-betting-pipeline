@@ -597,6 +597,22 @@ ITEMS = [
          why="Four self inflicted bugs on 08-11 were caught only because they happened to be "
              "re-read. Advisory only, never blocking.",
          where="scripts/predeploy_check.py, gemini_client.py", probe=None),
+    dict(id="wrong-market-price", group="surface", effort="S",
+         title="Stop showing the moneyline as the headline price on a spread card",
+         why="A SPREAD card for Braves +1.5 displays 'SPORTSBOOK ML - Braves -110 - Sox -104' as "
+             "its most prominent price box, while the actual run line had no feed price and the "
+             "real book price was -250. Justin read it as the model pricing the spread off the "
+             "moneyline.\n\n"
+             "THE MODEL IS CORRECT. _price_for keys RL strictly to rl_{side}_{hcap}_price with no "
+             "fallback (fixed 2026-08-14), and the card refuses EV and refuses a stake. The BUG "
+             "IS THE DISPLAY: the most visible number on the card is not the price of the bet.\n\n"
+             "FIX: on a spread or total card, either drop the ML box or demote it and label it as "
+             "context. Where the price belongs, say plainly that the feed has none, and if useful "
+             "state what the ML implies the run line will cost.\n\n"
+             "RELATED GAP: Pinnacle's free feed quotes only the dog's +1.5 and the favourite's "
+             "-1.5. When the model picks the FAVOURITE at +1.5 there is no price at all, which is "
+             "why this card is blank. Worth counting how often that happens.",
+         where="run_picks_html.py card template", probe=None),
     dict(id="parlay-logic", group="surface", effort="M",
          title="Fix or remove the suggested parlays",
          why="THE BOARD CONTRADICTS ITSELF. The parlay panel multiplies RAW stated confidence "
