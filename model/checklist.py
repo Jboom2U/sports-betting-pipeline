@@ -453,6 +453,17 @@ def p_staleness_visible():
     return OPEN, "no price on the board states how old it is"
 
 
+def p_clamp_saturation():
+    """Does anything detect or report a saturated clamp?"""
+    txt = _read("model/mlb_model.py")
+    caps = len(re.findall(r"max\(0\.68,\s*min\(1\.30", txt))
+    if re.search(r"saturat|_clamped_at|at_cap", txt, re.I):
+        return PARTIAL, f"{caps} suppression clamps, and saturation is at least detected"
+    return OPEN, (f"{caps} hard clamps on suppression alone, and nothing reports when one "
+                  f"saturates. Observed live 2026-08-20: opposing bullpen and pitcher Statcast "
+                  f"both contributed 0.00 on the same card because the starter alone hit the cap")
+
+
 # -------------------------------------------------------------------- items
 # group order is the order they render. Keep the highest leverage groups first.
 
@@ -527,6 +538,24 @@ ITEMS = [
          title="Stop double counting park factor",
          why="Season RPG already contains that team's home games and is then multiplied by park again.",
          where="model/mlb_model.py exp_runs", probe=None),
+    dict(id="clamp-saturation", group="inputs", effort="M",
+         title="Stop the suppression clamp from swallowing every signal behind it",
+         why="OBSERVED LIVE 2026-08-20, Angels at Astros. The Astros card read:\n"
+             "    Opposing starter   +1.46\n"
+             "    Opposing bullpen    0.00   'bullpen ERA, fatigue adjusted'\n"
+             "    Pitcher Statcast    0.00   'xwOBA 0.379, whiff 24.18 (matched by id)'\n\n"
+             "Both zeros have details proving the code ran. They are zero because suppression hit "
+             "its 1.30 cap on the starter alone, leaving nothing for anything after it. Traced: "
+             "the Statcast multiplier was 1.052, a real 5% adjustment, and the clamp absorbed all "
+             "of it.\n\n"
+             "This is the external audit's Finding 2B (double shrinkage) made concrete. Order of "
+             "operations decides which signals survive, and whatever is applied last is discarded "
+             "first. It also means the 2026-08-19 Statcast repair buys nothing on saturated games.\n\n"
+             "OPTIONS: apply the clamp ONCE to the combined multiplier rather than at each stage; "
+             "or use a soft compression (tanh/logistic) that never fully saturates; or at minimum "
+             "flag on the card when a row was zeroed by a cap rather than by having no effect, "
+             "since those are different facts and currently look identical.",
+         where="model/mlb_model.py exp_runs", probe=p_clamp_saturation),
     dict(id="totals-rebuild", group="inputs", effort="L",
          title="Rebuild the run projection behind totals",
          why="total_conf_base is capped and the fitted slope is nearly flat: 30 points of stated "
