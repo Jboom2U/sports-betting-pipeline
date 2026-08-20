@@ -1040,8 +1040,25 @@ class MLBModel:
 
         # ── Lineup OPS adjustment ─────────────────────────────────────────────
         # If confirmed lineup is available, scale RPG by lineup OPS vs team avg OPS
+        # Record WHY the lineup adjustment is or is not applied (2026-08-20).
+        # get_lineup_ops returns None for four different reasons and the card
+        # reported all of them as "lineups not confirmed yet", so a game with a
+        # CONFIRMED lineup but no batter OPS on file read as unconfirmed.
+        _lu_reason = "no game id on this row"
         if game_id:
             side = "home" if is_home else "away"
+            _lu_g = self.lineups.get(str(game_id))
+            if _lu_g is None:
+                _lu_reason = "this game is not in the lineup file"
+            elif not _lu_g.get("lineup_confirmed"):
+                _lu_reason = "lineups not posted yet"
+            elif not _lu_g.get(f"{side}_lineup"):
+                _lu_reason = "confirmed, but this side's lineup is empty"
+            elif not [x for x in _lu_g.get(f"{side}_lineup", [])
+                      if x.get("ops") and float(x.get("ops") or 0) > 0]:
+                _lu_reason = "confirmed, but no batter has an OPS on file"
+            else:
+                _lu_reason = "lineup matches the team average"
             lineup_ops = self.get_lineup_ops(game_id, side)
             if lineup_ops:
                 team_ops = offense.get("ops", LEAGUE["ops"]) or LEAGUE["ops"]
@@ -1198,7 +1215,7 @@ class MLBModel:
                               else f"{_t:.0f}F, wind component {_w:+.1f}, no net effect")
 
             _lu_detail = ("lineup OPS vs team average" if ops_m != 1.0
-                          else "lineups not confirmed yet")
+                          else locals().get("_lu_reason", "no lineup adjustment applied"))
 
             _via = locals().get("_sc_via", "none")
             if _via == "none":
