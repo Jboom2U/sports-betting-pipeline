@@ -404,6 +404,55 @@ def p_parlay_calibration():
                   "as a +26% edge")
 
 
+def p_line_sanity():
+    """Is anything checking the published line against what books actually quoted?"""
+    picks = _read("model/mlb_picks.py")
+    model = _read("model/mlb_model.py")
+    if re.search(r"total_line_(min|max)[\s\S]{0,200}(reject|skip|suppress|continue)", picks + model, re.I):
+        return DONE, "the published total is checked against the range books quoted"
+    return OPEN, ("nothing validates the published total against total_line_min/max or books_json, "
+                  "so a line no book offered reaches the label and then the graded record intact")
+
+
+def p_fill_monitor():
+    """Empty columns feeding live inputs went unnoticed for weeks."""
+    hit = _count("app.py", r"/admin/data-health") + _count("admin_hub.py", r"data-health")
+    if hit:
+        return DONE, "a column fill monitor exists"
+    return OPEN, ("nothing reports column fill rates. xwoba, whiff_percent and avg_velocity were "
+                  "empty in 787 of 787 rows and the platoon master held 0 data rows, all feeding "
+                  "live model inputs, none of it flagged")
+
+
+def p_cross_source():
+    txt = _read("scrapers/odds_schema.py") + _read("model/mlb_model.py")
+    if re.search(r"(median|abs)[\s\S]{0,120}(disagree|mismatch|untrusted|reject_source)", txt, re.I):
+        return DONE, "sources are compared against each other before being trusted"
+    return OPEN, "no cross source agreement check; a second feed would be trusted on arrival"
+
+
+def p_move_plausibility():
+    txt = _read("scrapers/odds_schema.py") + _read("scrapers/mlb_odds_scraper.py")
+    if re.search(r"MAX_(TOTAL_)?MOVE|implausible|move_cap", txt, re.I):
+        return OPEN if False else DONE, "line movement is bounded at intake"
+    return OPEN, ("no movement plausibility bound. An MLB total does not move 4 points in a day, "
+                  "and 'total moved DOWN 4.0 pts' reached a card")
+
+
+def p_coverage_floor():
+    txt = _read("scrapers/odds_schema.py") + _read("scrapers/mlb_odds_scraper.py")
+    if re.search(r"MIN_(GAMES|COVERAGE)|coverage_floor", txt, re.I):
+        return DONE, "a pull below the coverage floor is treated as failed"
+    return OPEN, ("no coverage floor. A pull returning 3 of 15 games writes 3 rows and reports "
+                  "success, which is how a failing feed looks healthy")
+
+
+def p_staleness_visible():
+    if _count("run_picks_html.py", r"booksAge|books_at"):
+        return PARTIAL, "per book prices show their age; other prices do not"
+    return OPEN, "no price on the board states how old it is"
+
+
 # -------------------------------------------------------------------- items
 # group order is the order they render. Keep the highest leverage groups first.
 
@@ -411,6 +460,8 @@ GROUPS = [
     ("wiring",      "Model wiring",        "Signals already collected that reach no pick"),
     ("inputs",      "Model inputs",        "The big terms, currently estimated crudely"),
     ("math",        "Pricing and math",    "Where a wrong number looks like an opportunity"),
+    ("guardrails",  "Data guardrails",
+     "Catch a wrong value at intake, before anything consumes it"),
     ("surface",     "Board and UI",        "What the dashboard shows and does not"),
     ("data",        "Data sources",        "Things not collected yet"),
     ("reliability", "Reliability",         "Failures that would be silent"),
@@ -597,6 +648,70 @@ ITEMS = [
          why="Four self inflicted bugs on 08-11 were caught only because they happened to be "
              "re-read. Advisory only, never blocking.",
          where="scripts/predeploy_check.py, gemini_client.py", probe=None),
+    dict(id="fill-monitor", group="guardrails", effort="S",
+         title="Report column fill rates on every master file",
+         why="THE GENERAL CURE FOR 2026-08-19. Four columns feeding live model inputs were "
+             "completely empty and none of it was noticed for weeks: xwoba 0/787, whiff_percent "
+             "0/787, avg_velocity 0/787, and the platoon master at 0 data rows.\n\n"
+             "A page showing fill rate per column per master CSV would have flagged every one on "
+             "the morning it started. /admin/signal-audit asks 'does this input VARY across "
+             "games'. This asks the question one layer down: 'is there anything here at all'. "
+             "Today proved both are needed, because a column of empty strings varies exactly as "
+             "little as a column of identical values and neither raises an error.\n\n"
+             "Flag any column under a threshold (say 5% populated) that the model actually reads. "
+             "Cheap, and it closes the class rather than the instance.",
+         where="new route, reads data/clean/*.csv", probe=p_fill_monitor),
+    dict(id="line-sanity-guard", group="guardrails", effort="S",
+         title="Refuse to publish a line no book is quoting",
+         why="Pricing, labelling and grading are each FAITHFUL to the step before them, which is "
+             "why the fabricated total went undetected. The main total picked the lowest alternate "
+             "line on the board, the label recorded 'OVER 6.5', and run_analysis graded it against "
+             "6.5 exactly as published. Every stage did its job and the result was a recorded win "
+             "on a bet no book would have taken.\n\n"
+             "GUARD: at pick time, compare the chosen total_line against total_line_min/max (and "
+             "books_json where present). If it sits outside the range books actually quoted, "
+             "suppress the pick rather than publish it. Same idea as rejecting |price| < 100.\n\n"
+             "Cheap, and it closes the whole class rather than the one instance.",
+         where="model/mlb_picks.py, scrapers/odds_schema.py", probe=p_line_sanity),
+    dict(id="cross-source-check", group="guardrails", effort="M",
+         title="Gate a new odds source on agreement, not on the request succeeding",
+         why="Prerequisite for adding any scraped feed. Where two sources quote the same market, "
+             "compare them. If the median gap across a slate exceeds a threshold, mark that source "
+             "untrusted for the pull and fall through to the next one.\n\n"
+             "A broken scraper is harmless because it fails loudly. The dangerous one half works "
+             "and returns a plausible wrong price, which is this codebase's signature failure: the "
+             "-109 run line, the column shift, three Savant column names silently returning empty.",
+         where="scrapers/odds_schema.py", probe=p_cross_source),
+    dict(id="move-plausibility", group="guardrails", effort="S",
+         title="Bound line movement at intake",
+         why="An MLB total does not move 4 points in a day. 'DRIFT: Total moved DOWN 4.0 pts' "
+             "reached a live card because nothing checks whether a move is physically possible. "
+             "Reject or quarantine implausible moves instead of publishing them.",
+         where="scrapers/odds_schema.py", probe=p_move_plausibility),
+    dict(id="coverage-floor", group="guardrails", effort="S",
+         title="Treat a thin pull as a failure, not a partial success",
+         why="A pull returning 3 of 15 games writes 3 rows and reports success. That is how a "
+             "failing feed looks healthy, and it is the same shape as Polymarket walking the whole "
+             "catalogue and matching zero games for weeks while logging fine.",
+         where="scrapers/, odds_schema.py", probe=p_coverage_floor),
+    dict(id="staleness-visible", group="guardrails", effort="S",
+         title="Every price on the board states its age",
+         why="Half built. Per book prices now say 'prices from 6:00 AM, over 6h old' after the "
+             "NO BOOK ON 6.5 confusion. The board price, the total and the run line do not. A "
+             "price with no timestamp cannot be judged.",
+         where="run_picks_html.py", probe=p_staleness_visible),
+    dict(id="totals-record-audit", group="math", effort="M",
+         title="Audit graded totals against the lines books were really on",
+         why="Totals published between roughly 2026-08-17 and 2026-08-20 may have been graded "
+             "against a fabricated line. Going over 6.5 when the market was 8.5 records a win that "
+             "could never have been placed. This inflates LOCK TOTAL (6-2) and the TOTAL 55-60% "
+             "band (+10.9%), and both currently feed decisions.\n\n"
+             "TEST: for every graded TOTAL pick, parse the line out of `label` and compare it to "
+             "total_line_min/total_line_max on the snapshot for that game. Flag any pick whose "
+             "line sits outside the range. Then re-run the totals record excluding them.\n\n"
+             "Decide afterwards whether to void those rows or keep them flagged. Do NOT silently "
+             "re-grade: what was published is what was published.",
+         where="picks table, mlb_odds_master.csv", probe=None),
     dict(id="wrong-market-price", group="surface", effort="S",
          title="Stop showing the moneyline as the headline price on a spread card",
          why="A SPREAD card for Braves +1.5 displays 'SPORTSBOOK ML - Braves -110 - Sox -104' as "
