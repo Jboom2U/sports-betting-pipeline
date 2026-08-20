@@ -375,6 +375,21 @@ def p_parlay_log():
                   "single picks can be recorded")
 
 
+def p_shadow_model():
+    app = _read("app.py")
+    picks = _read("model/mlb_picks.py")
+    has_route = "/admin/shadow" in app
+    has_run   = bool(re.search(r"SHADOW_(CONFIG|VERSION|ENABLED)", picks + app))
+    if has_route and has_run:
+        return DONE, "shadow scoring runs and /admin/shadow renders the comparison"
+    if has_run and not has_route:
+        return PARTIAL, "shadow scoring exists but there is no side by side page"
+    if has_route and not has_run:
+        return PARTIAL, "route exists but nothing produces shadow picks"
+    return OPEN, ("no shadow model. model_version stamping (live 2026-08-19) is the "
+                  "primitive it needs and is already in place")
+
+
 # -------------------------------------------------------------------- items
 # group order is the order they render. Keep the highest leverage groups first.
 
@@ -568,6 +583,30 @@ ITEMS = [
          why="Four self inflicted bugs on 08-11 were caught only because they happened to be "
              "re-read. Advisory only, never blocking.",
          where="scripts/predeploy_check.py, gemini_client.py", probe=None),
+    dict(id="shadow-model", group="surface", effort="L",
+         title="Shadow model with a live side by side view",
+         why="Every real bug this week was caught by EYE, not by a metric: blank weather across "
+             "four cards, NO BOOK ON 6.5, the Statcast row reading zero. A summary statistic "
+             "surfaced none of them. So the shadow must be WATCHABLE, not just gradeable.\n\n"
+             "DESIGN (Justin, 2026-08-20):\n"
+             "  - A second scoring pass on the same slate with an experimental config, writing "
+             "picks under a distinct model_version (e.g. 2026.08.21-shadow-xera). Same odds "
+             "snapshots, so NO extra Odds API quota.\n"
+             "  - /admin/shadow renders one row per GAME: live pick on the left, shadow pick on "
+             "the right, and a clear marker where they DISAGREE. Agreement rows teach nothing; "
+             "the disagreements are the whole point and should sort to the top.\n"
+             "  - Show the factor waterfall DELTA on disagreement rows, so the reason for the "
+             "split is visible rather than inferred.\n"
+             "  - Updates through the day like the main board, and fills in who was right as "
+             "games finish. Running tally at the top: live W-L vs shadow W-L.\n"
+             "  - Shadow picks are NEVER shown on the public board and never enter Best Bets.\n\n"
+             "This is how the xera question gets settled: live on xwOBA, shadow on xera, two "
+             "weeks, compare. No guessing and no risk to the board.\n\n"
+             "WATCH OUT: anything summarising the record must filter by model_version or it "
+             "will silently blend the two, which is the exact failure model_version was built "
+             "to prevent. Also the shadow shares the odds feed, so it can say nothing about "
+             "whether a change would have gotten a better PRICE.",
+         where="model/mlb_picks.py, run_pipeline.py, app.py /admin/shadow", probe=p_shadow_model),
     dict(id="parlay-log", group="surface", effort="M",
          title="Let the parlay builder record a stake",
          why="Single picks can be logged, parlays cannot. Justin builds them and has nowhere "
