@@ -3795,12 +3795,33 @@ function bucketGap(p){
   return { gap: r.pct - need, n: r.n, pct: r.pct, need: need };
 }
 
-// GREEN means: beats its break-even by at least 3 points, on at least 20 graded
-// picks. The sample floor matters. LEAN RL +1.5 at 16-9 looks strong and is 25
-// picks, so it shows but carries a thin marker.
+// GREEN means all three of these, not just the first:
+//   1. the bucket beats the break-even THIS price demands, by 3+ points
+//   2. on at least 20 graded picks
+//   3. and the card's own HONEST READ does not say otherwise
+//
+// Rule 3 was added 2026-08-21 after the filter contradicted a card. An OVER 8.5
+// showed "HONEST READ - NOT A BET ... no total can currently clear it" while the
+// bucket line said LEAN TOTAL 36-28 (56.2%), +5.0 pts, and the filter let it
+// through. Both numbers were computed correctly. They disagreed because the
+// honest read uses the season-fitted Platt calibration (46.6%) and the bucket
+// uses a 14 day trailing record (56.2%), and totals are 72-83 (46.5%) on the
+// season. The bucket had caught a hot fortnight on a bet type that loses.
+//
+// A 14 day window is short enough to be fooled by a streak. The calibration is
+// fitted on the whole post-boundary sample. When they disagree, defer to the
+// slower one: a filter that contradicts the card it sits on is worse than no
+// filter, because it teaches you to ignore the card.
 function clearsBucket(p){
   const g = bucketGap(p);
-  return !!g && g.gap >= 3 && g.n >= 20;
+  if (!g || g.gap < 3 || g.n < 20) return false;
+  const v = p.read_verdict || "";
+  // TOTAL is structurally excluded: total_conf is capped at 0.68 in
+  // mlb_model.py and calibrates to 48.8%, under the 52.4% break-even, so no
+  // total the model can currently produce is +EV regardless of its record.
+  if (p.type === "TOTAL") return false;
+  if (v === "AVOID" || v === "NO EDGE") return false;
+  return true;
 }
 
 function bucketVerdict(p){
