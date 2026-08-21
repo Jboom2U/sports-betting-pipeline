@@ -5230,8 +5230,28 @@ def performance_html():
             _drift_count += 1
             _signal_badge = '<span style="background:#58a6ff22;color:#58a6ff;padding:2px 6px;border-radius:4px;font-size:0.8em;font-weight:700">DRIFT</span>'
 
-        if _stance == "agree":
-            _sharp_display = f'<span style="color:#3fb950">✓ {_sharp_side} (agrees)</span>'
+        # DERIVE THE STANCE (fixed 2026-08-21).
+        #
+        # `sharp_stance` is read here and is never SET anywhere in the codebase,
+        # so it was always "" and every row took the else branch. The table
+        # printed "(fading model)" on all 20 rows, including ones where the sharp
+        # side was the SAME TEAM the model picked:
+        #
+        #   LOCK Kansas City Royals ML (77%) | Sharp: Kansas City Royals (fading model)
+        #
+        # That made the Model-vs-Sharp tally meaningless, on the one page that is
+        # supposed to answer "does the market disagree with me".
+        def _same_team(a, b):
+            a, b = (a or "").strip().lower(), (b or "").strip().lower()
+            if not a or not b:
+                return None
+            return a in b or b in a
+
+        _agrees = _same_team(_sharp_side, _model_team)
+        if _agrees is None:
+            _sharp_display = '<span style="color:#8b949e">no sharp side recorded</span>'
+        elif _agrees:
+            _sharp_display = f'<span style="color:#3fb950">✓ {_sharp_side} (agrees with model)</span>'
         else:
             _sharp_display = f'<span style="color:#f0883e">⚡ {_sharp_side} (fading model)</span>'
 

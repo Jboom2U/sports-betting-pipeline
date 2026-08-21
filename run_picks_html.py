@@ -3734,6 +3734,52 @@ function renderBestBets(){
 let selectedLegs = [];  // [{id, type, label, conf, odds, away, home}]
 let pickData = [];       // registry for + buttons -- reset on each renderPicks()
 
+// TRAILING RECORD PER (tier, side) BUCKET, last 14 days (2026-08-21).
+// A tier badge says LOCK or STRONG and stops there, but LOCK ML ran 57.4% at
+// prices needing 64% while STRONG RL ran 71.4% at prices needing 62%. Same
+// badge, opposite economics. These are measured from graded picks, never
+// asserted, and the card states its own bucket's numbers.
+const BUCKET_REC = __BUCKET_REC__;
+
+function bucketKey(p){
+  if (p.type === "RL") {
+    const lab = p.label || "";
+    return p.tier + "|RL " + (lab.indexOf("+1.5") >= 0 ? "+1.5"
+                            : lab.indexOf("-1.5") >= 0 ? "-1.5" : "");
+  }
+  return p.tier + "|" + p.type;
+}
+
+// The two sides, side by side: what this bucket has actually done lately, and
+// what the price on THIS card requires. No second model needed to see the gap.
+function bucketVerdict(p){
+  const r = BUCKET_REC[bucketKey(p)];
+  if (!r || !r.n) return "";
+  const price = p.pick_price;
+  let need = null;
+  if (price != null && Math.abs(price) >= 100) {
+    need = price < 0 ? Math.abs(price) / (Math.abs(price) + 100) * 100
+                     : 100 / (price + 100) * 100;
+  }
+  const thin = r.n < 20 ? ' <span style="color:#d29922">thin</span>' : "";
+  let right = "", col = "#8b949e";
+  if (need != null) {
+    const gap = r.pct - need;
+    col = gap >= 3 ? "#3fb950" : (gap <= -3 ? "#f0883e" : "#d29922");
+    right = ' &middot; needs <b>' + need.toFixed(1) + '%</b> at ' +
+            (price > 0 ? "+" : "") + Math.round(price) +
+            ' &middot; <b style="color:' + col + '">' +
+            (gap > 0 ? "+" : "") + gap.toFixed(1) + ' pts</b>';
+  } else {
+    right = ' &middot; <span style="color:#8b949e">no price on this card to compare</span>';
+  }
+  return '<div style="font-size:.78rem;color:#8b949e;line-height:1.5;margin-top:.4rem;' +
+         'padding:.35rem .6rem;background:#0d1117;border-left:2px solid ' + col +
+         ';border-radius:0 4px 4px 0">' +
+         '<b style="color:#c9d1d9">' + bucketKey(p).replace("|", " ") + '</b> last 14d: ' +
+         r.w + '-' + r.l + ' (' + r.pct + '%)' + thin + right + '</div>';
+}
+
 function toggleLeg(evt, gameId, type, label, conf, mlAway, mlHome, away, home, team){
   evt.stopPropagation();
   const idx = selectedLegs.findIndex(l => l.id === gameId && l.type === type);
@@ -4224,6 +4270,7 @@ function renderPicks(){
         ${valueHtml(p)}${honestReadHtml(p)}
         ${bookShopHtml(p)}
         ${priceCheckHtml(p)}
+          ${bucketVerdict(p)}
         ${betLogHtml(p, 'bl' + Math.abs(hashStr((p.label||'') + (p.game||'') + (p.type||''))))}
         <div class="pick-reasoning">${p.reasoning}</div>
         ${p.narrative ? `<div class="pick-narrative">${p.narrative}</div>` : ""}
@@ -7126,6 +7173,18 @@ def main(date=None, no_open=False):
             )
         except Exception:
             pass
+
+    # Fill the trailing-record blob (2026-08-21). Done here rather than inside
+    # the template because it needs the DB, and the board must still render when
+    # the DB is down: an empty dict makes bucketVerdict() return "" per card.
+    try:
+        import json as _json
+        from db.picks_store import get_tier_type_records as _ttr
+        _bucket_json = _json.dumps(_ttr(14))
+    except Exception as _e:
+        log.warning(f"bucket records unavailable (non-fatal): {_e}")
+        _bucket_json = "{}"
+    html = html.replace("__BUCKET_REC__", _bucket_json)
 
     if not no_open:
         import webbrowser as _wb

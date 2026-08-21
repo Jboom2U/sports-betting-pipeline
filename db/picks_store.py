@@ -551,6 +551,84 @@ def backfill_market_signals() -> int:
     return updated
 
 
+def get_tier_type_records(days: int = 14) -> dict:
+    """Trailing record per (tier, side) bucket, with the average price paid.
+
+    WHY (2026-08-21). The tier badge on a card says LOCK or STRONG and nothing
+    else. But LOCK ML and STRONG RL carry the same badge weight while performing
+    in opposite directions, and the gap is enormous:
+
+        LOCK ML     31-23  57.4%  at ~-180, which needs 64%   -> losing
+        STRONG RL   30-12  71.4%  at ~-162, which needs 62%   -> winning
+
+    Same tier, same board, opposite economics. This returns the numbers so a card
+    can state its own bucket's record instead of implying that a badge is a
+    recommendation.
+
+    Run lines are split by handicap because +1.5 and -1.5 are opposite bets with
+    opposite price profiles, exactly as /admin/real-roi does.
+
+    Returns {"LOCK|RL +1.5": {"w","l","n","pct","avg_price","break_even"}}.
+    Empty dict when the DB is unreachable, so callers can degrade quietly.
+    """
+    out = {}
+    try:
+        with db_conn() as conn:
+            if conn is None:
+                return {}
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT tier, pick_type, label, odds, actual_result
+                FROM picks
+                WHERE pick_date >= CURRENT_DATE - %s::int
+                  AND actual_result IN ('WIN', 'LOSS')
+                  AND tier IS NOT NULL
+            """, (days,))
+            rows = cur.fetchall()
+    except Exception as e:
+        log.warning(f"get_tier_type_records failed (non-fatal): {e}")
+        return {}
+
+    agg = {}
+    for tier, ptype, label, odds, res in rows:
+        lab = (label or "")
+        if ptype == "RL":
+            side = "RL +1.5" if "+1.5" in lab else ("RL -1.5" if "-1.5" in lab else "RL")
+        else:
+            side = ptype
+        key = f"{tier}|{side}"
+        b = agg.setdefault(key, {"w": 0, "l": 0, "prices": []})
+        if res == "WIN":
+            b["w"] += 1
+        else:
+            b["l"] += 1
+        try:
+            o = float(odds)
+            if abs(o) >= 100:          # |price| < 100 is corrupt data in this repo
+                b["prices"].append(o)
+        except (TypeError, ValueError):
+            pass
+
+    for key, b in agg.items():
+        n = b["w"] + b["l"]
+        if not n:
+            continue
+        rec = {"w": b["w"], "l": b["l"], "n": n,
+               "pct": round(100.0 * b["w"] / n, 1),
+               "avg_price": None, "break_even": None}
+        if b["prices"]:
+            ap = sum(b["prices"]) / len(b["prices"])
+            # Break-even averaged in PROBABILITY space, never in odds space.
+            # American odds are non-linear across +/-100; averaging them directly
+            # is the bug that produced a -127 "consensus" from -300/-200/+120.
+            be = sum((abs(o) / (abs(o) + 100.0)) if o < 0 else (100.0 / (o + 100.0))
+                     for o in b["prices"]) / len(b["prices"])
+            rec["avg_price"]  = round(ap)
+            rec["break_even"] = round(100.0 * be, 1)
+        out[key] = rec
+    return out
+
+
 def get_accuracy_by_market_signal(days: int = 30) -> list:
     """
     Returns W/L/ROI grouped by market_signal (CONFIRM / DIVERGE / NEUTRAL)
