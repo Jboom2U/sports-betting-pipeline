@@ -226,12 +226,11 @@ def prep_picks(picks, kalshi_data: dict = None):
                     else:
                         kalshi_signal = "DISAGREE"
 
-        # ── Kelly Criterion (Half-Kelly at -110 standard juice) ─────────────
-        # b = net units won per unit staked; at -110 you win 100 for every 110 risked
-        _b = 100 / 110   # 0.9091
-        _p = p["conf"]   # raw probability 0-1 (before percentage conversion)
-        _kelly_full = (_b * _p - (1 - _p)) / _b
-        kelly_pct = round(max(0.0, _kelly_full * 0.5) * 100, 1)   # Half-Kelly
+        # Kelly is computed AFTER the price and the calibrated probability are
+        # known; see the block below. _p stays RAW here because the calibration
+        # call further down expects a raw input.
+        _p = p["conf"]
+        kelly_pct = 0.0
 
         # ── Market VALUE / EV — de-vigged price awareness (advisory only) ────
         _val = p.get("value") or {}
@@ -286,6 +285,7 @@ def prep_picks(picks, kalshi_data: dict = None):
         # but NOT identical, and one curve cannot correct all of them. Until each
         # type has its own fit from fit_calibration.py --per-type, only ML shows a
         # calibrated number. The others say so rather than showing a wrong one.
+        _cal = None
         try:
             from model.mlb_picks import calibrated_conf as _cc
             from model.value import american_to_decimal as _a2d
@@ -302,6 +302,32 @@ def prep_picks(picks, kalshi_data: dict = None):
                 else:          _verdict = "AVOID"
         except Exception:
             pass
+
+        # ── Kelly stake, on the calibrated probability at the REAL price ─────
+        # FIXED 2026-08-21. This used a hardcoded -110 and RAW confidence, both
+        # wrong at once. Tigers ML on the 08-21 board: the card's own honest read
+        # said "calibrated 56.3%, price -109" and the stake box directly beneath
+        # it said "$4.34 on $20 (21.7% Half-Kelly)", sized from raw 73.1% at an
+        # assumed -110. Correctly sized that is $0.87. A five-fold overbet on the
+        # one card that cleared every other gate.
+        #
+        # QUARTER Kelly, not half: the probability is itself estimated off a few
+        # hundred graded picks, so the edge has error bars. Quarter is what
+        # model/staking.py and Best Bets already use.
+        #
+        # No price means no stake. Inventing one from an assumed price is the
+        # flat -110 error wearing a dollar sign.
+        try:
+            _kp = float(_pick_price)
+        except (TypeError, ValueError):
+            _kp = None
+        if _kp is not None and abs(_kp) >= 100:
+            # RL has no trustworthy fit by design, so stated conf is the honest
+            # input there rather than a number borrowed from another bet type.
+            _kprob = _cal if _cal is not None else p["conf"]
+            _kb = (_kp / 100.0) if _kp > 0 else (100.0 / abs(_kp))
+            _kfull = (_kb * _kprob - (1.0 - _kprob)) / _kb
+            kelly_pct = round(max(0.0, _kfull * 0.25) * 100, 1)
 
         out.append({
             "type":           ptype,
@@ -2129,6 +2155,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   <div class="filter-group">
     <span class="filter-label">Confidence</span>
     <button class="filter-btn active" data-group="tier" data-val="all">All</button>
+    <button class="filter-btn" data-group="tier" data-val="CLEARS">✅ Clears its own bucket</button>
     <button class="filter-btn" data-group="tier" data-val="HIGHCONF">🔥 High Confidence</button>
     <button class="filter-btn" data-group="tier" data-val="PROFIT">📈 Profitable</button>
     <button class="filter-btn" data-group="tier" data-val="LOCK">🔒 Lock — Best Bets</button>
@@ -3752,6 +3779,30 @@ function bucketKey(p){
 
 // The two sides, side by side: what this bucket has actually done lately, and
 // what the price on THIS card requires. No second model needed to see the gap.
+// Does this pick clear the break-even its OWN price demands, judged on its own
+// bucket's trailing record? Returns null when there is no record or no price.
+//
+// The filter and the line printed on the card call THIS, so they cannot drift
+// apart. Two copies of one rule is how the board ended up telling you a pick had
+// no edge in one panel and a +26% edge in another.
+function bucketGap(p){
+  const r = BUCKET_REC[bucketKey(p)];
+  if (!r || !r.n) return null;
+  const price = p.pick_price;
+  if (price == null || Math.abs(price) < 100) return null;
+  const need = price < 0 ? Math.abs(price) / (Math.abs(price) + 100) * 100
+                         : 100 / (price + 100) * 100;
+  return { gap: r.pct - need, n: r.n, pct: r.pct, need: need };
+}
+
+// GREEN means: beats its break-even by at least 3 points, on at least 20 graded
+// picks. The sample floor matters. LEAN RL +1.5 at 16-9 looks strong and is 25
+// picks, so it shows but carries a thin marker.
+function clearsBucket(p){
+  const g = bucketGap(p);
+  return !!g && g.gap >= 3 && g.n >= 20;
+}
+
 function bucketVerdict(p){
   const r = BUCKET_REC[bucketKey(p)];
   if (!r || !r.n) return "";
@@ -4055,7 +4106,8 @@ function renderPicks(){
     // TBD starter: \u26a0 badge already warns users -- picks remain visible in their model tier
     const show = (filterType==="all" || p.type===filterType)
               && (filterTier==="all"
-                  || (filterTier==="HIGHCONF" ? _isHighConf(p)
+                  || (filterTier==="CLEARS" ? clearsBucket(p)
+                      : filterTier==="HIGHCONF" ? _isHighConf(p)
                       // PROFIT is the inclusive band: the elite threshold sits
                       // above the wide one, so a 🔥 pick is also profitable. The
                       // card shows only one icon, but the filter shows both.
@@ -4106,7 +4158,7 @@ function renderPicks(){
     // kelly_pct is computed server-side as half-Kelly at a HARDCODED -110 using
     // RAW confidence. Both inputs are fictional when there is no price: on the
     // 08-18 slate, before any odds pull, a card read "LOCK 72.8% - Bet $4.30
-    // (21.5% Half-Kelly)" while its own HONEST READ line said calibrated 56.1%
+    // (21.5% quarter-Kelly)" while its own HONEST READ line said calibrated 56.1%
     // and no clean price. A stake is a claim about how much to risk; making one
     // up from an assumed price is the flat -110 error wearing a dollar sign.
     //
@@ -4114,7 +4166,7 @@ function renderPicks(){
     // the card just declines rather than duplicating that here.
     const _hasPrice = p.pick_price != null && Math.abs(p.pick_price) >= 100;
     const kellyHtml = (p.kelly_pct > 0 && _hasPrice)
-      ? `<div class="kelly-row" data-kelly="${p.kelly_pct}">💰 Bet <strong class="kelly-amt">$${window._BR ? (window._BR*p.kelly_pct/100).toFixed(2) : (p.kelly_pct/100).toFixed(2)}</strong> <span class="kelly-note">${window._BR ? "on $"+window._BR.toLocaleString() : "per $1 bankroll"} (${p.kelly_pct}% Half-Kelly)</span></div>`
+      ? `<div class="kelly-row" data-kelly="${p.kelly_pct}">💰 Bet <strong class="kelly-amt">$${window._BR ? (window._BR*p.kelly_pct/100).toFixed(2) : (p.kelly_pct/100).toFixed(2)}</strong> <span class="kelly-note">${window._BR ? "on $"+window._BR.toLocaleString() : "per $1 bankroll"} (${p.kelly_pct}% quarter-Kelly)</span></div>`
       : (p.kelly_pct > 0)
       ? `<div class="kelly-row kelly-nostake">&#8709; No stake &mdash; <span class="kelly-note">no price for this line yet, so there is nothing to size against</span></div>`
       : "";
@@ -5802,7 +5854,7 @@ document.querySelectorAll(".filter-btn[data-group]").forEach(btn=>{
     document.querySelectorAll(`.filter-btn[data-group="${group}"]`).forEach(b=>{
       b.classList.remove("active","active-gold","active-blue");
     });
-    if(val==="HIGHCONF" || val==="LOCK") btn.classList.add("active-gold");
+    if(val==="HIGHCONF" || val==="LOCK" || val==="CLEARS") btn.classList.add("active-gold");
     else if(val==="PROFIT") btn.classList.add("active");
     else if(val==="STRONG") btn.classList.add("active-blue");
     else btn.classList.add("active");
@@ -6667,7 +6719,7 @@ function applyBankroll(br) {
     const strong = el.querySelector('.kelly-amt');
     if (strong) strong.textContent = '$' + betAmt;
     const kn = el.querySelector('.kelly-note');
-    if (kn) kn.textContent = `${note} (${pct}% Half-Kelly)`;
+    if (kn) kn.textContent = `${note} (${pct}% quarter-Kelly)`;
   });
 
   // Update yesterday profit span
