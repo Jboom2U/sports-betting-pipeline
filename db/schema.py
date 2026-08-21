@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS picks (
     -- change a WHERE clause rather than a boundary that invalidates the
     -- record before it. See the 2026-07-21 data boundary note.
     model_version   TEXT,
+    -- Price on the OTHER side of the same bet (added 2026-08-21). Without it
+    -- no fade or two-sided CLV question is answerable from stored data, and an
+    -- external test had to synthesise it from an assumed 4% hold, which biases
+    -- the dog price optimistic. -196 does not imply +196.
+    opp_odds        REAL,
     odds            REAL,
     odds_at         TIMESTAMPTZ,
     closing_odds    REAL,
@@ -310,6 +315,8 @@ def create_all():
             # correctly reads as "produced before versions were stamped".
             cur.execute(
                 "ALTER TABLE picks ADD COLUMN IF NOT EXISTS model_version TEXT")
+            cur.execute(
+                "ALTER TABLE picks ADD COLUMN IF NOT EXISTS opp_odds REAL")
             # tier_locked freezes conf/tier once a game's lineups confirm (bet-time
             # tier), so intraday re-scores can't downgrade a LOCK before grading.
             cur.execute(

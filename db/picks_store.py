@@ -66,6 +66,53 @@ def _pick_price(p: dict):
         return None
 
 
+def _opp_price(p: dict):
+    """American price on the OTHER side of the same bet, or None.
+
+    Added 2026-08-21 after an external fade test could not be run honestly.
+    `odds` stores the price of the side the model took and nothing about the
+    opposite side, so any question of the form "what if we had bet against this"
+    had to SYNTHESISE the other price by assuming a flat 4% hold. That
+    reconstruction is proportional devig, which understates favourites and
+    therefore overstates the dog, so every fade study built on it is optimistic
+    by construction.
+
+    Fading a favourite means backing a dog, and -196 does NOT imply +196. The
+    real number is the one the book posted, and it is sitting right there in
+    game_data at save time. Capturing it costs one column and makes fade and
+    two-sided CLV questions answerable permanently.
+
+    Same lookup discipline as _pick_price: keyed by the real handicap, no legacy
+    fallback, None rather than a guess.
+    """
+    g = p.get("game_data") or {}
+    t = p.get("type", "")
+    label = (p.get("label", "") or "")
+    try:
+        if t == "ML":
+            away = (p.get("side") == "away") or (p.get("team") == g.get("away_team"))
+            v = g.get("ml_home_odds") if away else g.get("ml_away_odds")
+        elif t == "TOTAL":
+            over = "OVER" in label.upper()
+            v = g.get("total_under_price") if over else g.get("total_over_price")
+        elif t == "RL":
+            # The opposite side AND the opposite handicap. A team's +1.5 is
+            # opposed by the other team's -1.5, not by its own -1.5.
+            side  = "away" if p.get("team") == g.get("away_team") else "home"
+            other = "home" if side == "away" else "away"
+            hcap  = "p15" if "+1.5" in label else "m15"
+            opp   = "m15" if hcap == "p15" else "p15"
+            v = g.get(f"rl_{other}_{opp}_price")
+        else:
+            return None
+        if v in (None, "", 0):
+            return None
+        v = float(v)
+        return None if abs(v) < 100 else v
+    except (TypeError, ValueError):
+        return None
+
+
 def _model_version() -> str:
     """Which model produced this pick.
 
@@ -115,9 +162,9 @@ def save_picks(picks: list, pick_date: str) -> int:
                     INSERT INTO picks
                         (pick_date, game_id, game, pick_type, label, team,
                          conf, tier, reasoning, market_signal, tier_locked,
-                         was_best_bet, odds, odds_at, model_version, actual_result)
+                         was_best_bet, odds, odds_at, opp_odds, model_version, actual_result)
                     VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, 'PENDING')
+                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, 'PENDING')
                     ON CONFLICT (pick_date, game_id, pick_type) DO UPDATE SET
                         label         = EXCLUDED.label,
                         team          = EXCLUDED.team,
@@ -129,6 +176,7 @@ def save_picks(picks: list, pick_date: str) -> int:
                         -- the OLD value here would mislabel a pick as coming from
                         -- a version that did not generate what is stored.
                         model_version = EXCLUDED.model_version,
+                        opp_odds      = COALESCE(picks.opp_odds, EXCLUDED.opp_odds),
                         conf          = CASE WHEN picks.tier_locked THEN picks.conf ELSE EXCLUDED.conf END,
                         tier          = CASE WHEN picks.tier_locked THEN picks.tier ELSE EXCLUDED.tier END,
                         tier_locked   = (picks.tier_locked OR EXCLUDED.tier_locked),
@@ -170,6 +218,7 @@ def save_picks(picks: list, pick_date: str) -> int:
                         _lineups_set,
                         _is_best_bet_now(p),
                         _pick_price(p),
+                        _opp_price(p),
                         _model_version(),
                     )
                 )
