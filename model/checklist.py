@@ -177,15 +177,33 @@ def p_pitcher_statcast_fields():
 
 
 def p_scraper_timeouts():
+    """Read the whole CALL, not one line.
+
+    The first version tested `"requests.get(" in line and "timeout" not in line`,
+    which reported 7 scrapers as unprotected when every one of them was fine:
+    they are multi line calls with `timeout=` on a continuation line. A probe
+    that reports a fixed thing as broken is the same failure as one that reports
+    a broken thing as fixed, and it wastes exactly as much time.
+    """
     bad = []
     for f in _py_files("scrapers"):
-        for line in _read(f).splitlines():
-            if "requests.get(" in line and "timeout" not in line:
-                bad.append(os.path.basename(f))
-                break
+        txt = _read(f)
+        for m in re.finditer(r"requests\.(get|post)\s*\(", txt):
+            i = m.end() - 1
+            depth, j = 0, i
+            while j < len(txt):
+                if txt[j] == "(":
+                    depth += 1
+                elif txt[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            if "timeout" not in txt[i:j]:
+                bad.append(f"{os.path.basename(f)}:{txt[:m.start()].count(chr(10)) + 1}")
     if not bad:
-        return DONE, "every requests.get in scrapers/ passes a timeout"
-    return OPEN, f"{len(bad)} scrapers call requests.get with no timeout: {', '.join(bad)}"
+        return DONE, "every requests.get/post in scrapers/ passes a timeout"
+    return OPEN, f"{len(bad)} call(s) with no timeout: {', '.join(bad[:6])}"
 
 
 def p_best_price_ev():

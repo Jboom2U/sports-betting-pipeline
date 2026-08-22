@@ -2514,10 +2514,36 @@ function oddsHtml(p){
   const pickedAway = p.type !== "TOTAL" && p.team && p.team.toLowerCase().includes(awayTeam.toLowerCase());
   const aoClass = pickedAway ? "odds-picked" : "";
   const hoClass = !pickedAway && p.type !== "TOTAL" ? "odds-picked" : "";
-  return `<div class="odds-row">
-    <span class="odds-label">Sportsbook ML</span>
-    ${ao ? `<span class="odds-pill ${aoClass}">${awayTeam} ${ao}</span>` : ""}
-    ${ho ? `<span class="odds-pill ${hoClass}">${homeTeam} ${ho}</span>` : ""}
+  // ON A SPREAD OR TOTAL CARD THIS IS NOT THE PRICE OF THE BET (fixed 2026-08-21).
+  //
+  // The moneyline was rendered in the most prominent price box on every card,
+  // including run line and total cards where the bet is priced completely
+  // differently. It confused Justin twice in two days:
+  //
+  //   Braves +1.5   card showed "Braves -110"; the +1.5 was actually -250
+  //   Orioles +1.5  card showed "Orioles +108"; the +1.5 was -157
+  //
+  // Both times the card was CORRECT (the model never priced off the moneyline,
+  // _price_for is keyed strictly to the handicap) and both times the most
+  // visible number on the card was not the price of the bet. That is a display
+  // defect with money attached.
+  //
+  // On ML cards this row IS the price, so it stays prominent. Everywhere else it
+  // is demoted to context and labelled as the other market.
+  const isML = p.type === "ML";
+  if (isML) {
+    return `<div class="odds-row">
+      <span class="odds-label">Sportsbook ML</span>
+      ${ao ? `<span class="odds-pill ${aoClass}">${awayTeam} ${ao}</span>` : ""}
+      ${ho ? `<span class="odds-pill ${hoClass}">${homeTeam} ${ho}</span>` : ""}
+    </div>`;
+  }
+  const what = p.type === "RL" ? "run line" : "total";
+  return `<div class="odds-row" style="opacity:.62;font-size:.82em">
+    <span class="odds-label" style="font-weight:400">Moneyline (context, not this bet)</span>
+    ${ao ? `<span class="odds-pill">${awayTeam} ${ao}</span>` : ""}
+    ${ho ? `<span class="odds-pill">${homeTeam} ${ho}</span>` : ""}
+    <span style="color:#8b949e">&middot; this card is a ${what}</span>
   </div>`;
 }
 
