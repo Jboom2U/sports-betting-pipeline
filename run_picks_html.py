@@ -1436,8 +1436,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   border-top:1px solid rgba(0,230,118,.2);
 }
 .pick-card-props-panel.open{display:block}
-.analysis-toggle{color:var(--gold)}
-.analysis-toggle:hover{color:var(--green)}
+.analysis-toggle,.waterfall-toggle{color:var(--gold)}
+.analysis-toggle:hover,.waterfall-toggle:hover{color:var(--green)}
 .analysis-body{font-size:.82rem;line-height:1.6;color:var(--text);
   background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px}
 .analysis-body b{color:var(--text);font-weight:700}
@@ -3917,52 +3917,61 @@ async function shareCard(ev, btn){
   const was = label ? label.textContent : "";
   if (label) label.textContent = "rendering...";
 
-  // WHAT GOES IN A SHARED CARD (rebuilt 2026-08-24).
+  // CAPTURE A CLONE, NOT THE LIVE CARD (rebuilt 2026-08-24, second attempt).
   //
-  // v1 expanded EVERYTHING, which produced a tall narrow strip: the card is only
-  // as wide as its grid column, and opening every panel made it enormously long.
-  // It also included two things that are useless to anyone but the person sitting
-  // at the keyboard.
+  // v2 mutated the real card and produced a jumbled image. Two causes:
   //
-  // OUT: the Analysis essay, CHECK YOUR PRICE (an input nobody else can type in),
-  //      LOG A BET, Add to Parlay, and the share button itself.
-  // IN:  the header and badges, confidence, the price, the honest read, the
-  //      bucket record, the waterfall, and player props.
-  const HIDE = ".pc-rule, .betlog, .share-row, .add-leg-btn, .pick-card-props-toggle.analysis-toggle";
-  const hidden = [];
-  card.querySelectorAll(HIDE).forEach(el => {
-    hidden.push([el, el.style.display]);
-    el.style.display = "none";
+  //   1. html2canvas does not honour collapsed <details>. It renders their
+  //      contents anyway, without layout, so the book-shop list bled straight
+  //      through the reasoning text underneath it.
+  //   2. The waterfall toggle shares the class `analysis-toggle` with the
+  //      Analysis toggle (my own doing when I added it), so hiding one hid both
+  //      and the waterfall disappeared from the image entirely.
+  //
+  // Cloning solves both: every <details> can simply be deleted rather than
+  // fought with, panels are identified by their heading TEXT rather than a class
+  // two things share, and the live card is never touched at all.
+  const clone = card.cloneNode(true);
+
+  // Drop anything that is useless in a static image or that html2canvas mangles.
+  clone.querySelectorAll(
+    ".pc-rule, .betlog, .share-row, .add-leg-btn, details.shop, details"
+  ).forEach(el => el.remove());
+
+  // Walk toggle/panel pairs by their LABEL, not by class.
+  clone.querySelectorAll(".pick-card-props-toggle").forEach(tog => {
+    const panel = tog.nextElementSibling;
+    const txt = (tog.textContent || "").toLowerCase();
+    const isPanel = panel && panel.classList.contains("pick-card-props-panel");
+    if (txt.indexOf("analysis") >= 0) {
+      if (isPanel) panel.remove();
+      tog.remove();                       // Analysis is out, per Justin
+      return;
+    }
+    if (isPanel) panel.style.display = "block";   // waterfall + props stay open
+    const arrow = tog.querySelector(".toggle-arrow");
+    if (arrow) arrow.remove();            // no disclosure triangle in a still
+    tog.style.cursor = "default";
   });
 
-  // The Analysis panel is the FIRST props-panel and follows its own toggle. Hide
-  // that one, expand the rest (waterfall, props).
-  const panels = Array.from(card.querySelectorAll(".pick-card-props-panel"));
-  const prevPanel = [];
-  panels.forEach((el, idx) => {
-    prevPanel[idx] = el.style.display;
-    const prevSib = el.previousElementSibling;
-    const isAnalysis = prevSib && prevSib.classList.contains("analysis-toggle");
-    el.style.display = isAnalysis ? "none" : "block";
-  });
-  const prevArrows = [];
-  card.querySelectorAll(".toggle-arrow").forEach((a, idx) => {
-    prevArrows[idx] = a.textContent; a.textContent = "\u25bc";
-  });
-
-  // Widen for capture. The grid column is narrow, which is why v1 came out as a
-  // sliver. A fixed width gives a readable aspect ratio in Discord.
-  const prevW = card.style.width, prevMax = card.style.maxWidth;
-  card.style.width = "620px";
-  card.style.maxWidth = "620px";
+  // Render off-screen at a readable width. The grid column is narrow, which is
+  // what turned the first version into a sliver.
+  const stage = document.createElement("div");
+  stage.style.cssText = "position:fixed;left:-10000px;top:0;width:620px;" +
+                        "background:#0d1117;padding:0;z-index:-1";
+  clone.style.width = "620px";
+  clone.style.maxWidth = "620px";
+  stage.appendChild(clone);
+  document.body.appendChild(stage);
 
   try {
     await loadH2C();
-    const canvas = await html2canvas(card, {
+    const canvas = await html2canvas(clone, {
       backgroundColor: "#0d1117",
       scale: 2,
       logging: false,
       useCORS: true,
+      width: 620,
       windowWidth: 700,
     });
     const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
@@ -3987,11 +3996,7 @@ async function shareCard(ev, btn){
   } catch (e) {
     shareToast("Could not render this card: " + (e && e.message ? e.message : e), true);
   } finally {
-    // Put the card back exactly as found.
-    card.style.width = prevW; card.style.maxWidth = prevMax;
-    hidden.forEach(([el, v]) => { el.style.display = v; });
-    panels.forEach((el, idx) => { el.style.display = prevPanel[idx]; });
-    card.querySelectorAll(".toggle-arrow").forEach((a, idx) => { a.textContent = prevArrows[idx]; });
+    stage.remove();                       // the live card was never modified
     if (label) label.textContent = was;
   }
 }
@@ -4514,7 +4519,7 @@ function renderPicks(){
           <div class="pick-card-props-panel">
             ${buildAnalysis(p)}
           </div>
-          <div class="pick-card-props-toggle analysis-toggle" onclick="toggleCardProps(event, this)">
+          <div class="pick-card-props-toggle waterfall-toggle" onclick="toggleCardProps(event, this)">
             <span class="toggle-arrow">▶</span> 📊 Why this number
           </div>
           <div class="pick-card-props-panel">
@@ -4594,7 +4599,7 @@ function renderPicks(){
         <div class="pick-card-props-panel">
           ${buildAnalysis(p)}
         </div>
-        <div class="pick-card-props-toggle analysis-toggle" onclick="toggleCardProps(event, this)">
+        <div class="pick-card-props-toggle waterfall-toggle" onclick="toggleCardProps(event, this)">
           <span class="toggle-arrow">▶</span> 📊 Why this number
         </div>
         <div class="pick-card-props-panel">
