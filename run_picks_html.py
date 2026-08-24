@@ -3917,31 +3917,58 @@ async function shareCard(ev, btn){
   const was = label ? label.textContent : "";
   if (label) label.textContent = "rendering...";
 
-  // Remember what was open so the card is left exactly as found.
-  const panels = card.querySelectorAll(".pick-card-props-panel");
-  const prevOpen = [];
-  panels.forEach((el, i) => { prevOpen[i] = el.style.display; el.style.display = "block"; });
-  const prevArrows = [];
-  card.querySelectorAll(".toggle-arrow").forEach((a, i) => {
-    prevArrows[i] = a.textContent; a.textContent = "\u25bc";
+  // WHAT GOES IN A SHARED CARD (rebuilt 2026-08-24).
+  //
+  // v1 expanded EVERYTHING, which produced a tall narrow strip: the card is only
+  // as wide as its grid column, and opening every panel made it enormously long.
+  // It also included two things that are useless to anyone but the person sitting
+  // at the keyboard.
+  //
+  // OUT: the Analysis essay, CHECK YOUR PRICE (an input nobody else can type in),
+  //      LOG A BET, Add to Parlay, and the share button itself.
+  // IN:  the header and badges, confidence, the price, the honest read, the
+  //      bucket record, the waterfall, and player props.
+  const HIDE = ".pc-rule, .betlog, .share-row, .add-leg-btn, .pick-card-props-toggle.analysis-toggle";
+  const hidden = [];
+  card.querySelectorAll(HIDE).forEach(el => {
+    hidden.push([el, el.style.display]);
+    el.style.display = "none";
   });
-  btn.style.visibility = "hidden";
+
+  // The Analysis panel is the FIRST props-panel and follows its own toggle. Hide
+  // that one, expand the rest (waterfall, props).
+  const panels = Array.from(card.querySelectorAll(".pick-card-props-panel"));
+  const prevPanel = [];
+  panels.forEach((el, idx) => {
+    prevPanel[idx] = el.style.display;
+    const prevSib = el.previousElementSibling;
+    const isAnalysis = prevSib && prevSib.classList.contains("analysis-toggle");
+    el.style.display = isAnalysis ? "none" : "block";
+  });
+  const prevArrows = [];
+  card.querySelectorAll(".toggle-arrow").forEach((a, idx) => {
+    prevArrows[idx] = a.textContent; a.textContent = "\u25bc";
+  });
+
+  // Widen for capture. The grid column is narrow, which is why v1 came out as a
+  // sliver. A fixed width gives a readable aspect ratio in Discord.
+  const prevW = card.style.width, prevMax = card.style.maxWidth;
+  card.style.width = "620px";
+  card.style.maxWidth = "620px";
 
   try {
     await loadH2C();
     const canvas = await html2canvas(card, {
-      backgroundColor: "#0d1117",   // the card is transparent over the page bg
-      scale: 2,                     // readable when Discord downscales it
+      backgroundColor: "#0d1117",
+      scale: 2,
       logging: false,
       useCORS: true,
+      windowWidth: 700,
     });
     const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
 
     let copied = false;
     try {
-      // Clipboard is the good path: paste straight into Discord. Needs HTTPS
-      // and a user gesture, both of which a button click satisfies. Firefox
-      // still refuses image writes, hence the fallback below.
       await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       copied = true;
     } catch (e) { copied = false; }
@@ -3960,9 +3987,11 @@ async function shareCard(ev, btn){
   } catch (e) {
     shareToast("Could not render this card: " + (e && e.message ? e.message : e), true);
   } finally {
-    panels.forEach((el, i) => { el.style.display = prevOpen[i]; });
-    card.querySelectorAll(".toggle-arrow").forEach((a, i) => { a.textContent = prevArrows[i]; });
-    btn.style.visibility = "";
+    // Put the card back exactly as found.
+    card.style.width = prevW; card.style.maxWidth = prevMax;
+    hidden.forEach(([el, v]) => { el.style.display = v; });
+    panels.forEach((el, idx) => { el.style.display = prevPanel[idx]; });
+    card.querySelectorAll(".toggle-arrow").forEach((a, idx) => { a.textContent = prevArrows[idx]; });
     if (label) label.textContent = was;
   }
 }
@@ -6243,7 +6272,7 @@ function renderTicker(){
       // with any client-side filter or state change without collapsing the
       // expanded pick cards the way a full renderPicks() would.
       try { if (typeof renderBestBets === "function") renderBestBets(); } catch(e){}
-      try { if (typeof renderTonightsFive === "function" && typeof ACTIVE_PICKS !== "undefined") renderTonightsFive(ACTIVE_PICKS); } catch(e){}
+      try { if (typeof renderTonightsFive === "function" && typeof ACTIVE_PICKS !== "undefined" && Array.isArray(ACTIVE_PICKS)) renderTonightsFive(ACTIVE_PICKS); } catch(e){}
     }
   }
 
