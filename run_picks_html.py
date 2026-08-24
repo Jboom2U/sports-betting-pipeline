@@ -2030,6 +2030,28 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
   background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.2);
   border-radius:4px;padding:2px 9px;white-space:nowrap;margin-top:4px;display:inline-block}
 .parlay-breakeven{font-size:.7rem;color:var(--sub);margin-top:4px}
+.share-row{margin-top:.5rem}
+.share-btn{width:100%;background:rgba(88,166,255,.10);border:1px solid rgba(88,166,255,.35);
+  color:#58a6ff;border-radius:8px;padding:.45rem .8rem;font-size:.82rem;font-weight:600;
+  cursor:pointer;font-family:inherit;transition:background .12s}
+.share-btn:hover{background:rgba(88,166,255,.18)}
+#shareToast{transition:opacity .3s}
+.t5-wrap{background:#161b22;border:1px solid #30363d;border-radius:10px;
+  padding:.9rem 1.1rem;margin:0 0 1rem}
+.t5-head{font-size:.98rem;font-weight:700;margin-bottom:.6rem}
+.t5-sub{font-weight:400;font-size:.76rem;color:#8b949e;margin-left:.5rem}
+.t5-row{display:flex;align-items:center;gap:.7rem;padding:.42rem 0;
+  border-top:1px solid #21262d;font-size:.86rem}
+.t5-row:first-child{border-top:none}
+.t5-rank{flex:0 0 20px;color:#6e7681;font-variant-numeric:tabular-nums}
+.t5-pick{flex:1;min-width:0}
+.t5-game{color:#8b949e;font-size:.78rem;margin-left:.4rem}
+.t5-price{flex:0 0 54px;text-align:right;font-family:ui-monospace,monospace;color:#c9d1d9}
+.t5-rec{flex:0 0 190px;text-align:right;color:#8b949e;font-size:.78rem}
+.t5-gap{flex:0 0 52px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.t5-note{color:#8b949e;font-size:.76rem;margin-top:.55rem;line-height:1.5}
+.t5-empty{color:#8b949e;font-size:.84rem;line-height:1.5}
+@media(max-width:700px){.t5-rec{display:none}}
 </style>
 </head>
 <body>
@@ -2242,6 +2264,7 @@ a.status-link:hover{color:var(--green);border-color:var(--green)}
         </div>
       </div>
     </details>
+    <div id="tonightsFive"></div>
     <div id="bestBets"></div>
     <div class="picks-grid" id="picksGrid"></div>
 
@@ -3850,6 +3873,159 @@ function clearsBucket(p){
   return true;
 }
 
+// ── SHARE A CARD AS AN IMAGE (2026-08-24) ──────────────────────────────────
+// Renders one card to PNG so it can be pasted straight into Discord instead of
+// screenshotted. Expands every collapsible first, then restores exactly what was
+// open, so sharing never changes what you were looking at.
+//
+// html2canvas is ~150KB and is fetched on the FIRST share click only. A feature
+// most visitors never touch should not cost every visitor a download.
+let _h2cReady = null;
+function loadH2C(){
+  if (_h2cReady) return _h2cReady;
+  _h2cReady = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+  return _h2cReady;
+}
+
+function shareToast(msg, bad){
+  let t = document.getElementById("shareToast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "shareToast";
+    t.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);" +
+      "background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:10px 18px;" +
+      "border-radius:8px;font-size:.9rem;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.5)";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.borderColor = bad ? "#f85149" : "#3fb950";
+  t.style.opacity = "1";
+  clearTimeout(t._h);
+  t._h = setTimeout(() => { t.style.opacity = "0"; }, 3200);
+}
+
+async function shareCard(ev, btn){
+  ev.stopPropagation();
+  const card = btn.closest(".pick-card");
+  if (!card) return;
+  const label = btn.querySelector(".share-label");
+  const was = label ? label.textContent : "";
+  if (label) label.textContent = "rendering...";
+
+  // Remember what was open so the card is left exactly as found.
+  const panels = card.querySelectorAll(".pick-card-props-panel");
+  const prevOpen = [];
+  panels.forEach((el, i) => { prevOpen[i] = el.style.display; el.style.display = "block"; });
+  const prevArrows = [];
+  card.querySelectorAll(".toggle-arrow").forEach((a, i) => {
+    prevArrows[i] = a.textContent; a.textContent = "\u25bc";
+  });
+  btn.style.visibility = "hidden";
+
+  try {
+    await loadH2C();
+    const canvas = await html2canvas(card, {
+      backgroundColor: "#0d1117",   // the card is transparent over the page bg
+      scale: 2,                     // readable when Discord downscales it
+      logging: false,
+      useCORS: true,
+    });
+    const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+
+    let copied = false;
+    try {
+      // Clipboard is the good path: paste straight into Discord. Needs HTTPS
+      // and a user gesture, both of which a button click satisfies. Firefox
+      // still refuses image writes, hence the fallback below.
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      copied = true;
+    } catch (e) { copied = false; }
+
+    if (copied) {
+      shareToast("Card copied. Paste it into Discord.");
+    } else {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "statalizers-" + (card.dataset.type || "pick") + "-" +
+                   new Date().toISOString().slice(0,10) + ".png";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      shareToast("Image downloaded (clipboard not available in this browser).");
+    }
+  } catch (e) {
+    shareToast("Could not render this card: " + (e && e.message ? e.message : e), true);
+  } finally {
+    panels.forEach((el, i) => { el.style.display = prevOpen[i]; });
+    card.querySelectorAll(".toggle-arrow").forEach((a, i) => { a.textContent = prevArrows[i]; });
+    btn.style.visibility = "";
+    if (label) label.textContent = was;
+  }
+}
+
+// ── TONIGHT'S FIVE (2026-08-24) ────────────────────────────────────────────
+// A RANKING, not a filter. Best Bets and the "clears its own bucket" filter both
+// ask "does this clear the bar", and on a night like 2026-08-24 the answer is
+// nothing, which is honest and useless. This asks "what are the five best on the
+// board" and always answers.
+//
+// Ranked by the same number the card shows: the gap between the bucket's
+// trailing record and the break-even THIS price demands. Negative gaps are shown
+// as negative. A weak night should look weak rather than look empty.
+function renderTonightsFive(picks){
+  const box = document.getElementById("tonightsFive");
+  if (!box) return;
+
+  const scored = picks
+    .filter(p => p.tier !== "TOSSUP")
+    .map(p => ({ p, g: bucketGap(p) }))
+    .filter(x => x.g !== null)
+    .sort((a, b) => b.g.gap - a.g.gap)
+    .slice(0, 5);
+
+  if (!scored.length) {
+    box.innerHTML = `<div class="t5-wrap"><div class="t5-head">\u{1F3AF} Tonight's Five</div>
+      <div class="t5-empty">No pick on the board has both a price and a graded
+      bucket behind it yet. This fills in once the odds pull lands.</div></div>`;
+    return;
+  }
+
+  const rows = scored.map((x, i) => {
+    const p = x.p, g = x.g;
+    const col = g.gap >= 3 ? "#3fb950" : (g.gap <= -3 ? "#f0883e" : "#d29922");
+    const price = p.pick_price > 0 ? "+" + Math.round(p.pick_price) : Math.round(p.pick_price);
+    const thin = g.n < 20 ? ' <span style="color:#d29922">thin</span>' : "";
+    return `<div class="t5-row">
+      <span class="t5-rank">${i + 1}</span>
+      <span class="t5-pick"><b>${p.label}</b> <span class="t5-game">${p.game}</span></span>
+      <span class="t5-price">${price}</span>
+      <span class="t5-rec">${bucketKey(p).replace("|", " ")} ${g.pct}%${thin}</span>
+      <span class="t5-gap" style="color:${col}">${g.gap > 0 ? "+" : ""}${g.gap.toFixed(1)}</span>
+    </div>`;
+  }).join("");
+
+  const best = scored[0].g.gap;
+  const note = best >= 3
+    ? "Top of the list clears its own price. Sizes are on the cards below."
+    : "Nothing on the board clears its price tonight. These are the five closest, shown so you can see how close.";
+
+  box.innerHTML = `<div class="t5-wrap">
+    <div class="t5-head">\u{1F3AF} Tonight's Five <span class="t5-sub">ranked by
+      bucket record against the break-even each price demands</span></div>
+    <div class="t5-rows">${rows}</div>
+    <div class="t5-note">${note}</div>
+  </div>`;
+}
+
+function shareBtnHtml(){
+  return `<div class="share-row"><button class="share-btn" onclick="shareCard(event, this)">
+    \u{1F4E4} <span class="share-label">Share this card</span></button></div>`;
+}
+
 function bucketVerdict(p){
   const r = BUCKET_REC[bucketKey(p)];
   if (!r || !r.n) return "";
@@ -4370,7 +4546,8 @@ function renderPicks(){
         ${bookShopHtml(p)}
         ${priceCheckHtml(p)}
           ${bucketVerdict(p)}
-        ${betLogHtml(p, 'bl' + Math.abs(hashStr((p.label||'') + (p.game||'') + (p.type||''))))}
+        ${shareBtnHtml()}
+          ${betLogHtml(p, 'bl' + Math.abs(hashStr((p.label||'') + (p.game||'') + (p.type||''))))}
         <div class="pick-reasoning">${p.reasoning}</div>
         ${p.narrative ? `<div class="pick-narrative">${p.narrative}</div>` : ""}
         ${(()=>{
@@ -4422,6 +4599,7 @@ function renderPicks(){
     `Showing <b>${visible}</b> of <b>${ACTIVE_PICKS.length}</b> picks`;
   if(visible===0) grid.innerHTML = `<div class="empty">No picks match the current filters.</div>`;
   renderBestBets();
+  try { renderTonightsFive(ACTIVE_PICKS); } catch(e){ console.warn('t5', e); }
 }
 
 function tierIcon(t){ return t==="LOCK"?"🔒":t==="STRONG"?"⭐⭐":t==="TOSSUP"?"≈":"⭐"; }
@@ -6065,6 +6243,7 @@ function renderTicker(){
       // with any client-side filter or state change without collapsing the
       // expanded pick cards the way a full renderPicks() would.
       try { if (typeof renderBestBets === "function") renderBestBets(); } catch(e){}
+      try { if (typeof renderTonightsFive === "function" && typeof ACTIVE_PICKS !== "undefined") renderTonightsFive(ACTIVE_PICKS); } catch(e){}
     }
   }
 
