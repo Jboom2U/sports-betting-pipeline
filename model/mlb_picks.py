@@ -137,6 +137,11 @@ CAL_COEFFS = {
 }
 if os.getenv("CAL_A_RL") and os.getenv("CAL_B_RL"):
     # Only if you have explicitly decided to, after a refit shows it improves.
+    # RL WAS deliberately uncalibrated: fitting one made out-of-sample Brier
+    # WORSE on pre-2026-08-19 data (0.2327 -> 0.2573). Refit on post-fix data
+    # 2026-09-08 it now IMPROVES (0.2506 -> 0.2438 over 4 folds, n=201), and
+    # the raw record is cleanly monotonic: 33.3% / 35.5% / 51.2% / 70.9%
+    # across the four bands. The old decision was right for the old model.
     CAL_COEFFS["RL"] = _cal_pair("RL", 1.369136, -0.293049)
 
 # ── MODEL VERSION (added 2026-08-19) ─────────────────────────────────────────
@@ -154,7 +159,12 @@ if os.getenv("CAL_A_RL") and os.getenv("CAL_B_RL"):
 #                   moving. A hand-maintained version alone would go stale the
 #                   first time someone forgot, which is exactly how this file
 #                   described tier thresholds of 75/68/60/48 for weeks.
-MODEL_VERSION = "2026.08.19"
+# Bumped 2026-09-08 for the calibration refit. Env vars do NOT feed the config
+# hash below, so a calibration change made purely through CAL_A_* / CAL_B_* would
+# move every number on the board while the stamp stayed still, and the record
+# would silently blend before and after. Bump this in the SAME change as the
+# env vars, every time.
+MODEL_VERSION = "2026.09.08"
 
 
 def model_version() -> str:
