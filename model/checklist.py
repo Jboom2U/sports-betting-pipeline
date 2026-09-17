@@ -482,6 +482,13 @@ def p_clamp_saturation():
                   f"both contributed 0.00 on the same card because the starter alone hit the cap")
 
 
+def p_gemini_predeploy():
+    txt = _read("scripts/predeploy_check.py")
+    if re.search(r"gemini|SECOND-MODEL REVIEW", txt, re.I):
+        return DONE, "predeploy_check runs a second-model review and prints it as advisory"
+    return OPEN, "no second model reviews the diff before a deploy"
+
+
 # -------------------------------------------------------------------- items
 # group order is the order they render. Keep the highest leverage groups first.
 
@@ -694,7 +701,7 @@ ITEMS = [
          title="Gemini proofread inside predeploy_check.py",
          why="Four self inflicted bugs on 08-11 were caught only because they happened to be "
              "re-read. Advisory only, never blocking.",
-         where="scripts/predeploy_check.py, gemini_client.py", probe=None),
+         where="scripts/predeploy_check.py, gemini_client.py", probe=p_gemini_predeploy),
     dict(id="fill-monitor", group="guardrails", effort="S",
          title="Report column fill rates on every master file",
          why="THE GENERAL CURE FOR 2026-08-19. Four columns feeding live model inputs were "

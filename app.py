@@ -2845,6 +2845,101 @@ _props_pull_state = {"running": False, "started": None, "msg": "",
                      "spent": 0, "done_at": None}
 
 
+@app.route("/admin/data-health")
+def data_health():
+    """Are the columns the model depends on actually being written?
+
+    Built 2026-08-22. The recurring failure in this project is not a crash, it is
+    a field that quietly stays empty: xwoba was blank in 787 of 787 rows, the
+    platoon master held 0 data rows, `roof` was the string 'False', and none of
+    it surfaced for weeks. Every one of those was visible as a fill rate the
+    morning it started.
+
+    Read only, no quota, degrades to a message if the DB is down.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/data-health")
+    import html as _h
+
+    rows_html, note = "", ""
+    try:
+        from db.connection import db_conn as _dbc
+        with _dbc() as conn:
+            if conn is None:
+                raise RuntimeError("no database connection")
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT COALESCE(model_version, '(unstamped)') AS mv,
+                       COUNT(*)                               AS picks,
+                       COUNT(odds)                            AS with_price,
+                       COUNT(opp_odds)                        AS with_opp,
+                       COUNT(closing_odds)                    AS with_close,
+                       COUNT(*) FILTER (WHERE was_best_bet)   AS best_bets,
+                       MIN(pick_date)::text                   AS first_day,
+                       MAX(pick_date)::text                   AS last_day
+                FROM picks
+                WHERE pick_date >= CURRENT_DATE - 7
+                GROUP BY 1 ORDER BY 8 DESC, 1
+            """)
+            data = cur.fetchall(); cur.close()
+
+        def _pct(a, b):
+            return f"{100.0*a/b:.0f}%" if b else "-"
+
+        def _cell(a, b):
+            # A column that is 0% populated is the shape of every dead signal
+            # this project has had. Colour it so it cannot be scrolled past.
+            p = (100.0*a/b) if b else 0
+            col = "#3fb950" if p >= 90 else ("#d29922" if p >= 40 else "#f85149")
+            return (f'<td style="color:{col}">{a} <span style="color:#6e7681">'
+                    f'({_pct(a,b)})</span></td>')
+
+        for mv, n, wp, wo, wc, bb, d0, d1 in data:
+            rows_html += (f"<tr><td><code>{_h.escape(mv)}</code></td>"
+                          f"<td>{d0} to {d1}</td><td><b>{n}</b></td>"
+                          f"{_cell(wp,n)}{_cell(wo,n)}{_cell(wc,n)}"
+                          f"<td>{bb}</td></tr>")
+        if not data:
+            note = "<p>No picks in the last 7 days.</p>"
+    except Exception as exc:
+        note = (f"<p style='color:#f85149'>Could not read the database: "
+                f"{_h.escape(type(exc).__name__)}: {_h.escape(str(exc))}</p>")
+
+    return Response(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Data health</title><style>
+body{{background:#0d1117;color:#e6edf3;font-family:-apple-system,sans-serif;
+     margin:0;padding:2rem;font-size:14px}}
+h1{{font-size:20px;margin:0 0 .3rem}} .sub{{color:#8b949e;font-size:13px;margin-bottom:1.5rem}}
+table{{border-collapse:collapse;width:100%;max-width:1000px}}
+th{{background:#161b22;text-align:left;padding:8px 10px;border:1px solid #30363d;
+    font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:.05em}}
+td{{padding:8px 10px;border:1px solid #21262d}}
+code{{font-size:12px}} a{{color:#58a6ff}}
+.legend{{color:#8b949e;font-size:12.5px;line-height:1.7;margin-top:1.25rem;max-width:760px}}
+</style></head><body>
+<h1>Data health</h1>
+<p class="sub">Last 7 days of picks, grouped by model version. Is each column
+actually being written?</p>
+{note}
+<table>
+<tr><th>Model version</th><th>Dates</th><th>Picks</th><th>Has price</th>
+    <th>Has opposing price</th><th>Has closing price</th><th>Best bets</th></tr>
+{rows_html}
+</table>
+<div class="legend">
+<b>What to look for.</b> <code>(unstamped)</code> means picks written before
+model_version existed, which is everything before 2026-08-19 and is expected.<br>
+<b>Has opposing price</b> only started filling after the 2026-08-21 deploy, so
+older rows are correctly empty. If today's rows are also empty, _opp_price is
+returning None and the run line fields are missing at save time.<br>
+<b>Red is 0 to 40% populated.</b> A column that never fills is the shape of every
+dead signal this project has had: xwoba blank in 787 of 787 rows, the platoon
+master at 0 data rows, weather never applied. None of those raised an error.
+</div>
+<p style="margin-top:1.5rem"><a href="/admin">&larr; Admin</a></p>
+</body></html>""", mimetype="text/html")
+
+
 @app.route("/admin/export/picks.csv")
 def export_picks_csv():
     """Every graded pick as CSV, for outside analysis.

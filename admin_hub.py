@@ -98,6 +98,8 @@ ROUTES = [
          "Props scored today vs saved and graded per date", "admin", "free"),
         ("/admin/pitcher-diag", "Pitcher diagnostic",
          "Season rows, split rows and era_adj for one pitcher by name", "admin", "free"),
+        ("/admin/data-health", "Data health",
+         "Are the columns the model depends on actually being written", "admin", "free"),
         ("/status", "Pipeline status", "Last run, database and R2 health", "admin", "free"),
         ("/schedule-status", "Schedule status",
          "Next pipeline, next refresh, first pitch times as JSON", "admin", "free"),
