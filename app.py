@@ -2962,9 +2962,16 @@ def export_picks_csv():
     import csv as _csv, io as _io
     since = (request.args.get("since") or "2026-07-21").strip()
 
+    # final_* and pregame_locked_at added 2026-09-17. They are the immutable
+    # first-pitch snapshot written by db/picks_store.save_picks. Exported because
+    # a column nothing can read is a column nobody can verify: the snapshot could
+    # fail to write for a whole season and look identical to it working.
+    # pregame_locked_at is the one to watch. Null everywhere means game_time_utc
+    # is not reaching game_data and _game_started is failing safe.
     COLS = ["pick_date", "game_id", "game", "pick_type", "label", "team",
             "conf", "tier", "market_signal", "tier_locked", "was_best_bet",
             "model_version", "odds", "odds_at", "closing_odds", "closing_odds_at",
+            "final_conf", "final_tier", "final_odds", "pregame_locked_at",
             "actual_result", "away_final", "home_final", "graded_at"]
     buf = _io.StringIO()
     w = _csv.writer(buf)
