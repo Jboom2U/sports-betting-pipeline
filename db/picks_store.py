@@ -15,7 +15,7 @@ Public API:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from db.connection import db_conn
 
@@ -127,6 +127,32 @@ def _model_version() -> str:
         return None
 
 
+def _game_started(p: dict) -> bool:
+    """Has first pitch passed for this pick's game?
+
+    Reads `game_time_utc` off game_data, which model/mlb_picks.py attaches to
+    every pick as the whole scored-game dict.
+
+    FAIL SAFE. Any missing, empty or unparseable time returns False, which
+    reproduces today's behaviour exactly. The asymmetry is deliberate: a
+    snapshot that never fires can be reconstructed later from the odds history,
+    but one that fires EARLY freezes a pre-lineup number into a record that is
+    supposed to be permanent, and that cannot be undone. Every ambiguous case
+    resolves toward doing nothing.
+    """
+    g = p.get("game_data") or {}
+    raw = str(g.get("game_time_utc") or "").strip()
+    if not raw:
+        return False
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) >= dt
+
+
 def save_picks(picks: list, pick_date: str) -> int:
     """
     Upsert all picks for a given date into the picks table.
@@ -157,14 +183,23 @@ def save_picks(picks: list, pick_date: str) -> int:
                 # can't downgrade it after that. Fixes the Yesterday LOCK undercount
                 # without freezing a pre-lineup 6am tier.
                 _lineups_set = bool((p.get("game_data") or {}).get("lineup_confirmed"))
+                # FIRST PITCH SNAPSHOT. Computed per pick, once, here.
+                _started   = _game_started(p)
+                _snap_conf = round(float(p.get("conf", 0)), 4) if _started else None
+                _snap_tier = p.get("tier", "") if _started else None
+                _snap_odds = _pick_price(p) if _started else None
+                _snap_at   = datetime.now(timezone.utc) if _started else None
                 cur.execute(
                     """
                     INSERT INTO picks
                         (pick_date, game_id, game, pick_type, label, team,
                          conf, tier, reasoning, market_signal, tier_locked,
-                         was_best_bet, odds, odds_at, opp_odds, model_version, actual_result)
+                         was_best_bet, odds, odds_at, opp_odds, model_version,
+                         final_conf, final_tier, final_odds, pregame_locked_at,
+                         actual_result)
                     VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, 'PENDING')
+                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s,
+                         %s, %s, %s, %s, 'PENDING')
                     ON CONFLICT (pick_date, game_id, pick_type) DO UPDATE SET
                         label         = EXCLUDED.label,
                         team          = EXCLUDED.team,
@@ -177,8 +212,22 @@ def save_picks(picks: list, pick_date: str) -> int:
                         -- a version that did not generate what is stored.
                         model_version = EXCLUDED.model_version,
                         opp_odds      = COALESCE(picks.opp_odds, EXCLUDED.opp_odds),
-                        conf          = CASE WHEN picks.tier_locked THEN picks.conf ELSE EXCLUDED.conf END,
-                        tier          = CASE WHEN picks.tier_locked THEN picks.tier ELSE EXCLUDED.tier END,
+                        -- FIRST PITCH SNAPSHOT (2026-09-16). Frozen once EITHER
+                        -- the lineups locked the tier OR first pitch has passed.
+                        -- The second arm closes the hole where a game whose
+                        -- lineups never confirm never froze at all.
+                        --
+                        -- On the statement that FIRST sets pregame_locked_at,
+                        -- picks.pregame_locked_at is still NULL (ON CONFLICT sees
+                        -- the pre-update row), so conf updates one final time to
+                        -- the first-pitch value and the snapshot stores that same
+                        -- value. They agree by construction.
+                        conf          = CASE WHEN picks.pregame_locked_at IS NOT NULL
+                                               OR picks.tier_locked
+                                             THEN picks.conf ELSE EXCLUDED.conf END,
+                        tier          = CASE WHEN picks.pregame_locked_at IS NOT NULL
+                                               OR picks.tier_locked
+                                             THEN picks.tier ELSE EXCLUDED.tier END,
                         tier_locked   = (picks.tier_locked OR EXCLUDED.tier_locked),
                         -- LATCH, never clear. Best Bets is path-dependent: a pick
                         -- can qualify at 2pm at -140 and stop by 6pm at -170. Once
@@ -200,9 +249,34 @@ def save_picks(picks: list, pick_date: str) -> int:
                         -- Closing price: keep refreshing until first pitch. The
                         -- last value written before the game starts IS the close,
                         -- since re-scores stop at first pitch.
-                        closing_odds    = COALESCE(EXCLUDED.odds, picks.closing_odds),
-                        closing_odds_at = CASE WHEN EXCLUDED.odds IS NOT NULL
-                                               THEN NOW() ELSE picks.closing_odds_at END
+                        --
+                        -- CLOSING PRICE STOPS AT FIRST PITCH (fixed 2026-09-16).
+                        -- The note above used to assert "re-scores stop at first
+                        -- pitch". They do not: the board re-scored a Cubs card
+                        -- from 80.9% to 81.2% after the game was under way. So
+                        -- closing_odds could absorb a price captured DURING the
+                        -- game, and every CLV number is measured against it.
+                        -- A close that moves after the close is not a close.
+                        closing_odds    = CASE
+                                            WHEN picks.pregame_locked_at IS NOT NULL
+                                              THEN picks.closing_odds
+                                            ELSE COALESCE(EXCLUDED.odds, picks.closing_odds)
+                                          END,
+                        closing_odds_at = CASE
+                                            WHEN picks.pregame_locked_at IS NOT NULL
+                                              THEN picks.closing_odds_at
+                                            WHEN EXCLUDED.odds IS NOT NULL
+                                              THEN NOW()
+                                            ELSE picks.closing_odds_at
+                                          END,
+                        -- Write ONCE. COALESCE keeps the first non-null value, so
+                        -- a later write physically cannot overwrite the snapshot.
+                        -- The immutability is enforced by the database, not by
+                        -- anyone remembering to be careful.
+                        final_conf        = COALESCE(picks.final_conf,        EXCLUDED.final_conf),
+                        final_tier        = COALESCE(picks.final_tier,        EXCLUDED.final_tier),
+                        final_odds        = COALESCE(picks.final_odds,        EXCLUDED.final_odds),
+                        pregame_locked_at = COALESCE(picks.pregame_locked_at, EXCLUDED.pregame_locked_at)
                     """,
                     (
                         pick_date,
@@ -220,6 +294,10 @@ def save_picks(picks: list, pick_date: str) -> int:
                         _pick_price(p),
                         _opp_price(p),
                         _model_version(),
+                        _snap_conf,
+                        _snap_tier,
+                        _snap_odds,
+                        _snap_at,
                     )
                 )
                 inserted += cur.rowcount

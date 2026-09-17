@@ -5020,8 +5020,24 @@ function renderYesterday(){
   if(!DATA_YESTERDAY || !DATA_YESTERDAY.date) return;
 
   const d   = DATA_YESTERDAY;
-  const m   = d.metrics && d.metrics.overall;
+  let   m   = d.metrics && d.metrics.overall;
   if(!m) return;
+
+  // -- ONE SOURCE OF TRUTH, PART 2 (2026-09-14) ------------------------------
+  // The 08-18 fix below rewired the tier chips and the OVERALL chip to
+  // _ydayAgg (the DB rows). It left THIS line reading d.metrics.overall, the
+  // analysis JSON written by run_analysis.py at 6am. So the panel still
+  // carried two graders, one directly underneath the other.
+  //
+  // Seen on 2026-09-13: the chips summed to 14-16 over 31 DB rows while the
+  // line beneath them read 17-17, with the ROI and dollar profit computed
+  // over 35 JSON picks. Read together those two numbers look like the tier
+  // records are wrong. They are not. LOCK 3-1 that day was confirmed correct
+  // by both graders independently.
+  //
+  // Recompute the whole row from the SAME rows the chips are built from.
+  const _pnl = _ydayPnl(d);
+  if(_pnl) m = _pnl;
 
   const wr  = m.win_rate ? (m.win_rate * 100).toFixed(1) : "—";
   const roi = m.roi      ? (m.roi * 100).toFixed(1)      : "—";
@@ -5069,6 +5085,56 @@ function _ydayAgg(d){
     overall: {wins:w, losses:l, total:w+l, win_rate:(w+l) ? w/(w+l) : 0},
     by_tier: roll("tier"),
     by_type: roll("type")
+  };
+}
+
+// Record, ROI and profit for the Yesterday row, derived from the same DB rows
+// the tier chips are built from. Returns null when there are no DB rows, in
+// which case the caller keeps the JSON metrics rather than showing nothing.
+//
+// Three decisions, each stated because each is a place this could drift back
+// out of agreement with the chips above it:
+//
+//  1. FLAT ONE UNIT per pick, at the REAL stored price. Flat one unit is what
+//     the JSON already used (its `staked` equals its `total`), so this changes
+//     WHICH picks are counted and at WHAT price, not how they are staked. Real
+//     price because of the standing rule: a number computed at an assumed -110
+//     is not the number.
+//  2. PUSH stakes nothing and returns nothing. Excluded from the record and
+//     from the denominator. Never counted as a loss.
+//  3. Rows with no tier are SKIPPED, mirroring roll() in _ydayAgg exactly. The
+//     chips structurally cannot display an untiered pick, so counting one here
+//     would put this row and those chips back out of sync, which is the entire
+//     defect this function exists to close.
+function _ydayPnl(d){
+  const gp = (d && d.graded_picks) || [];
+  if(!gp.length) return null;
+  let w = 0, l = 0, pushes = 0, profit = 0, staked = 0, priced = 0, assumed = 0;
+  gp.forEach(p => {
+    if(!(p.tier || "").trim()) return;          // mirrors roll()'s `if(!k) return`
+    const res = (p.actual_result || p.result || "").toUpperCase();
+    if(res === "PUSH"){ pushes++; return; }
+    if(res !== "WIN" && res !== "LOSS") return;
+    // Anything graded before 2026-08-11 has no odds column, and |price| < 100
+    // is corrupt data in this repo. Those fall back to -110 and are still
+    // COUNTED -- dropping them would put this row back out of step with the
+    // chips. `assumed` carries how many, so the caller can say so if needed.
+    let o = (p.odds !== null && p.odds !== undefined && p.odds !== "")
+              ? parseFloat(p.odds) : NaN;
+    if(!isFinite(o) || Math.abs(o) < 100){ o = -110; assumed++; }
+    else { priced++; }
+    const dec = o > 0 ? 1 + o/100 : 1 + 100/Math.abs(o);
+    staked += 1;
+    if(res === "WIN"){ w++; profit += dec - 1; }
+    else             { l++; profit -= 1; }
+  });
+  if(!(w + l)) return null;
+  return {
+    wins: w, losses: l, pushes: pushes, total: w + l,
+    staked: staked, profit: profit,
+    win_rate: w / (w + l),
+    roi: staked ? profit / staked : 0,
+    priced: priced, assumed: assumed
   };
 }
 

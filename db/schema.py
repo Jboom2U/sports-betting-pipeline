@@ -333,6 +333,18 @@ def create_all():
             for _col, _type in (("odds", "REAL"), ("odds_at", "TIMESTAMPTZ"),
                                 ("closing_odds", "REAL"), ("closing_odds_at", "TIMESTAMPTZ")):
                 cur.execute(f"ALTER TABLE picks ADD COLUMN IF NOT EXISTS {_col} {_type}")
+            # FIRST PITCH SNAPSHOT (2026-09-16). tier_locked freezes conf/tier
+            # at LINEUP confirmation, which leaves two holes: a game whose
+            # lineups never confirm never freezes at all, and the board keeps
+            # re-scoring after the freeze so the displayed number drifts away
+            # from the graded one. These four are written exactly ONCE, the
+            # first time save_picks runs at or after first pitch, and are never
+            # updated again. Nullable and additive: existing rows stay NULL,
+            # which correctly reads as "produced before snapshots existed".
+            for _col, _type in (("final_conf", "REAL"), ("final_tier", "TEXT"),
+                                ("final_odds", "REAL"),
+                                ("pregame_locked_at", "TIMESTAMPTZ")):
+                cur.execute(f"ALTER TABLE picks ADD COLUMN IF NOT EXISTS {_col} {_type}")
             log.info("DB schema verified / created.")
         except Exception as e:
             log.warning(f"Schema creation failed (non-fatal): {e}")

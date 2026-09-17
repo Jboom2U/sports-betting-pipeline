@@ -1371,7 +1371,29 @@ class MLBModel:
         # umpire and bullpen fatigue (which both feed run expectancy) were dead.
         # Re-derive from post-2026-07-21 calibration once ~300 graded post-fix
         # TOTAL picks exist. Totals may genuinely improve now.
-        total_conf_base = min(0.68, 0.50 + abs(diff) / 16.0)
+        # TOTALS CLAMP / TIER COLLISION, fixed 2026-09-16. Read before touching 0.675.
+        #
+        # This ceiling used to be 0.68, which is EXACTLY LOCK_THRESH in
+        # model/mlb_picks.py, and tier() tests `conf >= LOCK_THRESH`. So a total
+        # that saturated the clamp was stamped LOCK. On 412 graded TOTAL picks,
+        # 4 sat at exactly 0.680000 and those 4 were 40% of all TOTAL LOCKs.
+        #
+        # The other six TOTAL LOCKs are genuine, sitting ABOVE the cap because
+        # total_adj and friends are applied after this line. Those are untouched.
+        # A computed 0.68 is a measurement; a clamped 0.68 is the model declining
+        # to answer. Only the second kind loses the badge.
+        #
+        # 0.675 clears the boundary and nothing more. It is NOT a view on what the
+        # totals ceiling should be. That question is open: the 2026-08-11 review
+        # found the fitted Platt slope nearly flat (A=0.179), and the 2026-09-08
+        # refit REJECTED TOTAL calibration because out-of-sample Brier got worse
+        # (0.2473 -> 0.2617). CLAUDE.md's standing rule is not to RAISE this cap,
+        # which would relabel non-information as confidence. Lowering it 0.005 to
+        # clear a tier boundary is a different act.
+        #
+        # scripts/predeploy_check.py fails the build if this equals a tier
+        # threshold again.
+        total_conf_base = min(0.675, 0.50 + abs(diff) / 16.0)
         ml_adj, total_adj = self.line_movement_confidence_adj(
             away, home, ml_team, total_pick
         )
@@ -1480,8 +1502,28 @@ class MLBModel:
         # these when the model's per-team expected runs are hot (e.g. a 3.9-run
         # projected margin), producing absurd cover% and EV. Clamp to sane bounds
         # until the run-environment projection itself is reined in.
-        RL_FAV_COVER_CAP = 0.55
-        RL_DOG_COVER_CAP = 0.68
+        #
+        # CLAMP / TIER COLLISION, fixed 2026-09-14. Read before changing 0.675.
+        #
+        # RL_DOG_COVER_CAP used to be 0.68, which is EXACTLY LOCK_THRESH in
+        # model/mlb_picks.py, and tier() tests `conf >= LOCK_THRESH`. So every
+        # run line that saturated this clamp was stamped LOCK. Measured on 561
+        # graded RL picks: 72 of the 77 RL LOCKs on record carry conf of
+        # exactly 0.680000. Only five ever came from a computed number.
+        #
+        # A saturated clamp is the model saying "I do not know, this is my
+        # ceiling". It was being displayed as maximum confidence. Moving the
+        # cap off the boundary drops those into STRONG, where they belong.
+        #
+        # 0.675 is chosen only to clear the boundary. It is NOT an estimate of
+        # how often these dogs cover. The 2026-09-14 base rate test puts that
+        # at roughly 57-61%, so this ceiling is still generous. Lowering it on
+        # that evidence is a separate, deliberate model change.
+        #
+        # scripts/predeploy_check.py now fails the build if any clamp here
+        # equals any tier threshold, so this cannot silently return.
+        RL_FAV_COVER_CAP = 0.55     # below STRONG_THRESH (0.62), collides with nothing
+        RL_DOG_COVER_CAP = 0.675    # was 0.68 == LOCK_THRESH. Do not restore.
         # PRICE LOOKUP BY ACTUAL LINE (fixed 2026-08-11).
         # This used to read rl_home_price / rl_away_price, which the scraper
         # populated according to the MARKET favorite. This block picks its sides

@@ -217,6 +217,70 @@ else:
         else:
             errors.append("[ROUTE ERROR]  " + route + " returned HTTP " + code)
 
+# ── Clamp / tier collision guard ──────────────────────────────────────────────
+# Added 2026-09-14. A clamp ceiling that is numerically equal to a tier
+# threshold turns "the model hit its ceiling" into "the model is maximally
+# confident", because tier() compares with >= and equality passes.
+#
+# This is not hypothetical. RL_DOG_COVER_CAP was 0.68 and LOCK_THRESH is 0.68,
+# and 72 of 77 RL LOCKs ever recorded carried conf of exactly 0.680000. The
+# label meant the opposite of what it said, for a whole season, on the board
+# Justin was betting from.
+#
+# ERROR, not warning. A silent one of these is worth more than a route 500.
+def _clamp_tier_collisions():
+    import re as _re
+    found, notes = [], []
+    # NOTE: builtin open(), not io.open(). predeploy_check.py imports
+    # ast/os/re/subprocess/sys/tempfile and NOT io, so io.open would raise
+    # NameError, get swallowed by the except below, and this guard would print
+    # "[skip]" forever while measuring nothing. That is the same shape as the
+    # bug it exists to catch.
+    try:
+        _m = open(os.path.join(ROOT, "model", "mlb_model.py"), encoding="utf-8").read()
+        _p = open(os.path.join(ROOT, "model", "mlb_picks.py"), encoding="utf-8").read()
+    except Exception as _e:
+        return [], ["[skip] clamp guard could not read sources: " + str(_e)]
+
+    tiers = {}
+    for name in ("LOCK_THRESH", "STRONG_THRESH", "LEAN_THRESH", "TOSSUP_THRESH"):
+        mt = _re.search(r"^" + name + r"\s*=\s*([0-9.]+)", _p, _re.M)
+        if mt:
+            tiers[name] = float(mt.group(1))
+
+    clamps = {}
+    for name in ("RL_FAV_COVER_CAP", "RL_DOG_COVER_CAP"):
+        mc = _re.search(r"^\s*" + name + r"\s*=\s*([0-9.]+)", _m, _re.M)
+        if mc:
+            clamps[name] = float(mc.group(1))
+    # `total_conf_base = min(0.68, ...)` -- the ceiling is the first argument.
+    mt2 = _re.search(r"total_conf_base\s*=\s*min\(\s*([0-9.]+)", _m)
+    if mt2:
+        clamps["total_conf_base ceiling"] = float(mt2.group(1))
+
+    if not tiers or not clamps:
+        return [], ["[skip] clamp guard found no constants to compare"]
+
+    for cname, cval in sorted(clamps.items()):
+        for tname, tval in sorted(tiers.items()):
+            if abs(cval - tval) < 1e-9:
+                found.append(
+                    "[CLAMP COLLISION]  " + cname + " = " + str(cval) + " equals "
+                    + tname + ". Every pick that saturates this clamp will be "
+                    "labelled " + tname.replace("_THRESH", "") + ". Move the clamp "
+                    "off the boundary."
+                )
+    notes.append("  OK   clamp guard: " + str(len(clamps)) + " clamp(s) vs "
+                 + str(len(tiers)) + " tier threshold(s), "
+                 + (str(len(found)) + " collision(s)" if found else "no collisions"))
+    return found, notes
+
+_cc_errors, _cc_notes = _clamp_tier_collisions()
+for _n in _cc_notes:
+    print(_n)
+errors.extend(_cc_errors)
+
+
 # ── Second-model review (advisory) ────────────────────────────────────────────
 # Runs only when the checks above have found no ERRORS, so it reviews code that
 # is otherwise deployable. ADVISORY ONLY: it prints findings and never changes
