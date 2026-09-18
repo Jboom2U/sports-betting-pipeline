@@ -217,6 +217,62 @@ else:
         else:
             errors.append("[ROUTE ERROR]  " + route + " returned HTTP " + code)
 
+# ── Literal percent in SQL guard ──────────────────────────────────────────────
+# psycopg2 percent-formats the entire query string before sending it. A literal
+# `%` that is not `%s` or `%%` is read as a format specifier, and with a tuple of
+# arguments it raises IndexError("tuple index out of range").
+#
+# This is not hypothetical. On 2026-09-17 a SQL COMMENT reading "from 80.9% to
+# 81.2%" stopped every pick being written to the database for two days. The
+# arity was perfect: 19 placeholders, 19 parameters. save_picks swallows all
+# exceptions and logs one non-fatal WARNING, so the pipeline kept reporting
+# "15 games | 28 picks" while writing nothing, and the loss was only found by
+# reading Railway logs three days later.
+#
+# ERROR, not warning. A silent write failure is the worst failure this project
+# has.
+def _sql_literal_percent():
+    import re as _re
+    found, scanned = [], 0
+    targets = [("db", "picks_store.py"), ("db", "schema.py"),
+               ("db", "pipeline_log.py"), ("db", "model_config.py"),
+               ("app.py",)]
+    for parts in targets:
+        path = os.path.join(ROOT, *parts)
+        if not os.path.exists(path):
+            continue
+        try:
+            src = open(path, encoding="utf-8").read()
+        except Exception:
+            continue
+        for block in _re.findall(r'"""(.*?)"""', src, _re.DOTALL):
+            # Only look at blocks that are actually SQL.
+            if not _re.search(r"\b(INSERT|UPDATE|DELETE|SELECT)\b", block, _re.I):
+                continue
+            scanned += 1
+            # Strip the legal forms, then any surviving % is a literal.
+            stripped = block.replace("%%", "").replace("%s", "")
+            stripped = _re.sub(r"%\(\w+\)s", "", stripped)
+            if "%" in stripped:
+                for ln, line in enumerate(block.splitlines(), 1):
+                    bare = line.replace("%%", "").replace("%s", "")
+                    bare = _re.sub(r"%\(\w+\)s", "", bare)
+                    if "%" in bare:
+                        found.append(
+                            "[SQL PERCENT]  " + os.path.join(*parts)
+                            + " SQL block line " + str(ln)
+                            + ": literal percent sign -> psycopg2 will raise "
+                            + "'tuple index out of range' and the write will "
+                            + "silently fail. Remove it or escape as two percent "
+                            + "signs.  " + line.strip()[:90]
+                        )
+    print("  OK   sql percent guard: " + str(scanned) + " SQL block(s) scanned, "
+          + (str(len(found)) + " problem(s)" if found else "none clean"))
+    return found
+
+errors.extend(_sql_literal_percent())
+
+
 # ── Clamp / tier collision guard ──────────────────────────────────────────────
 # Added 2026-09-14. A clamp ceiling that is numerically equal to a tier
 # threshold turns "the model hit its ceiling" into "the model is maximally

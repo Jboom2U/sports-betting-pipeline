@@ -253,10 +253,23 @@ def save_picks(picks: list, pick_date: str) -> int:
                         -- CLOSING PRICE STOPS AT FIRST PITCH (fixed 2026-09-16).
                         -- The note above used to assert "re-scores stop at first
                         -- pitch". They do not: the board re-scored a Cubs card
-                        -- from 80.9% to 81.2% after the game was under way. So
+                        -- from 80.9 to 81.2 after the game was under way. So
                         -- closing_odds could absorb a price captured DURING the
                         -- game, and every CLV number is measured against it.
                         -- A close that moves after the close is not a close.
+                        --
+                        -- NEVER put a literal percent sign in this string, not
+                        -- even in a comment. psycopg2 percent-formats the whole
+                        -- query before sending it, so "80.9 percent" written with
+                        -- the symbol is parsed as a format specifier and
+                        -- execute() dies with "tuple index out of range".
+                        -- That is not hypothetical. The two symbols that used to
+                        -- be on the line above stopped EVERY pick being saved for
+                        -- two days (2026-09-17 and 2026-09-18) while the except
+                        -- at the bottom of this function logged one non-fatal
+                        -- WARNING per run and the pipeline cheerfully reported
+                        -- "15 games | 28 picks". Escape as two percent signs if
+                        -- one is ever genuinely needed.
                         closing_odds    = CASE
                                             WHEN picks.pregame_locked_at IS NOT NULL
                                               THEN picks.closing_odds
