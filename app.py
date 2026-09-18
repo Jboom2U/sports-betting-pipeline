@@ -2940,6 +2940,208 @@ master at 0 data rows, weather never applied. None of those raised an error.
 </body></html>""", mimetype="text/html")
 
 
+@app.route("/admin/r2-picks")
+def r2_picks_recovery():
+    """Inspect, and optionally restore, a slate of picks from R2.
+
+    Built 2026-09-18 after save_picks failed silently for two days and the
+    2026-09-17 slate was found to exist in neither the DB nor the local CSV.
+    The dashboard HTML in R2 embeds the whole DATA_PICKS array, which is the
+    only surviving copy, and it carries odds where the CSV never did.
+
+    READ ONLY unless apply=1. Inserts use ON CONFLICT DO NOTHING so a
+    reconstructed row can never overwrite one that was saved live.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/r2-picks")
+
+    import html as _h, json as _json, re as _re, tempfile as _tmp
+
+    date  = (request.args.get("date") or "").strip()
+    apply_ = request.args.get("apply") == "1"
+    out = ["<pre style='background:#0d1117;color:#c9d1d9;padding:20px;"
+           "font:13px/1.5 ui-monospace,monospace'>"]
+    def say(s=""):
+        out.append(_h.escape(str(s)))
+
+    if not _re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        say("Usage: /admin/r2-picks?date=YYYY-MM-DD        (read only)")
+        say("       /admin/r2-picks?date=YYYY-MM-DD&apply=1 (insert missing rows)")
+        say("")
+        say("Reports what exists in R2 for that date and what a backfill would do.")
+        return Response("\n".join(out) + "</pre>", mimetype="text/html")
+
+    say(f"R2 picks recovery for {date}")
+    say("=" * 60)
+    say("")
+
+    try:
+        from db.csv_sync import _get_client, _bucket
+        client, bucket = _get_client(), _bucket()
+    except Exception as e:
+        say(f"storage client unavailable: {e}")
+        return Response("\n".join(out) + "</pre>", mimetype="text/html")
+    if client is None:
+        say("storage client unavailable (STORAGE_* env vars not set)")
+        return Response("\n".join(out) + "</pre>", mimetype="text/html")
+
+    keys = [f"picks/mlb_picks_{date}.html",
+            f"picks/mlb_picks_{date}.csv",
+            f"picks/mlb_props_{date}.csv"]
+    present = {}
+    say("WHAT EXISTS IN R2")
+    for k in keys:
+        try:
+            meta = client.head_object(Bucket=bucket, Key=k)
+            present[k] = meta
+            say(f"  FOUND    {k}  {meta.get('ContentLength', 0):,} bytes  "
+                f"{meta.get('LastModified')}")
+        except Exception:
+            say(f"  MISSING  {k}")
+    say("")
+
+    html_key = keys[0]
+    if html_key not in present:
+        say("The dashboard HTML is not in storage, so there is no surviving copy")
+        say("of this slate. Nothing can be recovered. Record the date as a hole")
+        say("rather than reconstructing it from memory or a screenshot.")
+        return Response("\n".join(out) + "</pre>", mimetype="text/html")
+
+    try:
+        with _tmp.NamedTemporaryFile(suffix=".html", delete=False) as tf:
+            tf_path = tf.name
+        client.download_file(bucket, html_key, tf_path)
+        with open(tf_path, encoding="utf-8", errors="replace") as f:
+            page = f.read()
+        os.unlink(tf_path)
+    except Exception as e:
+        say(f"download failed: {e}")
+        return Response("\n".join(out) + "</pre>", mimetype="text/html")
+
+    # Pull DATA_PICKS out of the page by bracket matching, not regex: the array
+    # contains braces and quotes inside reasoning strings.
+    def _extract(name):
+        m = _re.search(r"const\s+" + name + r"\s*=\s*", page)
+        if not m:
+            return None
+        i = m.end()
+        if i >= len(page) or page[i] != "[":
+            return None
+        depth, j, instr, q = 0, i, False, ""
+        while j < len(page):
+            c = page[j]
+            if instr:
+                if c == "\\":
+                    j += 2
+                    continue
+                if c == q:
+                    instr = False
+            elif c in "\"'":
+                instr, q = True, c
+            elif c == "[":
+                depth += 1
+            elif c == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        try:
+            return _json.loads(page[i:j + 1])
+        except Exception:
+            return None
+
+    picks = _extract("DATA_TODAY_PICKS") or _extract("DATA_PICKS")
+    if not picks:
+        say("DATA_PICKS could not be parsed out of the stored HTML.")
+        return Response("\n".join(out) + "</pre>", mimetype="text/html")
+
+    say(f"PARSED {len(picks)} PICKS FROM THE STORED BOARD")
+    say("")
+    say(f"  {'tier':8} {'type':6} {'label':34} {'conf':>6} {'odds':>7}")
+    say("  " + "-" * 66)
+    rows, no_price = [], 0
+    for p in picks:
+        conf = p.get("conf")
+        try:
+            conf = float(conf)
+        except Exception:
+            continue
+        if conf > 1.5:
+            conf = conf / 100.0
+        odds = p.get("pick_price", p.get("odds"))
+        try:
+            odds = float(odds)
+            if abs(odds) < 100:
+                odds = None
+        except Exception:
+            odds = None
+        if odds is None:
+            no_price += 1
+        rows.append({
+            "game_id": str(p.get("game_id", "")),
+            "game":    p.get("game", ""),
+            "type":    (p.get("type") or p.get("pick_type") or "").upper(),
+            "label":   p.get("label", ""),
+            "team":    p.get("team", ""),
+            "conf":    round(conf, 4),
+            "tier":    p.get("tier", ""),
+            "odds":    odds,
+        })
+        say(f"  {rows[-1]['tier']:8} {rows[-1]['type']:6} {rows[-1]['label'][:34]:34} "
+            f"{conf*100:5.1f}% {('' if odds is None else int(odds)):>7}")
+    say("")
+    say(f"  {len(rows)} rows parsed, {no_price} with no usable price")
+    say("")
+
+    if not apply_:
+        say("READ ONLY. Nothing was written.")
+        say(f"To insert these, add &apply=1 to the URL.")
+        say("")
+        say("What apply=1 will do:")
+        say("  - INSERT ... ON CONFLICT DO NOTHING, so any row already in the")
+        say("    table is left exactly as it is")
+        say("  - actual_result stays PENDING so the normal grader scores them")
+        say("  - odds stays NULL where the board had no usable price. No price")
+        say("    is ever invented")
+        return Response("\n".join(out) + "</pre>", mimetype="text/html")
+
+    say("APPLYING")
+    ins = skipped = 0
+    try:
+        from db.connection import db_conn as _dbc
+        with _dbc() as conn:
+            if conn is None:
+                say("  database unavailable, nothing written")
+                return Response("\n".join(out) + "</pre>", mimetype="text/html")
+            cur = conn.cursor()
+            for r in rows:
+                cur.execute(
+                    """
+                    INSERT INTO picks
+                        (pick_date, game_id, game, pick_type, label, team,
+                         conf, tier, reasoning, odds, actual_result)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
+                    ON CONFLICT (pick_date, game_id, pick_type) DO NOTHING
+                    """,
+                    (date, r["game_id"], r["game"], r["type"], r["label"],
+                     r["team"], r["conf"], r["tier"],
+                     "restored from stored board " + date, r["odds"]),
+                )
+                if cur.rowcount:
+                    ins += 1
+                else:
+                    skipped += 1
+    except Exception as e:
+        say(f"  write failed: {e}")
+        return Response("\n".join(out) + "</pre>", mimetype="text/html")
+
+    say(f"  inserted {ins}, skipped {skipped} (already present)")
+    say("")
+    say("Now run the grader for this date so results attach:")
+    say(f"  /admin/regrade?date={date}")
+    return Response("\n".join(out) + "</pre>", mimetype="text/html")
+
+
 @app.route("/admin/export/picks.csv")
 def export_picks_csv():
     """Every graded pick as CSV, for outside analysis.

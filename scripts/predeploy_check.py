@@ -246,8 +246,21 @@ def _sql_literal_percent():
         except Exception:
             continue
         for block in _re.findall(r'"""(.*?)"""', src, _re.DOTALL):
-            # Only look at blocks that are actually SQL.
-            if not _re.search(r"\b(INSERT|UPDATE|DELETE|SELECT)\b", block, _re.I):
+            # A real query must BEGIN with a SQL keyword. Matching the keyword
+            # ANYWHERE (the first version of this guard) hit every large HTML
+            # template in app.py, because one contains "<select>" and another
+            # contains the word "Update". That produced 7 false positives on
+            # the guard's first run: CSS like `width:100%` and table headers
+            # like `Win %`, none of which ever reach psycopg2.
+            #
+            # Every genuine query in this repo is written as:
+            #     cur.execute(
+            #         """
+            #         INSERT INTO picks
+            # so anchoring at the start excludes templates structurally rather
+            # than by luck.
+            if not _re.match(r"\s*(INSERT|UPDATE|DELETE|SELECT|WITH|ALTER|CREATE)\b",
+                             block, _re.I):
                 continue
             scanned += 1
             # Strip the legal forms, then any surviving % is a literal.
