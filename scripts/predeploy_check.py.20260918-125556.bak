@@ -1,0 +1,339 @@
+"""
+scripts/predeploy_check.py
+Run before every railway up.
+
+Checks:
+  1. Syntax / null bytes on all critical files
+  2. Common field-name bugs
+  3. SQL column validation (inside SQL literals only)
+  4. Route simulation (catches route crashes and NameErrors before deploy)
+
+NOTE: Run this from PowerShell, not from the Cowork sandbox bash.
+The sandbox cannot clean up git lock files on the Windows filesystem.
+
+Usage:
+    python scripts/predeploy_check.py
+"""
+
+import ast, os, re, subprocess, sys, tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+CRITICAL_FILES = [
+    "app.py", "run_picks_html.py", "run_pipeline.py", "run_afternoon.py",
+    "run_analysis.py", "model/mlb_model.py", "model/mlb_picks.py",
+    "model/mlb_props_model.py", "model/mlb_analysis_sections.py",
+    "scrapers/mlb_odds_scraper.py", "scrapers/mlb_statcast_scraper.py",
+    "scrapers/mlb_statcast_pitcher_scraper.py", "scrapers/mlb_polymarket_scraper.py",
+    "scrapers/mlb_hitter_scraper.py", "scrapers/mlb_lineup_scraper.py",
+    "scrapers/mlb_pinnacle_scraper.py", "db/csv_sync.py", "db/picks_store.py",
+]
+
+SIM_SCRIPT = """\
+import sys, os
+sys.path.insert(0, '.')
+# FORCE these, never setdefault (fixed 2026-08-17). setdefault is a no-op when
+# the variable already exists, so on a machine whose shell exports the real
+# DATABASE_URL the simulation connected to the REAL Railway database instead of
+# the stubs. That host does not resolve off Railway, so the check sat with no
+# output until it was killed by hand.
+for k, v in [
+    ('DATABASE_URL', ''), ('ODDS_API_KEY', 'test'),
+    ('STORAGE_ENDPOINT_URL', ''), ('STORAGE_ACCESS_KEY_ID', ''),
+    ('STORAGE_SECRET_ACCESS_KEY', ''), ('STORAGE_BUCKET', ''),
+    ('PREDEPLOY_SIM', '1'),
+]:
+    os.environ[k] = v
+import app as a
+with a.app.test_client() as c:
+    out = []
+    for r in ['/', '/performance-html', '/schedule-status', '/status']:
+        print('  testing ' + r, file=sys.stderr, flush=True)
+        out.append(r + ':' + str(c.get(r).status_code))
+    print(','.join(out))
+# FLUSH BEFORE os._exit (fixed 2026-08-19).
+#
+# os._exit terminates immediately and does NOT flush Python's buffers. app.py
+# starts background scheduler threads so a clean sys.exit hangs, which is why
+# _exit is used at all. But when stdout is a PIPE (subprocess.run captures it)
+# Python block-buffers, so this results line sat in the buffer and was DISCARDED.
+# The parent then saw empty stdout and reported [SIM ERROR] on a run where all
+# four routes returned 200.
+#
+# A check that fails when nothing is wrong is worse than no check: it trains you
+# to deploy through a red result.
+sys.stdout.flush()
+sys.stderr.flush()
+os._exit(0)
+"""
+
+
+def load_schema_columns():
+    path = os.path.join(ROOT, "db", "schema.py")
+    if not os.path.exists(path):
+        return {}
+    src = open(path).read()
+    tables = {}
+    for block in re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\);", src, re.DOTALL):
+        name, body = block
+        cols = set()
+        for line in body.splitlines():
+            line = line.strip()
+            if not line or line.startswith(("--", "UNIQUE", "PRIMARY", "FOREIGN")):
+                continue
+            col = line.split()[0].strip(",")
+            if col:
+                cols.add(col)
+        tables[name] = cols
+    return tables
+
+
+def check_sql_columns(source, schema):
+    """Only scans triple-quoted SQL literals to avoid Python false positives."""
+    issues = []
+    sql_blocks = re.findall(r'"""(.*?)"""', source, re.DOTALL)
+    sql_blocks += re.findall(r"'''(.*?)'''", source, re.DOTALL)
+    sql_blocks = [b for b in sql_blocks
+                  if re.search(r"\b(SELECT|FROM|JOIN|WHERE)\b", b, re.IGNORECASE)]
+    for sql in sql_blocks:
+        alias_map = {}
+        for m in re.finditer(r"\b(?:FROM|JOIN)\s+(\w+)\s+(\w+)", sql, re.IGNORECASE):
+            table, alias = m.group(1), m.group(2)
+            if table in schema:
+                alias_map[alias] = table
+        for m in re.finditer(r"\b([a-z]{1,4})\.([a-z_]+)\b", sql):
+            alias, col = m.group(1), m.group(2)
+            if alias not in alias_map:
+                continue
+            table = alias_map[alias]
+            if col not in schema[table]:
+                issues.append(
+                    "SQL ref '" + alias + "." + col + "' not in " + table +
+                    " (valid: " + str(sorted(schema[table])) + ")"
+                )
+    return issues
+
+
+errors = []
+warnings = []
+schema = load_schema_columns()
+
+print("=" * 60)
+print("  Statalizers Pre-Deploy Validation")
+print("=" * 60)
+
+# ── Phase 1: File checks ──────────────────────────────────────────────────────
+for rel_path in CRITICAL_FILES:
+    full_path = os.path.join(ROOT, rel_path)
+    if not os.path.exists(full_path):
+        warnings.append("[MISSING]  " + rel_path)
+        continue
+
+    raw = open(full_path, "rb").read()
+
+    if raw.count(b"\x00"):
+        errors.append("[NULL BYTES]  " + rel_path)
+        continue
+    if not raw.rstrip():
+        errors.append("[EMPTY FILE]  " + rel_path)
+        continue
+
+    try:
+        source = raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        errors.append("[DECODE ERROR]  " + rel_path + ": " + str(e))
+        continue
+
+    try:
+        ast.parse(source)
+    except SyntaxError as e:
+        errors.append("[SYNTAX ERROR]  " + rel_path + " line " + str(e.lineno) + ": " + e.msg)
+        continue
+
+    if rel_path == "model/mlb_analysis_sections.py":
+        if 'p.get("confidence", p.get("conf"' not in source:
+            warnings.append("[WARN]  " + rel_path + ": Monte Carlo conf fallback missing")
+
+    if "statcast" in rel_path and "scraper" in rel_path:
+        if "lstrip" not in source and "ufeff" not in source:
+            warnings.append("[WARN]  " + rel_path + ": BOM strip not found")
+
+    if schema and rel_path in ("db/picks_store.py", "app.py"):
+        for issue in check_sql_columns(source, schema):
+            errors.append("[SQL ERROR]  " + rel_path + ": " + issue)
+
+    if not any(rel_path in e for e in errors):
+        print("  OK   " + rel_path)
+
+# ── Phase 2: Route simulation ─────────────────────────────────────────────────
+print()
+print("  Running route simulation...")
+
+with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+    tf.write(SIM_SCRIPT)
+    sim_file = tf.name
+
+# TIMEOUT IS MANDATORY. Without one a hung simulation blocks the entire check
+# with no output — killed by hand after 10 minutes on 2026-08-17.
+try:
+    sim = subprocess.run([sys.executable, sim_file], cwd=ROOT,
+                         capture_output=True, text=True, timeout=180)
+except subprocess.TimeoutExpired:
+    sim = None
+finally:
+    try:
+        os.unlink(sim_file)
+    except OSError:
+        pass
+
+if sim is None:
+    warnings.append("[WARN]  Route simulation timed out after 180s and was killed. "
+                    "Syntax and SQL checks above still ran.")
+    print("  TIMEOUT route simulation (180s) — skipped, not a failure")
+    sim = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+route_line = next((l for l in sim.stdout.strip().splitlines() if ":" in l and "/" in l), None)
+if not route_line:
+    stderr = sim.stderr or ""
+    # Missing local packages are an env issue, not a code bug — skip simulation
+    if "ModuleNotFoundError" in stderr or "No module named" in stderr:
+        missing = next((l.strip() for l in stderr.splitlines() if "No module named" in l), "unknown")
+        warnings.append("[WARN]  Route simulation skipped — local dep missing (" + missing + "). Run on Railway env to verify.")
+        print("  SKIP route simulation (local dep missing — not a code error)")
+    else:
+        # Show what actually broke. stderr[-600:] was almost always the tail of
+        # the app's own logging, which buried the traceback that matters.
+        _noise = ("[WARNING]", "[INFO]", "[DEBUG]", "DATABASE_URL not set")
+        _lines = [l for l in stderr.splitlines()
+                  if l.strip() and not any(n in l for n in _noise)]
+        _detail = "\n".join(_lines[-25:]) or stderr[-600:] or "(no stderr)"
+        errors.append("[SIM ERROR]  Route simulation failed:\n"
+                      "  stdout was: " + repr(stdout[:200]) + "\n" + _detail)
+else:
+    for pair in route_line.split(","):
+        route, code = pair.rsplit(":", 1)
+        if code == "200":
+            print("  OK   " + route + " -> " + code)
+        else:
+            errors.append("[ROUTE ERROR]  " + route + " returned HTTP " + code)
+
+# ── Clamp / tier collision guard ──────────────────────────────────────────────
+# Added 2026-09-14. A clamp ceiling that is numerically equal to a tier
+# threshold turns "the model hit its ceiling" into "the model is maximally
+# confident", because tier() compares with >= and equality passes.
+#
+# This is not hypothetical. RL_DOG_COVER_CAP was 0.68 and LOCK_THRESH is 0.68,
+# and 72 of 77 RL LOCKs ever recorded carried conf of exactly 0.680000. The
+# label meant the opposite of what it said, for a whole season, on the board
+# Justin was betting from.
+#
+# ERROR, not warning. A silent one of these is worth more than a route 500.
+def _clamp_tier_collisions():
+    import re as _re
+    found, notes = [], []
+    # NOTE: builtin open(), not io.open(). predeploy_check.py imports
+    # ast/os/re/subprocess/sys/tempfile and NOT io, so io.open would raise
+    # NameError, get swallowed by the except below, and this guard would print
+    # "[skip]" forever while measuring nothing. That is the same shape as the
+    # bug it exists to catch.
+    try:
+        _m = open(os.path.join(ROOT, "model", "mlb_model.py"), encoding="utf-8").read()
+        _p = open(os.path.join(ROOT, "model", "mlb_picks.py"), encoding="utf-8").read()
+    except Exception as _e:
+        return [], ["[skip] clamp guard could not read sources: " + str(_e)]
+
+    tiers = {}
+    for name in ("LOCK_THRESH", "STRONG_THRESH", "LEAN_THRESH", "TOSSUP_THRESH"):
+        mt = _re.search(r"^" + name + r"\s*=\s*([0-9.]+)", _p, _re.M)
+        if mt:
+            tiers[name] = float(mt.group(1))
+
+    clamps = {}
+    for name in ("RL_FAV_COVER_CAP", "RL_DOG_COVER_CAP"):
+        mc = _re.search(r"^\s*" + name + r"\s*=\s*([0-9.]+)", _m, _re.M)
+        if mc:
+            clamps[name] = float(mc.group(1))
+    # `total_conf_base = min(0.68, ...)` -- the ceiling is the first argument.
+    mt2 = _re.search(r"total_conf_base\s*=\s*min\(\s*([0-9.]+)", _m)
+    if mt2:
+        clamps["total_conf_base ceiling"] = float(mt2.group(1))
+
+    if not tiers or not clamps:
+        return [], ["[skip] clamp guard found no constants to compare"]
+
+    for cname, cval in sorted(clamps.items()):
+        for tname, tval in sorted(tiers.items()):
+            if abs(cval - tval) < 1e-9:
+                found.append(
+                    "[CLAMP COLLISION]  " + cname + " = " + str(cval) + " equals "
+                    + tname + ". Every pick that saturates this clamp will be "
+                    "labelled " + tname.replace("_THRESH", "") + ". Move the clamp "
+                    "off the boundary."
+                )
+    notes.append("  OK   clamp guard: " + str(len(clamps)) + " clamp(s) vs "
+                 + str(len(tiers)) + " tier threshold(s), "
+                 + (str(len(found)) + " collision(s)" if found else "no collisions"))
+    return found, notes
+
+_cc_errors, _cc_notes = _clamp_tier_collisions()
+for _n in _cc_notes:
+    print(_n)
+errors.extend(_cc_errors)
+
+
+# ── Second-model review (advisory) ────────────────────────────────────────────
+# Runs only when the checks above have found no ERRORS, so it reviews code that
+# is otherwise deployable. ADVISORY ONLY: it prints findings and never changes
+# the exit code. Added 2026-08-12 after four reference-error bugs shipped in two
+# days, all syntactically valid and therefore invisible to py_compile.
+_gemini_issues = 0
+if not errors:
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from gemini_review import safe_review as _gemini_review
+        _gemini_issues = _gemini_review()
+    except Exception as _ge:
+        print("  [skip] second-model review unavailable: " + str(_ge))
+
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+print()
+if warnings:
+    print("WARNINGS:")
+    for w in warnings:
+        print("  " + w)
+    print()
+
+if errors:
+    print("ERRORS (fix before deploying):")
+    for e in errors:
+        print("  " + e)
+    print()
+    print("[FAIL] " + str(len(errors)) + " error(s) — do NOT run railway up")
+    sys.exit(1)
+else:
+    msg = "[PASS] All checks clean"
+    if warnings:
+        msg += " (" + str(len(warnings)) + " warning(s))"
+    print(msg)
+
+    # SECOND-MODEL RESULT, IN THE SUMMARY. Findings printed mid-run scroll past
+    # and get missed, which is exactly how four reviewed-but-unread bugs shipped.
+    # A "[PASS]" with unread Gemini findings above it is worse than no review at
+    # all, because it reads as an all-clear.
+    print()
+    if _gemini_issues:
+        print("=" * 62)
+        print("  !! SECOND-MODEL REVIEW FLAGGED " + str(_gemini_issues)
+              + " POSSIBLE ISSUE(S) — SCROLL UP")
+        print("  Advisory, not a gate. Verify each claim before acting on it,")
+        print("  and before deploying decide explicitly to accept or fix them.")
+        print("  Full text saved under logs/gemini_review_*.txt")
+        print("=" * 62)
+    else:
+        print("  Second-model review: no issues raised.")
+
+    print()
+    print("Safe to deploy:")
+    print("  git add <files>  |  git commit  |  git push  |  railway up")
+    sys.exit(0)

@@ -59,8 +59,15 @@ CREATE TABLE IF NOT EXISTS picks (
     model_version   TEXT,
     -- Price on the OTHER side of the same bet (added 2026-08-21). Without it
     -- no fade or two-sided CLV question is answerable from stored data, and an
-    -- external test had to synthesise it from an assumed 4% hold, which biases
-    -- the dog price optimistic. -196 does not imply +196.
+    -- external test had to synthesise it from an assumed 4 percent hold, which
+    -- biases the dog price optimistic. -196 does not imply +196.
+    --
+    -- The word "percent" is spelled out deliberately. psycopg2 formats the
+    -- whole query string, so a literal percent symbol here becomes a landmine
+    -- the moment this execute is ever given parameters, and it would fail
+    -- inside create_all() where the except logs "non-fatal" and moves on.
+    -- scripts/predeploy_check.py fails the build on any literal percent in a
+    -- SQL string for exactly this reason.
     opp_odds        REAL,
     odds            REAL,
     odds_at         TIMESTAMPTZ,

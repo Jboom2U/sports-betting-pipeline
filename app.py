@@ -3765,6 +3765,100 @@ first sight, hard-frozen once the tier locks) and <code>picks.closing_odds</code
                         mimetype="text/html"), 500
 
 
+# ── MODEL ERAS ────────────────────────────────────────────────────────────────
+# Every boundary at which the model changed enough that pooling across it
+# produces a number describing no model that ever existed.
+#
+# This is not bookkeeping. CLAUDE.md carries the same warning for the 07-21
+# boundary and it was ignored anyway, because the ROI page defaulted to a
+# window that crossed three of these and said nothing about it.
+MODEL_ERAS = [
+    ("2026-07-21", "data boundary",
+     "8 master CSVs vanished on every restart; umpire, bullpen fatigue, "
+     "platoon and Kalshi all dead"),
+    ("2026-08-19", "input fixes",
+     "weather (roof read as the string 'False'), pitcher Statcast (3 wrong "
+     "Savant column names), platoon refresh, power devig"),
+    ("2026-08-20", "main total fixed",
+     "a tie in the consensus count had been selecting the LOWEST line on the "
+     "board"),
+    ("2026-09-08", "calibration refit",
+     "ML A=0.067020 B=0.141158, RL A=2.657473 B=-1.141674; "
+     "MODEL_VERSION 2026.09.08"),
+]
+
+# The default for anything measuring model QUALITY. Before this date the model
+# was demonstrably starved, so pooling it in flatters nothing and misleads
+# everything.
+CURRENT_MODEL_SINCE = "2026-08-19"
+
+
+def _era_banner(since, until=None, _h=None):
+    """Report which model(s) a window actually contains.
+
+    Reads model_version straight off the picks table rather than inferring it
+    from dates, because the stamp is the only thing that knows what produced a
+    row. Returns an HTML block. Never raises: a banner that takes the page down
+    is worse than no banner.
+    """
+    import html as _html
+    esc = (_h.escape if _h else _html.escape)
+    try:
+        from db.connection import db_conn as _dbc
+        sql = ("SELECT COALESCE(model_version, '(unstamped)'), COUNT(*) "
+               "FROM picks WHERE actual_result IN ('WIN','LOSS') "
+               "AND pick_date >= %s")
+        args = [since]
+        if until:
+            sql += " AND pick_date <= %s"
+            args.append(until)
+        sql += " GROUP BY 1 ORDER BY 2 DESC"
+        with _dbc() as conn:
+            if conn is None:
+                return ("<div class='warn'>Model version unavailable: no "
+                        "database connection. Treat every number below as "
+                        "unattributed.</div>")
+            cur = conn.cursor()
+            cur.execute(sql, tuple(args))
+            vers = cur.fetchall()
+            cur.close()
+    except Exception as _e:
+        return ("<div class='warn'>Model version check failed: "
+                + esc(str(_e)) + ". Treat every number below as unattributed.</div>")
+
+    total = sum(n for _, n in vers) or 0
+    win = esc(since) + (" to " + esc(until) if until else " to today")
+    links = " &middot; ".join(
+        "<a href='/admin/real-roi?since=" + d + "'>" + d + " " + esc(name) + "</a>"
+        for d, name, _ in MODEL_ERAS
+    ) + " &middot; <a href='/admin/real-roi?since=2026-01-01'>all</a>"
+
+    rows = "".join(
+        "<tr><td><code>" + esc(str(v)) + "</code></td><td>" + str(n) + "</td></tr>"
+        for v, n in vers
+    ) or "<tr><td colspan=2>no graded picks in this window</td></tr>"
+
+    multi = len(vers) > 1
+    head = (
+        "<div class='warn'><b>This window spans " + str(len(vers)) +
+        " model versions.</b> Every figure below is an average across them, "
+        "which describes no model that ever ran. Pick one era before drawing "
+        "a conclusion.</div>"
+        if multi else
+        "<div class='okbox'><b>Single model version.</b> The figures below "
+        "describe one model.</div>"
+    )
+
+    return (
+        "<div class='erabox'><b>Window:</b> " + win + " &nbsp;&middot;&nbsp; "
+        "<b>" + str(total) + "</b> graded picks"
+        "<table style='margin-top:8px;max-width:420px'>"
+        "<tr><th>model_version</th><th>picks</th></tr>" + rows + "</table>"
+        "<div class='note' style='margin-top:8px'>Jump to an era: " + links +
+        "</div></div>" + head
+    )
+
+
 @app.route("/admin/real-roi")
 def real_roi():
     """ROI computed from the PRICE ACTUALLY STORED on each pick, not a flat -110.
@@ -3785,12 +3879,29 @@ def real_roi():
     bets with opposite price profiles and pooling them hides exactly the problem
     above.
 
-      ?since=YYYY-MM-DD   default 2026-08-11, when prices started being stored
+      ?since=YYYY-MM-DD   default 2026-08-19, the input-fix boundary
+      ?until=YYYY-MM-DD   optional upper bound
+      ?era=all            everything, explicitly
+
+    THE DEFAULT MOVED (2026-09-20). It used to be 2026-08-11, the date prices
+    started being stored, which sounds sensible and is not: that window spans
+    the 08-19 input fixes, the 08-20 total fix and the 09-08 calibration refit,
+    so every number on the page averaged three different models together and
+    the page said nothing about it. Real cost: a whole evaluation of LOCK and
+    STRONG was argued from those pooled figures while the post-fix model was
+    behaving completely differently.
+
+    Older data is not hidden. ?era=all still shows it. It just has to be asked
+    for, and the banner always says which models are in the window.
     """
     if _ADMIN_PASS and not session.get("admin_auth"):
         return redirect("/admin/login?next=/admin/real-roi")
     import html as _h, traceback
-    since = request.args.get("since", "2026-08-11")
+    if request.args.get("era") == "all":
+        since = "2026-01-01"
+    else:
+        since = request.args.get("since", CURRENT_MODEL_SINCE)
+    until = (request.args.get("until") or "").strip() or None
 
     def _dec(a):
         a = float(a)
@@ -3808,7 +3919,8 @@ def real_roi():
                 WHERE actual_result IN ('WIN','LOSS')
                   AND conf IS NOT NULL AND odds IS NOT NULL
                   AND pick_date >= %s
-            """, (since,))
+                  AND (%s IS NULL OR pick_date <= %s)
+            """, (since, until, until))
             rows = cur.fetchall(); cur.close()
 
         recs = []
@@ -3880,8 +3992,12 @@ th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #21262d}}
 th{{color:#8b949e;font-weight:600;font-size:11px;text-transform:uppercase}}
 .note{{color:#8b949e;font-size:12.5px;line-height:1.65}}
 .hero{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:14px 0}}
+.erabox{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 16px;margin:14px 0;font-size:13px}}
+.warn{{background:rgba(248,81,73,.09);border:1px solid rgba(248,81,73,.42);border-radius:8px;padding:12px 16px;margin:10px 0;font-size:13px;color:#ffa198}}
+.okbox{{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.32);border-radius:8px;padding:12px 16px;margin:10px 0;font-size:13px;color:#7ee787}}
 .big{{font-size:30px;font-weight:700;color:{tcol}}}</style></head><body>
 <h2>Real-price ROI</h2>
+{_era_banner(since, until, _h)}
 <p class="note">Graded picks since <b>{_h.escape(since)}</b> that carry a stored
 price. Every figure below uses the price the pick was actually saved at, not a
 flat -110. <b>This is the only ROI on the site that is not an approximation.</b>
