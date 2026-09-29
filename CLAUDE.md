@@ -524,6 +524,51 @@ Anything worth keeping belongs in this file, not in a chat transcript.
 
 ---
 
+## ⚠️ POSTSEASON OPERATING RULES (added 2026-09-29)
+
+### A scraper deploy does nothing until the pipeline re-runs
+
+Deploying changed scraper code and running the pipeline are ONE operation, not
+two steps where the second is optional. The container skips re-scraping when it
+sees `Today's pipeline data exists`, so new scraper code can sit live for hours
+without ever being asked to fetch anything.
+
+    git push                    <- wait for the Railway build to finish
+    statalizers.com/force-pipeline   <- ONLY after the deploy is green
+
+**Order matters.** On 2026-09-29 the postseason gameType fix was pushed, and
+force-pipeline was run during the 14 minute build window. It executed against
+the OLD container, found nothing, and left the pipeline marked as already run.
+The fix was live for five hours doing nothing. Same command, wrong five minutes.
+
+### gameType must include the postseason
+
+`scrapers/mlb_scraper.py` filtered the MLB API to `gameType=R` in both
+`fetch_scores` and `fetch_schedule`, with a comment reading "Regular season
+only; add P for playoffs later". The regular season ended 2026-09-27 and the
+board went blank: no postseason game could reach the schedule and no postseason
+final could be fetched to grade one.
+
+`GAME_TYPES = "R,F,D,L,W"` now covers regular season, Wild Card, Division
+Series, LCS and World Series. It deliberately excludes S (spring training),
+A (all-star) and E (exhibition).
+
+### A blank board is ambiguous, and in October it will be common
+
+There are genuine off days between rounds. The board returns `None` from
+generation and keeps serving the last page it built, so an off day is visually
+identical to an outage. Do not diagnose from the front page. Check
+`/admin/slate-health`, which compares MLB's own game count for today against
+the schedule master, the picks table and the rendered board.
+
+### Slate sizes collapse
+
+15 games a day becomes 4, then 2. Every band record, bucket and threshold in
+this system was measured on regular season volume. Treat October records as a
+separate era, the same way 2026-07-21 and 2026-08-19 are treated.
+
+---
+
 ## ⚠️ CRITICAL: Never Run ANY Git Command From the Sandbox
 
 **The Cowork sandbox cannot delete lock files on the Windows-mounted repo.** A

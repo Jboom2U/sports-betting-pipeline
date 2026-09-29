@@ -3142,6 +3142,152 @@ def r2_picks_recovery():
     return Response("\n".join(out) + "</pre>", mimetype="text/html")
 
 
+@app.route("/admin/slate-health")
+def slate_health():
+    """Does today's slate agree across MLB, the schedule, the picks and the board?
+
+    Built 2026-09-29. Every outage this month was the same shape: a stage
+    produced nothing, nothing validated it, and the board silently served the
+    last page it could build. An off day and a dead pipeline look identical
+    from the front page.
+
+    This page has no thresholds and no opinions. It reports four numbers that
+    should agree and names the disagreement when they do not.
+    """
+    if _ADMIN_PASS and not session.get("admin_auth"):
+        return redirect("/admin/login?next=/admin/slate-health")
+
+    import html as _h, json as _json, csv as _csv, urllib.request
+
+    date = (request.args.get("date") or datetime.now(ET).strftime("%Y-%m-%d")).strip()
+    rows, problems = [], []
+
+    def add(label, value, note=""):
+        rows.append((label, value, note))
+
+    # 1. MLB, the external source of truth.
+    mlb_n, mlb_detail = None, ""
+    try:
+        u = ("https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=" + date)
+        rq = urllib.request.Request(u, headers={"User-Agent": "statalizers/1.0"})
+        with urllib.request.urlopen(rq, timeout=20) as r:
+            j = _json.loads(r.read().decode("utf-8"))
+        games = [g for d in j.get("dates", []) for g in d.get("games", [])]
+        mlb_n = len(games)
+        types = sorted({g.get("gameType", "?") for g in games})
+        live = sum(1 for g in games
+                   if g.get("status", {}).get("abstractGameState") == "Live")
+        fin = sum(1 for g in games
+                  if g.get("status", {}).get("abstractGameState") == "Final")
+        mlb_detail = ("types " + ",".join(types) + " | " + str(fin) + " final, "
+                      + str(live) + " live") if games else "no games scheduled"
+    except Exception as e:
+        mlb_detail = "MLB API unreachable: " + str(e)
+    add("MLB API", "-" if mlb_n is None else str(mlb_n), mlb_detail)
+
+    # 2. The schedule master the model actually reads.
+    sched_n = None
+    try:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "data", "clean", "mlb_schedule_master.csv")
+        if os.path.exists(p):
+            with open(p, encoding="utf-8", errors="replace") as f:
+                sched_n = sum(1 for r in _csv.DictReader(f)
+                              if (r.get("game_date") or "").strip() == date)
+            add("schedule master", str(sched_n), os.path.basename(p))
+        else:
+            add("schedule master", "-", "file missing")
+    except Exception as e:
+        add("schedule master", "-", "read failed: " + str(e))
+
+    # 3. Picks actually written.
+    picks_n = saved_games = None
+    try:
+        from db.connection import db_conn as _dbc
+        with _dbc() as conn:
+            if conn is None:
+                add("picks table", "-", "no database connection")
+            else:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*), COUNT(DISTINCT game_id) "
+                            "FROM picks WHERE pick_date = %s", (date,))
+                picks_n, saved_games = cur.fetchone()
+                cur.close()
+                add("picks table", str(picks_n),
+                    str(saved_games) + " distinct game(s)")
+    except Exception as e:
+        add("picks table", "-", "query failed: " + str(e))
+
+    # 4. What the board is actually serving.
+    board_date, board_len = None, 0
+    try:
+        with _cache_lock:
+            html_cached = _cache.get("html")
+        if html_cached:
+            board_len = len(html_cached)
+            import re as _re
+            m = _re.search(r'const\s+DATA_DATE\s*=\s*"([^"]+)"', html_cached)
+            board_date = m.group(1) if m else None
+        add("dashboard cache", board_date or "none",
+            str(board_len) + " bytes")
+    except Exception as e:
+        add("dashboard cache", "-", "read failed: " + str(e))
+
+    # ── The three disagreements that have actually happened ─────────────────
+    if mlb_n is not None and sched_n is not None:
+        if mlb_n > 0 and sched_n == 0:
+            problems.append(
+                "MLB has " + str(mlb_n) + " game(s) today and the schedule master "
+                "has none. Either the scraper cannot see them (check GAME_TYPES) "
+                "or a restart overwrote the schedule from R2. Run /force-pipeline.")
+        elif mlb_n == 0:
+            problems.append(
+                "NO GAMES TODAY per MLB. A blank board is CORRECT. This is an "
+                "off day, not an outage.")
+    if sched_n and picks_n == 0:
+        problems.append(
+            "The schedule has " + str(sched_n) + " game(s) but zero picks are "
+            "saved. This is the save_picks failure shape. Check the Railway log "
+            "for 'save_picks DB write failed'.")
+    if picks_n and board_date and board_date != date:
+        problems.append(
+            "Picks exist for " + date + " but the board is serving " +
+            str(board_date) + ". Dashboard generation is returning None. "
+            "Run /unstick.")
+    if board_len and board_len < 60000:
+        problems.append(
+            "The cached page is only " + str(board_len) + " bytes, which is a "
+            "fallback or warming page rather than a real board.")
+
+    body = "".join(
+        "<tr><td>" + _h.escape(a) + "</td><td class=v>" + _h.escape(b) +
+        "</td><td class=n>" + _h.escape(c) + "</td></tr>" for a, b, c in rows)
+    probs = "".join("<div class=bad>" + _h.escape(p) + "</div>" for p in problems) \
+        or "<div class=ok>Everything agrees. No action needed.</div>"
+
+    return Response("""<!doctype html><html><head><meta charset=utf-8>
+<title>Slate health</title><style>
+body{background:#0d1117;color:#c9d1d9;font-family:system-ui;padding:22px;max-width:820px;margin:0 auto}
+h2{color:#58a6ff} table{border-collapse:collapse;width:100%;margin:14px 0}
+td{padding:7px 10px;border-bottom:1px solid #21262d;font-size:13.5px}
+.v{font-weight:700;font-size:16px;text-align:right;width:90px}
+.n{color:#8b949e;font-size:12px}
+.bad{background:rgba(248,81,73,.09);border:1px solid rgba(248,81,73,.42);
+     border-radius:8px;padding:11px 15px;margin:9px 0;color:#ffa198;font-size:13px}
+.ok{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.32);
+    border-radius:8px;padding:11px 15px;margin:9px 0;color:#7ee787;font-size:13px}
+.note{color:#8b949e;font-size:12px;line-height:1.6}
+</style></head><body>
+<h2>Slate health &mdash; """ + _h.escape(date) + """</h2>
+<p class="note">Four numbers that should agree. MLB is the external source of
+truth; everything else is this system. Add <code>?date=YYYY-MM-DD</code> to
+check another day.</p>
+<table>""" + body + """</table>""" + probs + """
+<p class="note" style="margin-top:18px">An off day and a dead pipeline look
+identical from the front page. That ambiguity is what this page removes.</p>
+<p><a href="/admin">&larr; Admin</a></p></body></html>""", mimetype="text/html")
+
+
 @app.route("/admin/export/picks.csv")
 def export_picks_csv():
     """Every graded pick as CSV, for outside analysis.
