@@ -30,6 +30,22 @@ os.makedirs(RAW_DIR, exist_ok=True)
 # ── MLB Stats API base ────────────────────────────────────────────────────────
 MLB_API = "https://statsapi.mlb.com/api/v1"
 
+# Which MLB game types the scrapers are allowed to see.
+#   R  regular season
+#   F  Wild Card
+#   D  Division Series
+#   L  League Championship Series
+#   W  World Series
+# Deliberately excludes S (spring training), A (all-star) and E (exhibition):
+# dropping the filter entirely would pull those in every February.
+#
+# This was "R" alone until 2026-09-28, with a comment reading "Regular season
+# only; add P for playoffs later". The regular season ended on 09-27 and the
+# board logged "Scoring 0 upcoming games for 2026-09-29" while the MLB API had
+# four Wild Card games that day. No postseason game could reach the board and
+# no postseason final could be fetched to grade one.
+GAME_TYPES = "R,F,D,L,W"
+
 HEADERS = {"User-Agent": "mlb-betting-pipeline/1.0"}
 
 TODAY      = datetime.now().strftime("%Y-%m-%d")
@@ -47,7 +63,7 @@ def fetch_scores(date: str = YESTERDAY) -> list[dict]:
         "sportId": 1,
         "date": date,
         "hydrate": "linescore,decisions,probablePitcher",
-        "gameType": "R"          # Regular season only; add "P" for playoffs later
+        "gameType": GAME_TYPES
     }
     log.info(f"Fetching scores for {date}")
     resp = requests.get(url, params=params, headers=HEADERS, timeout=30)
@@ -199,7 +215,7 @@ def fetch_schedule(days_ahead: int = 2) -> list[dict]:
             "sportId": 1,
             "date": target_date,
             "hydrate": "probablePitcher,venue",
-            "gameType": "R"
+            "gameType": GAME_TYPES
         }
         resp = requests.get(url, params=params, headers=HEADERS, timeout=30)
         resp.raise_for_status()
